@@ -37,10 +37,20 @@ class TopicNotFoundError(Exception):
     pass
 
 
+# Nombres de directorio/archivo que nunca son un curso/módulo/tópico real
+# (Fase 7, sección 11): artefactos del sistema operativo o de herramientas
+# de compresión, nunca contenido pedagógico. Comparación case-insensitive.
+_IGNORED_NAMES = {"__macosx", "thumbs.db", "desktop.ini", "node_modules"}
+
+
+def _is_ignored(name: str) -> bool:
+    return name.startswith(".") or name.lower() in _IGNORED_NAMES
+
+
 def _list_subdirs(path: Path) -> list[Path]:
     if not path.is_dir():
         return []
-    entries = [p for p in path.iterdir() if p.is_dir() and not p.name.startswith(".")]
+    entries = [p for p in path.iterdir() if p.is_dir() and not _is_ignored(p.name)]
     entries.sort(key=lambda p: (extract_order(p.name), p.name.lower()))
     return entries
 
@@ -51,7 +61,7 @@ def _list_topic_files(path: Path) -> list[Path]:
     entries = [
         p
         for p in path.iterdir()
-        if p.is_file() and p.suffix.lower() == ".md" and not p.name.startswith(".")
+        if p.is_file() and p.suffix.lower() == ".md" and not _is_ignored(p.name)
     ]
     entries.sort(key=lambda p: (extract_order(p.name), p.name.lower()))
     return entries
@@ -239,6 +249,65 @@ def get_canonical_topic(
         metadata=topic_metadata,
         raw_markdown=content_markdown,
     )
+
+
+class AssetNotFoundError(Exception):
+    """El asset no existe, es de un tipo no soportado, o el path pedido
+    intenta salir del directorio del módulo (path traversal). Se usa un
+    único tipo de error para las tres causas: el cliente nunca debe poder
+    distinguir "existe pero está bloqueado" de "no existe" (ver sección 13
+    de la especificación de Fase 7)."""
+
+
+# Allow-list explícita (no block-list): solo raster seguro. .svg queda
+# deliberadamente afuera (puede contener <script>); .html/.js/.exe/.ps1/
+# .bat/.cmd nunca se sirven bajo ningún concepto.
+ASSET_MIME_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+
+
+def resolve_topic_asset(
+    content_path: Path, course_id: str, module_id: str, topic_id: str, asset_path: str
+) -> tuple[Path, str]:
+    """Resuelve un asset relativo (ej. `images/architecture.png`) referenciado
+    desde el Markdown de un tópico, de forma segura.
+
+    Reglas duras: el tópico se resuelve SIEMPRE con el mismo repositorio
+    seguro que el resto de la app (`_resolve_topic`, nunca acepta una ruta
+    de filesystem del cliente); el asset se resuelve relativo al directorio
+    del MÓDULO (donde vive el .md que lo referencia) y `Path.resolve()` +
+    `is_relative_to(...)` garantizan que el resultado nunca pueda escapar
+    de ese directorio, sin importar `../`, rutas absolutas o codificación.
+    Solo se sirven extensiones de la allow-list (`ASSET_MIME_TYPES`).
+    Devuelve (path_real_en_disco, mime_type); lanza `AssetNotFoundError` en
+    cualquier otro caso (no existe / tipo no soportado / traversal)."""
+    _course_dir, module_dir, _topic_file = _resolve_topic(
+        content_path, course_id, module_id, topic_id
+    )
+
+    requested = Path(asset_path)
+    if requested.is_absolute() or not asset_path or ".." in requested.parts:
+        raise AssetNotFoundError(asset_path)
+
+    suffix = requested.suffix.lower()
+    mime_type = ASSET_MIME_TYPES.get(suffix)
+    if mime_type is None:
+        raise AssetNotFoundError(asset_path)
+
+    module_root = module_dir.resolve()
+    candidate = (module_dir / requested).resolve()
+    if not candidate.is_relative_to(module_root):
+        raise AssetNotFoundError(asset_path)
+
+    if not candidate.is_file():
+        raise AssetNotFoundError(asset_path)
+
+    return candidate, mime_type
 
 
 def get_grounding_packet(

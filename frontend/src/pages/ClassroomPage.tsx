@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { api, ApiError } from "../api/client";
 import { Breadcrumb } from "../components/Breadcrumb";
 import { GroundingPanel } from "../components/GroundingPanel";
+import { SafeMarkdown } from "../components/SafeMarkdown";
 import { CheckpointPanel } from "../classroom/CheckpointPanel";
 import { CompletionScreen } from "../classroom/CompletionScreen";
 import { LoadingSteps } from "../classroom/LoadingSteps";
@@ -21,9 +20,11 @@ import {
 } from "../classroom/classroomStorage";
 import { describeLessonError } from "../classroom/lessonErrors";
 import { extractMarkdownLinks } from "../classroom/markdownLinks";
-import { cancelSpeech, isSpeechSupported } from "../classroom/speech";
+import { isSpeechSupported } from "../classroom/speech";
+import { cancelAllSpeech } from "../classroom/voicePlayback";
 import { useClassroomEngine } from "../classroom/useClassroomEngine";
 import { useClassroomVoice } from "../classroom/useClassroomVoice";
+import { useVoicePreference } from "../classroom/useVoicePreference";
 import type {
   AiStatusResponse,
   CourseDetail,
@@ -85,6 +86,16 @@ export function ClassroomPage() {
   const [voiceEnabled, setVoiceEnabled] = useState(() => loadVoiceEnabled());
   const [voiceSpeed, setVoiceSpeed] = useState<VoiceSpeed>(() => loadVoiceSpeed());
   const speechSupported = useMemo(() => isSpeechSupported(), []);
+  // Fase 7: voz neural opcional (OpenAI TTS). `useNeural` decide, sin
+  // exponer nunca una API key al navegador, si esta narración debería
+  // intentar el backend neural en vez de Web Speech API.
+  const { useNeural: neuralPreferred, voiceStatus } = useVoicePreference();
+  const [neuralVoiceError, setNeuralVoiceError] = useState<string | null>(null);
+  // Si la voz neural falla y el alumno elige "Usar voz del navegador"
+  // (sección 33), esta sesión deja de intentar neural — nunca rompe la
+  // clase, y evita reintentar algo que ya se sabe que está fallando.
+  const [neuralDismissed, setNeuralDismissed] = useState(false);
+  const useNeural = neuralPreferred && !neuralDismissed;
 
   // Fase 4: Classroom Engine — navegación determinística de escenas,
   // progreso local y estado de reproducción.
@@ -97,7 +108,9 @@ export function ClassroomPage() {
     enabled: voiceEnabled && !engine.isCompleted,
     rate: voiceSpeed,
     isPaused: engine.isPaused,
+    useNeural,
     onAdvanceChunk: engine.nextNarrationChunk,
+    onNeuralError: (message) => setNeuralVoiceError(message),
   });
 
   useEffect(() => {
@@ -145,7 +158,7 @@ export function ClassroomPage() {
     setLessonError(null);
     setTutorInterrupting(false);
     setInspectedTutorRef(null);
-    cancelSpeech();
+    cancelAllSpeech();
     api
       .getTopic(courseId, moduleId, topicId)
       .then((data) => {
@@ -225,7 +238,7 @@ export function ClassroomPage() {
     setVoiceEnabled((prev) => {
       const next = !prev;
       saveVoiceEnabled(next);
-      if (!next) cancelSpeech();
+      if (!next) cancelAllSpeech();
       return next;
     });
   }
@@ -236,7 +249,7 @@ export function ClassroomPage() {
   }
 
   function handleExit() {
-    cancelSpeech();
+    cancelAllSpeech();
     navigate(courseId ? `/cursos/${courseId}` : "/");
   }
 
@@ -246,7 +259,7 @@ export function ClassroomPage() {
   // acá, solo pause()/resume() ya existentes del Classroom Engine.
   function handleTutorInterrupt() {
     if (tutorInterrupting) return;
-    cancelSpeech(); // corta la narración de la clase antes de que hable el tutor
+    cancelAllSpeech(); // corta la narración de la clase antes de que hable el tutor
     if (lesson) engine.pause();
     setTutorInterrupting(true);
   }
@@ -432,6 +445,7 @@ export function ClassroomPage() {
                   scene={engine.currentScene}
                   voiceEnabled={voiceEnabled}
                   voiceRate={voiceSpeed}
+                  useNeuralVoice={useNeural}
                 />
               )}
 
@@ -494,10 +508,13 @@ export function ClassroomPage() {
             <div className="content-panel__body">
               {!topic && !error && <p>Cargando contenido del tema…</p>}
 
-              {topic && contentTab === "explicacion" && (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {topic.content_markdown}
-                </ReactMarkdown>
+              {topic && contentTab === "explicacion" && courseId && moduleId && topicId && (
+                <SafeMarkdown
+                  markdown={topic.content_markdown}
+                  courseId={courseId}
+                  moduleId={moduleId}
+                  topicId={topicId}
+                />
               )}
 
               {topic && contentTab === "puntos-clave" && (
@@ -535,7 +552,7 @@ export function ClassroomPage() {
                     <ul>
                       {resourceLinks.map((link) => (
                         <li key={link.url}>
-                          <a href={link.url} target="_blank" rel="noreferrer">
+                          <a href={link.url} target="_blank" rel="noopener noreferrer">
                             {link.text}
                           </a>
                         </li>
@@ -570,6 +587,7 @@ export function ClassroomPage() {
             aiStatus={aiStatus}
             voiceEnabled={voiceEnabled}
             voiceRate={voiceSpeed}
+            useNeuralVoice={useNeural}
             isInterrupting={tutorInterrupting}
             onInterrupt={handleTutorInterrupt}
             onContinueClass={handleContinueClass}
@@ -640,17 +658,17 @@ export function ClassroomPage() {
               type="button"
               className={voiceEnabled ? "primary" : undefined}
               onClick={toggleVoice}
-              disabled={!speechSupported}
+              disabled={!speechSupported && !useNeural}
               aria-pressed={voiceEnabled}
               aria-label={voiceEnabled ? "Desactivar voz" : "Activar voz"}
             >
-              {!speechSupported
+              {!speechSupported && !useNeural
                 ? "🔈 Voz no disponible"
                 : voiceEnabled
                   ? "🔊 Voz activada"
                   : "🔈 Activar voz"}
             </button>
-            {voiceEnabled && speechSupported && (
+            {voiceEnabled && (speechSupported || useNeural) && (
               <select
                 aria-label="Velocidad de voz"
                 value={voiceSpeed}
@@ -663,7 +681,26 @@ export function ClassroomPage() {
                 ))}
               </select>
             )}
+            {voiceEnabled && useNeural && (
+              <span className="voice-disclosure" title={`Modelo: ${voiceStatus?.tts_model ?? ""}`}>
+                Voz generada por IA
+              </span>
+            )}
           </div>
+          {neuralVoiceError && (
+            <div className="voice-neural-error">
+              <span>{neuralVoiceError}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setNeuralVoiceError(null);
+                  setNeuralDismissed(true);
+                }}
+              >
+                Usar voz del navegador
+              </button>
+            </div>
+          )}
           <span className="controls-bar__divider" aria-hidden="true" />
           <button type="button" className="danger" onClick={handleExit}>
             Salir de la clase

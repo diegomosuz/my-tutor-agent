@@ -39,7 +39,9 @@ from app.services.llm_provider import (
     LLMUpstreamError,
     get_llm_provider,
 )
+from app.services.cache_schema import CACHE_SCHEMA_VERSION
 from app.services.lesson_validation import LessonValidationError, validate_lesson_body
+from app.services.service_logging import log_event as shared_log_event
 
 logger = logging.getLogger("pwc_tutor.lesson")
 
@@ -57,16 +59,40 @@ def _log_event(event: str, **fields: object) -> None:
     """Log de una sola línea, sin secretos: nunca se pasan acá API keys,
     Authorization, el prompt completo, el Grounding Packet completo ni la
     respuesta cruda del LLM — solo ids, provider/model, hash abreviado,
-    duración y booleanos."""
-    rendered = " ".join(f"{key}={value}" for key, value in fields.items())
-    logger.info("%s %s", event, rendered)
+    duración y booleanos. Delega en el helper compartido
+    (`app/services/service_logging.py`) para incluir automáticamente
+    `request_id` cuando el log ocurre dentro de un request HTTP (Fase 7)."""
+    shared_log_event(logger, event, **fields)
 
 
-def _cache_key(*, content_sha256: str, provider_name: str, model: str, prompt_version: str) -> str:
-    """La cache key depende de content_sha256 + provider + model +
-    prompt_version: cambiar cualquiera de esos cuatro valores produce un
-    cache miss por diseño (ver Fase 3, sección "Cache")."""
-    raw = f"{content_sha256}:{provider_name}:{model}:{prompt_version}"
+def _cache_key(
+    *,
+    course_id: str,
+    module_id: str,
+    topic_id: str,
+    content_sha256: str,
+    provider_name: str,
+    model: str,
+    prompt_version: str,
+) -> str:
+    """La cache key depende de la identidad contextual COMPLETA del tópico
+    (course_id + module_id + topic_id) + content_sha256 + provider + model
+    + prompt_version + CACHE_SCHEMA_VERSION.
+
+    Fase 7, sección 2 — bug real encontrado y corregido: antes la key
+    dependía solo de content_sha256 + provider + model + prompt_version.
+    Dos tópicos DISTINTOS con exactamente el mismo Markdown (mismo
+    content_sha256) colisionaban en la misma cache key, y el segundo
+    tópico en pedir su LessonPlan recibía un cache HIT que en realidad era
+    el documento del PRIMER tópico — con su course_id/module_id/topic_id/
+    lesson_id todavía adentro (leak de identidad real, no solo teórico;
+    ver `backend/tests/test_cache_isolation.py`). Incluir la identidad
+    contextual en la key evita la colisión por diseño: cambiar cualquiera
+    de estos siete valores produce un cache miss."""
+    raw = (
+        f"{CACHE_SCHEMA_VERSION}:{course_id}:{module_id}:{topic_id}:"
+        f"{content_sha256}:{provider_name}:{model}:{prompt_version}"
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -96,6 +122,9 @@ def get_cached_lesson_plan(
     escena / preguntas de checkpoint sin duplicar la lógica de cache y sin
     disparar una generación nueva. Nunca llama al LLM."""
     key = _cache_key(
+        course_id=canonical.course_id,
+        module_id=canonical.module_id,
+        topic_id=canonical.topic_id,
         content_sha256=canonical.content_sha256,
         provider_name=provider.name,
         model=provider.model,
@@ -243,6 +272,9 @@ def generate_lesson(
     cache_dir = settings.lesson_cache_path
     prompt_version = settings.lesson_prompt_version
     key = _cache_key(
+        course_id=canonical.course_id,
+        module_id=canonical.module_id,
+        topic_id=canonical.topic_id,
         content_sha256=canonical.content_sha256,
         provider_name=llm_provider.name,
         model=llm_provider.model,

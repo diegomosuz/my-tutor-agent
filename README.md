@@ -7,21 +7,53 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **Fase actual: Fase 6** — catálogo de cursos, detalle de curso, modelo
-> canónico de contenido 100% determinístico, integración real con un LLM
-> para generar clases estructuradas (`LessonPlan`) grounded, aula virtual
-> interactiva (Classroom Engine + 11 tipos de slide, animaciones CSS con
-> pausa real, progreso local, voz con la Web Speech API), un tutor
-> conversacional grounded (preguntas y respuestas sobre el tópico activo,
-> con interrupción/reanudación real de la clase, y checkpoints
-> interactivos evaluados contra el material autorizado), y ahora una
-> **práctica/simulacro de certificación grounded**: preguntas de opción
-> única/múltiple generadas exclusivamente a partir del material del curso,
-> evaluadas de forma 100% determinística (sin LLM), con resultado de
-> práctica por tópico y por competencia. **Esto NO representa ni afirma
-> reproducir un examen oficial de ninguna certificación externa.** Sin
-> resúmenes/reorganización de contenido, sin TTS server-side, sin
-> persistencia de resultados de práctica todavía.
+> **Fase actual: Fase 7** — productización y hardening sobre las Fases 1 a
+> 6 (catálogo, aula virtual, tutor conversacional, checkpoints, práctica de
+> certificación grounded): scripts de Windows para setup/arranque/
+> diagnóstico, assets Markdown (imágenes relativas) servidos de forma
+> segura, diagnóstico de cursos, pantalla de Configuración, voz neural
+> opcional (OpenAI TTS) sobre el mismo motor de reproducción que la voz del
+> navegador, ErrorBoundary/404, corrección de un bug real de colisión de
+> cache entre tópicos con contenido idéntico, y documentación ampliada. Ver
+> [`docs/COURSE_FORMAT.md`](./docs/COURSE_FORMAT.md) y
+> [`docs/CONFIGURATION.md`](./docs/CONFIGURATION.md).
+
+## Quick Start — Windows
+
+1. Instalá y abrí **Docker Desktop** (tiene que estar corriendo). No hace
+   falta tener Python ni Node instalados en tu PC: todo corre encapsulado
+   en contenedores.
+2. Cloná o abrí esta carpeta del repositorio en tu PC.
+3. Ejecutá el script de setup interactivo desde PowerShell, en la raíz del
+   repo:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+   ```
+
+   El script verifica Docker, crea tu `.env` (nunca sobrescribe uno
+   existente sin confirmación explícita), te pregunta el directorio de
+   cursos a usar (o el curso de demo incluido por default), te deja elegir
+   proveedor de IA de forma opcional (la credencial se ingresa sin eco en
+   pantalla y nunca se imprime), y levanta todo con `docker compose`.
+4. Abrí **http://localhost:5173** en el navegador.
+
+Para las próximas veces, usá `scripts/start.ps1` (levanta lo ya
+configurado) y `scripts/stop.ps1` (baja el entorno sin tocar `.env` ni las
+caches). Si algo no funciona, corré `scripts/doctor.ps1` para un
+diagnóstico rápido (Docker, containers, backend, `/content`, cursos
+detectados, estado de IA/voz sin exponer credenciales).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\stop.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\doctor.ps1
+```
+
+> Estos scripts son opcionales: en cualquier plataforma (incluido Windows)
+> podés usar directamente `docker compose up -d --build` / `docker compose
+> down` como se muestra más abajo. `scripts/*.ps1` sólo automatizan esos
+> mismos pasos y agregan validaciones para Windows.
 
 ## Requisitos
 
@@ -31,8 +63,11 @@ puede inventar información que no esté en ese contenido. Ver
   la generación de clases con IA funcione de verdad. **Sin ninguna
   credencial, el resto de la aplicación (catálogo, cursos, tópicos)
   funciona igual**; la generación de clases devuelve un `503` claro.
+- (Opcional) una credencial de OpenAI para voz neural (`VOICE_PROVIDER`).
+  Sin ella, la aplicación sigue funcionando con la voz nativa del
+  navegador (Web Speech API).
 
-## Cómo levantar el proyecto
+## Cómo levantar el proyecto (sin los scripts de Windows)
 
 ```bash
 # 1. (Opcional) copiar el archivo de variables de entorno de ejemplo
@@ -209,6 +244,49 @@ curl -X POST http://localhost:8000/api/courses/demo-curso-ia/certification/prepa
 - La sesión de la práctica vive en `sessionStorage` del navegador (nunca
   `localStorage`); no hay historial de intentos persistido todavía.
 
+## Assets de curso (imágenes) y diagnóstico (Fase 7)
+
+Un tópico puede referenciar imágenes relativas dentro de su mismo curso
+(`![Arquitectura](images/architecture.png)`). Se sirven mediante un
+endpoint contextual y de solo lectura que nunca acepta una ruta de
+filesystem arbitraria — siempre resuelve curso/módulo/tópico a través del
+repositorio seguro existente antes de buscar el archivo (path traversal
+imposible por diseño). Formatos soportados: `.png .jpg .jpeg .webp .gif`
+(no se sirven `.svg`, `.html`, `.js` ni ningún tipo ejecutable). Ver
+[`docs/COURSE_FORMAT.md`](./docs/COURSE_FORMAT.md).
+
+```bash
+# Diagnóstico de solo lectura del filesystem de cursos (nunca modifica nada)
+curl http://localhost:8000/api/system/course-diagnostics
+
+# Estado general de la aplicación, sin exponer secretos
+curl http://localhost:8000/api/system/status
+```
+
+La pantalla **Configuración** (`/configuracion` en el frontend) muestra
+este estado de forma legible: cursos detectados y su diagnóstico, proveedor
+de IA configurado, proveedor de voz configurado, estado del backend — nunca
+credenciales, headers, prompts ni el Grounding Packet.
+
+## Voz neural opcional (OpenAI TTS, Fase 7)
+
+Además de la voz del navegador (Web Speech API, sin credenciales), se
+puede activar voz neural con el SDK de OpenAI ya usado para el LLM:
+
+```
+VOICE_PROVIDER=auto       # auto (neural si está configurada, si no navegador) | browser | openai
+OPENAI_API_KEY=...
+OPENAI_TTS_MODEL=gpt-4o-mini-tts
+OPENAI_TTS_VOICE=marin
+```
+
+Sin `OPENAI_API_KEY`, `VOICE_PROVIDER=auto`/`browser` siguen funcionando
+con la voz del navegador; `VOICE_PROVIDER=openai` sin credencial ofrece
+volver a la voz del navegador ante cualquier error, sin romper la clase.
+El audio nunca se genera reescribiendo el texto: siempre es exactamente la
+narración/respuesta ya validada por el grounding. Se cachea en
+`data/speech-cache/` (gitignored) por contenido+voz+modelo+velocidad.
+
 ## Estructura del repositorio
 
 ```
@@ -218,17 +296,23 @@ pwc-tutor-agent/
         tests/
     frontend/           SPA (React + TypeScript + Vite)
         src/
-            classroom/      Classroom Engine, SceneRenderer, visuals, voz,
-                            tutor conversacional, checkpoints
+            classroom/      Classroom Engine, SceneRenderer, visuals, voz
+                            (navegador + neural), tutor conversacional,
+                            checkpoints
             certification/  Práctica de certificación grounded (Fase 6)
     courses/             Curso de demo (filesystem de cursos)
         demo-curso-ia/
     data/
-        lesson-cache/       Cache de LessonPlan (gitignored)
-        certification-cache/  Cache de QuestionBank (gitignored)
+        lesson-cache/          Cache de LessonPlan (gitignored)
+        certification-cache/   Cache de QuestionBank (gitignored)
+        speech-cache/           Cache de audio TTS (gitignored)
     docs/
         ARCHITECTURE.md
         ROADMAP.md
+        COURSE_FORMAT.md
+        CONFIGURATION.md
+    scripts/
+        setup.ps1   start.ps1   stop.ps1   doctor.ps1
     docker-compose.yml
     .env.example
     CLAUDE.md

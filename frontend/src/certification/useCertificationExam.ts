@@ -137,7 +137,7 @@ export function useCertificationExam(courseId: string | undefined): UseCertifica
         selected_option_ids: session.selections[q.question_id] ?? [],
       }));
       const result = await api.evaluateCertificationSimulation(courseId, { answers });
-      saveCertificationResult(courseId, result);
+      saveCertificationResult(courseId, session.practiceId, result);
       return result;
     } catch (err) {
       setError(describeCertificationError(err));

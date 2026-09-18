@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from app.config import Settings, get_settings
 from app.models.lesson import GenerateLessonRequest, LessonPlan
@@ -93,6 +94,38 @@ def get_topic_grounding(
         source_block_count=canonical.source_block_count,
         grounding_packet=packet,
     )
+
+
+@router.get("/{course_id}/modules/{module_id}/topics/{topic_id}/assets/{asset_path:path}")
+def get_topic_asset(
+    course_id: str,
+    module_id: str,
+    topic_id: str,
+    asset_path: str,
+    settings: Settings = Depends(get_settings),
+) -> FileResponse:
+    """Sirve un asset (imagen) referenciado con una ruta relativa desde el
+    Markdown de un tópico (Fase 7, sección 13). Resuelve SIEMPRE desde el
+    repositorio seguro de cursos; nunca acepta una ruta de filesystem
+    arbitraria del cliente. Solo raster seguro (png/jpg/jpeg/webp/gif);
+    nunca .svg/.html/.js/.exe/.ps1/.bat/.cmd. 404 tanto para "no existe"
+    como para "tipo no soportado" o "intento de path traversal" — el
+    cliente nunca distingue esos tres casos entre sí.
+    """
+    try:
+        real_path, mime_type = course_service.resolve_topic_asset(
+            settings.content_path, course_id, module_id, topic_id, asset_path
+        )
+    except course_service.CourseNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Curso '{course_id}' no encontrado")
+    except course_service.ModuleNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Módulo '{module_id}' no encontrado")
+    except course_service.TopicNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Tópico '{topic_id}' no encontrado")
+    except course_service.AssetNotFoundError:
+        raise HTTPException(status_code=404, detail="Asset no encontrado")
+
+    return FileResponse(real_path, media_type=mime_type)
 
 
 @router.post(

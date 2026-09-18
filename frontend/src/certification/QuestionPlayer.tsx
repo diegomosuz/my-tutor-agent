@@ -1,4 +1,8 @@
+import { useEffect, useRef, useState } from "react";
 import type { ExamQuestionView } from "../types/api";
+import { speakSequenceUnified } from "../classroom/voicePlayback";
+import { useVoicePreference } from "../classroom/useVoicePreference";
+import { isSpeechSupported } from "../classroom/speech";
 
 export interface QuestionPlayerProps {
   question: ExamQuestionView;
@@ -13,7 +17,12 @@ export interface QuestionPlayerProps {
  * plano (nunca `dangerouslySetInnerHTML`): el stem/las opciones son
  * siempre texto generado por el LLM, nunca interpretado como HTML/Markdown
  * (sección 30 de Fase 5, mismo principio en Fase 6). Radio para
- * single_choice, checkbox para multiple_choice. */
+ * single_choice, checkbox para multiple_choice.
+ *
+ * "Leer pregunta" (Fase 7, sección 32) reutiliza el mismo subsistema de
+ * voz que el resto de la app: lee SOLO stem + opciones, NUNCA la
+ * respuesta correcta ni la explicación (esta vista, `ExamQuestionView`,
+ * estructuralmente no las tiene — ver `types/api.ts`). */
 export function QuestionPlayer({
   question,
   index,
@@ -23,6 +32,23 @@ export function QuestionPlayer({
   disabled,
 }: QuestionPlayerProps) {
   const isMultiple = question.question_type === "multiple_choice";
+  const { useNeural } = useVoicePreference();
+  const speechSupported = isSpeechSupported();
+  const [isReading, setIsReading] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
+  const cancelReadRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => {
+      cancelReadRef.current?.();
+    };
+  }, []);
+
+  // Cancelar la lectura en curso al cambiar de pregunta.
+  useEffect(() => {
+    cancelReadRef.current?.();
+    setIsReading(false);
+  }, [question.question_id]);
 
   function toggleOption(optionId: string) {
     if (disabled) return;
@@ -34,6 +60,29 @@ export function QuestionPlayer({
     } else {
       onChange([optionId]);
     }
+  }
+
+  function handleReadQuestion() {
+    cancelReadRef.current?.();
+    setReadError(null);
+    const texts = [
+      question.stem,
+      ...question.options.map((o) => `Opción ${o.option_id}: ${o.text}`),
+    ];
+    setIsReading(true);
+    cancelReadRef.current = speakSequenceUnified(texts, {
+      useNeural,
+      onDone: () => setIsReading(false),
+      onNeuralError: (message) => {
+        setReadError(message);
+        setIsReading(false);
+      },
+    });
+  }
+
+  function handleStopReading() {
+    cancelReadRef.current?.();
+    setIsReading(false);
   }
 
   return (
@@ -68,6 +117,15 @@ export function QuestionPlayer({
           );
         })}
       </div>
+      {(speechSupported || useNeural) && (
+        <div className="cert-question__voice">
+          <button type="button" onClick={isReading ? handleStopReading : handleReadQuestion}>
+            {isReading ? "⏹ Detener lectura" : "🔊 Leer pregunta"}
+          </button>
+          {useNeural && <span className="voice-disclosure">Voz generada por IA</span>}
+          {readError && <span className="cert-question__voice-error">{readError}</span>}
+        </div>
+      )}
     </div>
   );
 }

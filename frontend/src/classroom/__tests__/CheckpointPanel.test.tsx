@@ -12,17 +12,18 @@ vi.mock("../../api/client", () => {
   return { api: { evaluateCheckpoint: vi.fn() }, ApiError };
 });
 
-vi.mock("../speech", () => ({
-  speakSequence: vi.fn(() => vi.fn()),
+vi.mock("../voicePlayback", () => ({
+  speakSequenceUnified: vi.fn(() => vi.fn()),
+  cancelAllSpeech: vi.fn(),
 }));
 
 import { api, ApiError } from "../../api/client";
-import { speakSequence } from "../speech";
+import { speakSequenceUnified } from "../voicePlayback";
 import { CheckpointPanel } from "../CheckpointPanel";
 import type { LessonScene } from "../../types/api";
 
 const mockedEvaluate = api.evaluateCheckpoint as unknown as ReturnType<typeof vi.fn>;
-const mockedSpeakSequence = speakSequence as unknown as ReturnType<typeof vi.fn>;
+const mockedSpeakSequence = speakSequenceUnified as unknown as ReturnType<typeof vi.fn>;
 
 const IDS = { courseId: "curso-demo", moduleId: "modulo-demo", topicId: "topico-demo" };
 
@@ -197,7 +198,7 @@ describe("CheckpointPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Comprobar" }));
 
     await waitFor(() => expect(mockedSpeakSequence).toHaveBeenCalledTimes(1));
-    expect(mockedSpeakSequence).toHaveBeenCalledWith(["Bien."], { rate: 1 });
+    expect(mockedSpeakSequence).toHaveBeenCalledWith(["Bien."], expect.objectContaining({ rate: 1 }));
   });
 
   it("no lee el feedback por voz cuando voiceEnabled=false", async () => {

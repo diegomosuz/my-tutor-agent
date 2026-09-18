@@ -741,5 +741,44 @@ Ver `docs/ROADMAP.md` para el detalle de fases futuras.
   evaluación subjetiva con LLM, sin persistencia de resultados en backend,
   sin historial de intentos, sin TTS de OpenAI.
 
+- **Fase 7** (completa): productización + hardening sobre las Fases 1-6,
+  sin features experimentales nuevas. Bugfix real de colisión de cache
+  (identidad de tópico ausente de la cache key de `LessonPlan`/
+  `QuestionBank`, corregido con `course_id/module_id/topic_id` +
+  `CACHE_SCHEMA_VERSION="cache-v2"`, reproducido con test antes del fix).
+  Fix de `certificationStorage` para aislar por `practice_id` además de
+  `course_id`. Assets de curso: imágenes relativas servidas por un
+  endpoint contextual de solo lectura (`.../assets/{asset_path}`,
+  allow-list `.png/.jpg/.jpeg/.webp/.gif`, traversal estructuralmente
+  imposible), `SafeMarkdown` en el frontend (nunca `dangerouslySetInnerHTML`,
+  bloquea `javascript:`/`data:`/`file:`, no auto-carga imágenes externas).
+  Diagnóstico de cursos de solo lectura (`GET /api/system/course-diagnostics`)
+  y estado general (`GET /api/system/status`) sin exponer secretos, ambos
+  reflejados en una nueva pantalla de Configuración (`/configuracion`).
+  `ErrorBoundary` raíz + pantalla 404. Fix del overflow horizontal global
+  del header/nav en mobile. Voz neural opcional (`SpeechService` +
+  `POST /api/speech`, SDK `openai` ya instalado, sin dependencia nueva) con
+  cache en filesystem (`data/speech-cache/`), integrada sobre el mismo
+  motor de reproducción que la voz del navegador vía una fachada única
+  (`voicePlayback.ts`) que garantiza "nunca dos audios simultáneos";
+  fallback automático a voz del navegador ante cualquier error de voz
+  neural, nunca rompe la clase. `X-Request-ID` por request +
+  `SecurityHeadersMiddleware` (nosniff, Referrer-Policy). `GET /api/ready`
+  (solo componentes locales, nunca considera falta de credencial como "no
+  listo"). Non-root user en ambos Dockerfiles + `.dockerignore`. Scripts de
+  Windows (`scripts/setup.ps1` interactivo con credenciales sin eco,
+  `start.ps1`, `stop.ps1`, `doctor.ps1`), documentación nueva
+  (`docs/COURSE_FORMAT.md`, `docs/CONFIGURATION.md`, sección "Modelo de
+  seguridad local" en `docs/ARCHITECTURE.md`, Quick Start Windows en
+  README). 319 tests de backend y 187 de frontend pasando (71 tests
+  nuevos de backend, 42 de frontend específicos de Fase 7); `npm audit`
+  reporta únicamente vulnerabilidades de tooling de desarrollo (vitest/
+  vite/esbuild, nunca ejecutadas en runtime) y una de `react-router-dom`
+  (moderada, sin fix no-breaking disponible) — ninguna se resolvió con
+  `--force` para no migrar de major version en esta fase. Cero
+  dependencias nuevas. Sin Kubernetes, sin Redis, sin PostgreSQL, sin
+  autenticación empresarial, sin RAG/embeddings/vector DB, sin LangChain/
+  LangGraph.
+
 Cualquier trabajo futuro debe respetar este documento y actualizar la
 sección correspondiente del roadmap al avanzar de fase.

@@ -305,3 +305,64 @@ export interface CertificationPracticeResult {
   question_results: QuestionEvaluation[];
   topics_to_reinforce: TopicBreakdown[];
 }
+
+// ---------------------------------------------------------------------
+// Fase 7 — Sistema, diagnóstico de cursos, voz neural opcional
+// ---------------------------------------------------------------------
+
+export type DiagnosticSeverity = "ok" | "warning" | "error";
+
+export interface CourseDiagnosticIssue {
+  code: string;
+  severity: DiagnosticSeverity;
+  message: string;
+  module_id: string | null;
+  topic_id: string | null;
+}
+
+export interface CourseDiagnosticReport {
+  course_id: string;
+  status: DiagnosticSeverity;
+  issues: CourseDiagnosticIssue[];
+}
+
+export interface CourseDiagnosticsResponse {
+  course_count: number;
+  status: DiagnosticSeverity;
+  reports: CourseDiagnosticReport[];
+}
+
+export interface LlmStatus {
+  provider: string;
+  model: string;
+  configured: boolean;
+  prompt_version: string;
+  certification_prompt_version: string;
+}
+
+export interface VoiceStatus {
+  provider: string;
+  neural_configured: boolean;
+  tts_model: string;
+}
+
+export interface CoursesStatus {
+  count: number;
+  diagnostics: DiagnosticSeverity;
+}
+
+/** Nunca incluye API keys, headers, prompts ni Grounding Packets. */
+export interface SystemStatusResponse {
+  app_version: string;
+  backend: string;
+  courses: CoursesStatus;
+  llm: LlmStatus;
+  voice: VoiceStatus;
+  cache_writable: boolean;
+}
+
+export interface ReadyResponse {
+  status: "ready" | "not_ready";
+  content_readable: boolean;
+  data_writable: boolean;
+}

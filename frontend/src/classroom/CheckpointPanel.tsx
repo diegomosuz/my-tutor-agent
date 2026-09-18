@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api } from "../api/client";
 import type { CheckpointEvaluationBody, LessonScene } from "../types/api";
-import { speakSequence } from "./speech";
+import { speakSequenceUnified } from "./voicePlayback";
 import { describeTutorError } from "./tutorErrors";
 
 const VERDICT_LABELS: Record<string, string> = {
@@ -18,6 +18,9 @@ export interface CheckpointPanelProps {
   scene: LessonScene;
   voiceEnabled: boolean;
   voiceRate: number;
+  /** Fase 7: si true, intenta voz neural (OpenAI TTS) para leer el
+   * feedback en vez de Web Speech API. */
+  useNeuralVoice?: boolean;
 }
 
 /**
@@ -35,11 +38,13 @@ export function CheckpointPanel({
   scene,
   voiceEnabled,
   voiceRate,
+  useNeuralVoice = false,
 }: CheckpointPanelProps) {
   const [answer, setAnswer] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CheckpointEvaluationBody | null>(null);
   const [error, setError] = useState<{ title: string; detail: string } | null>(null);
+  const [neuralVoiceError, setNeuralVoiceError] = useState<string | null>(null);
   const cancelVoiceRef = useRef<(() => void) | null>(null);
 
   // Todos los hooks van ANTES de cualquier return condicional (reglas de
@@ -70,9 +75,14 @@ export function CheckpointPanel({
         // Cancela cualquier lectura anterior (ej. un reintento rápido)
         // antes de empezar una nueva — nunca se superponen dos voces.
         cancelVoiceRef.current?.();
-        cancelVoiceRef.current = speakSequence(
+        setNeuralVoiceError(null);
+        cancelVoiceRef.current = speakSequenceUnified(
           evaluation.feedback.map((chunk) => chunk.text),
-          { rate: voiceRate }
+          {
+            useNeural: useNeuralVoice,
+            rate: voiceRate,
+            onNeuralError: (message) => setNeuralVoiceError(message),
+          }
         );
       }
     } catch (err) {
@@ -128,6 +138,17 @@ export function CheckpointPanel({
             <div className="checkpoint-panel__ideal">
               <strong>Respuesta de referencia:</strong>
               <p>{result.ideal_answer.text}</p>
+            </div>
+          )}
+          {voiceEnabled && useNeuralVoice && !neuralVoiceError && (
+            <span className="voice-disclosure">Voz generada por IA</span>
+          )}
+          {neuralVoiceError && (
+            <div className="voice-neural-error">
+              <span>{neuralVoiceError}</span>
+              <button type="button" onClick={() => setNeuralVoiceError(null)}>
+                Cerrar
+              </button>
             </div>
           )}
           <button type="button" className="checkpoint-panel__retry" onClick={handleRetry}>

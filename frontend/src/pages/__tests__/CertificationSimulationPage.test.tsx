@@ -3,7 +3,17 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../api/client", () => ({
-  api: { getCourse: vi.fn().mockResolvedValue(null) },
+  api: {
+    getCourse: vi.fn().mockResolvedValue(null),
+    getSystemStatus: vi.fn().mockResolvedValue({
+      app_version: "0.7.0",
+      backend: "ok",
+      courses: { count: 1, diagnostics: "ok" },
+      llm: { provider: "pwc", model: "", configured: false, prompt_version: "", certification_prompt_version: "" },
+      voice: { provider: "browser", neural_configured: false, tts_model: "gpt-4o-mini-tts" },
+      cache_writable: true,
+    }),
+  },
 }));
 
 const mockSelectAnswer = vi.fn();

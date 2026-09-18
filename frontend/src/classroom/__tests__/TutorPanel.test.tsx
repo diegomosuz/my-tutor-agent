@@ -40,8 +40,10 @@ const mockSpeakSequenceCancel = vi.fn();
 const mockSpeakSequence = vi.fn(
   (_texts: string[], _options: { rate?: number }) => mockSpeakSequenceCancel
 );
-vi.mock("../speech", () => ({
-  speakSequence: (texts: string[], options: { rate?: number }) => mockSpeakSequence(texts, options),
+vi.mock("../voicePlayback", () => ({
+  speakSequenceUnified: (texts: string[], options: { rate?: number }) =>
+    mockSpeakSequence(texts, options),
+  cancelAllSpeech: vi.fn(),
 }));
 
 import { TutorPanel } from "../TutorPanel";
@@ -141,7 +143,10 @@ describe("TutorPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
 
     await waitFor(() => expect(mockSpeakSequence).toHaveBeenCalledTimes(1));
-    expect(mockSpeakSequence).toHaveBeenCalledWith(["Un Pod agrupa contenedores."], { rate: 1 });
+    expect(mockSpeakSequence).toHaveBeenCalledWith(
+      ["Un Pod agrupa contenedores."],
+      expect.objectContaining({ rate: 1 })
+    );
   });
 
   it("no lee por voz cuando voiceEnabled=false (nunca superpone narración de clase y tutor)", async () => {

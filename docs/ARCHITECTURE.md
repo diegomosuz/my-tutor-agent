@@ -873,3 +873,101 @@ semántica —, tópicos a reforzar ordenados por menor score, todo grounded)
   navegador, no un historial permanente (eso queda para una fase futura,
   ver `docs/ROADMAP.md`); `sessionStorage` expresa esa vida útil más corta
   sin código adicional.
+
+## 11. Productización y hardening (Fase 7)
+
+- **Scripts PowerShell en vez de un instalador o WSL**: `scripts/setup.ps1`
+  / `start.ps1` / `stop.ps1` / `doctor.ps1` son scripts simples (sin
+  Chocolatey, sin instalador `.msi`, sin WSL) que asumen únicamente Docker
+  Desktop. Cada uno está compuesto de funciones chicas y testeables por
+  separado (dot-source guard: `if ($MyInvocation.InvocationName -ne '.')`),
+  para poder probarlas de forma aislada sin ejecutar el flujo interactivo
+  completo.
+- **Cache key con identidad contextual completa (bugfix real, Fase 7)**:
+  la cache de `LessonPlan`/`QuestionBank` dependía solo de
+  `content_sha256 + provider + model + prompt_version`. Dos tópicos
+  distintos con Markdown idéntico (por ejemplo, dos plantillas de
+  introducción) colisionaban en la misma entrada de cache y el segundo
+  tópico recibía la identidad (`course_id`/`module_id`/`topic_id`/
+  `lesson_id`/`bank_id`) del primero. Se reprodujo con un test que falla
+  antes del fix y se corrigió incluyendo `course_id, module_id, topic_id`
+  (+ `items_per_topic` en certificación) en la cache key, más un
+  `CACHE_SCHEMA_VERSION` (`cache-v2`) compartido para invalidar de forma
+  limpia toda cache con el formato de clave anterior — sin sistema de
+  migración: las caches siguen siendo descartables por diseño.
+- **Allow-list de extensiones para assets de curso, nunca block-list**:
+  el endpoint de imágenes de tópico sólo sirve `.png .jpg .jpeg .webp
+  .gif`; cualquier otra extensión (incluido `.svg`, que puede contener
+  contenido activo) se rechaza, en vez de intentar enumerar y bloquear
+  extensiones peligrosas una por una.
+- **`openai` SDK reutilizado para TTS, sin dependencia nueva**: la versión
+  ya instalada del SDK oficial soporta `client.audio.speech.create(...)`,
+  así que la voz neural no agrega ninguna dependencia — mismo principio
+  que llevó a reutilizar `httpx`/`openai` en la Fase 3.
+- **Un `SpeechService` simple en vez de una jerarquía de providers para
+  voz**: a diferencia de `LLMProvider` (dos proveedores intercambiables
+  reales), sólo existe un backend de voz neural (OpenAI); una interfaz
+  abstracta adicional no tendría un segundo consumidor real todavía, así
+  que `speech_service.py` es una función + una clase de cliente, no un ABC.
+- **`voicePlayback.ts` como fachada única sobre dos backends de voz**: en
+  vez de que cada componente (aula, tutor, checkpoints, certificación)
+  sepa si la voz activa es del navegador o neural, un módulo central
+  (`cancelAllSpeech`/`pauseAllSpeech`/`resumeAllSpeech`) actúa siempre
+  sobre ambos backends de forma idempotente — garantiza "nunca dos audios
+  simultáneos" desde un solo lugar, sin tener que rastrear "cuál backend
+  está sonando" en cada punto de la UI.
+- **Sin Nginx**: el frontend sigue sirviéndose con el dev server de Vite
+  dentro del container, igual que en fases anteriores. Para una aplicación
+  local dockerizada (sin CDN, sin múltiples réplicas, sin necesidad de
+  servir assets estáticos a gran escala) agregar Nginx sólo por "pureza de
+  producción" sumaría una capa de configuración sin un beneficio real en
+  este contexto — se documenta la decisión acá en vez de tomarla
+  implícitamente.
+- **`X-Request-ID` con `ContextVar` en vez de un framework de tracing**:
+  un middleware genera (o valida) un id por request y lo expone vía
+  `ContextVar` para que los logs estructurados lo incluyan
+  automáticamente sin tener que pasarlo explícitamente por cada función;
+  no se agregó OpenTelemetry ni un colector porque no hay múltiples
+  servicios que correlacionar todavía.
+
+### Modelo de seguridad local
+
+- **Las credenciales nunca salen del backend.** `PWC_GENAI_API_KEY`,
+  `GEN_AI_API_KEY` y `OPENAI_API_KEY` sólo existen como variables de
+  entorno del proceso backend; nunca se envían al frontend, nunca
+  aparecen en una respuesta HTTP, nunca se loguean (los mensajes de log de
+  errores upstream se construyen explícitamente sin el header
+  `Authorization` ni el cuerpo crudo de la respuesta del proveedor).
+- **`.env` es un secreto local en texto plano.** Está en `.gitignore`; el
+  repositorio no versiona ninguna key real. `scripts/setup.ps1` nunca
+  imprime la credencial en pantalla (entrada sin eco vía `SecureString`) y
+  nunca la pasa como argumento de línea de comandos.
+- **`/content` se monta de solo lectura.** El backend nunca escribe ni
+  modifica el directorio de cursos del host; sólo lee. La resolución de
+  curso/módulo/tópico/asset siempre enumera directorios reales y compara
+  slugs — nunca concatena el `id` recibido en un request directamente a
+  una ruta de filesystem, lo que hace el path traversal estructuralmente
+  imposible (reforzado con `Path.resolve()` + `is_relative_to(root)`).
+- **No hay navegación de filesystem arbitraria.** El único endpoint que
+  sirve un archivo del host (`.../assets/{asset_path}`) exige que el
+  archivo esté dentro del curso resuelto y tenga una extensión de la
+  allow-list de imágenes; todo lo demás (incluidos `.html`/`.js`/binarios)
+  se rechaza con 404, no con un error que revele la razón exacta.
+  Ver [`test_course_assets.py`](../backend/tests/test_course_assets.py).
+- **La salida del LLM nunca es ejecutable.** `VisualPlan` es una
+  especificación declarativa (enum cerrado + texto libre nunca
+  interpretado como markup); el frontend no tiene `dangerouslySetInnerHTML`,
+  `eval`, `new Function` ni HTML crudo proveniente de una `LessonPlan` o de
+  una respuesta del tutor en ningún componente.
+- **La clave de respuestas de certificación es server-side hasta
+  evaluar.** El frontend nunca recibe `correct_option_ids` ni la
+  explicación de una pregunta antes de que el alumno responda; recién
+  después de `POST .../submit` la respuesta HTTP incluye esa información.
+- **No hay conversaciones persistidas en el backend.** El historial del
+  tutor vive en memoria del navegador durante la sesión; las caches
+  (`lesson-cache`, `certification-cache`, `speech-cache`) sólo guardan
+  contenido ya grounded y determinísticamente verificable, nunca datos
+  personales ni identificadores de usuario.
+- **Las caches son locales y descartables.** Viven en `data/` (filesystem,
+  gitignored) dentro del container/host; se pueden borrar manualmente en
+  cualquier momento sin romper la aplicación.

@@ -1,7 +1,7 @@
 # Roadmap — PwC AI Tutor
 
 Este documento describe las fases futuras del proyecto. **Ninguna de las
-fases listadas debajo de la Fase 6 está implementada todavía.** Se incluyen
+fases listadas debajo de la Fase 7 está implementada todavía.** Se incluyen
 acá únicamente como referencia de dirección del producto, para que
 decisiones de diseño de fases tempranas (contratos de API, modelo canónico,
 interfaz `LLMProvider`, contratos de `LessonPlan`, Classroom Engine, etc.)
@@ -227,14 +227,46 @@ exclusivamente en el material del curso".
   cualquier dato de examen oficial (duración, passing score, blueprint por
   dominio), predicción de aprobación.
 
-## Fase 7 — TTS avanzado, diagramas enriquecidos y animaciones complejas
+## ✅ Fase 7 — Productización, hardening y UX de Windows
 
-- Integración de un proveedor TTS server-side (`VOICE_PROVIDER=openai` u
-  otro) como alternativa a la Web Speech API del navegador (Fase 4) cuando
-  se necesite mejor calidad/control de voz; la Web Speech API se mantiene
-  como fallback sin credencial. Esto incluiría también la voz del tutor y
-  del lector de preguntas de certificación (Fase 5/6), que hoy solo usan
-  `window.speechSynthesis`.
+- Scripts de Windows (`scripts/setup.ps1` interactivo, `start.ps1`,
+  `stop.ps1`, `doctor.ps1`) para levantar/diagnosticar el stack sin
+  requerir Python/Node en el host.
+- Bugfix real de colisión de cache: la cache key de `LessonPlan`/
+  `QuestionBank` ahora incluye `course_id/module_id/topic_id` (+
+  `items_per_topic` en certificación) y un `CACHE_SCHEMA_VERSION`
+  compartido (`cache-v2`) para invalidar limpiamente el formato anterior.
+- Assets de curso: imágenes relativas (`.png/.jpg/.jpeg/.webp/.gif`)
+  servidas por un endpoint contextual de solo lectura, sin path traversal
+  posible; `SafeMarkdown` en el frontend nunca interpreta HTML crudo ni
+  carga imágenes externas automáticamente.
+- Diagnóstico de cursos de solo lectura y pantalla de Configuración
+  (`/configuracion`) que muestra estado de cursos/IA/voz/sistema sin
+  exponer secretos.
+- `ErrorBoundary` raíz + pantalla 404; fix del overflow horizontal global
+  del header en mobile.
+- **Voz neural opcional** (`VOICE_PROVIDER=openai`/`auto`): TTS de OpenAI
+  (`client.audio.speech.create`, SDK ya instalado) integrado sobre el
+  mismo motor de reproducción que la Web Speech API del navegador
+  (fachada `voicePlayback.ts`, nunca dos audios simultáneos), con cache en
+  filesystem y fallback automático a voz del navegador ante cualquier
+  error. Cubre lo que la fase especulativa anterior de este roadmap
+  llamaba "TTS avanzado" para narración de clase, tutor y lector de
+  preguntas de certificación.
+- Hardening de Docker (usuarios non-root, `.dockerignore`, healthchecks),
+  `X-Request-ID` por request, `SecurityHeadersMiddleware`, `GET /api/ready`.
+- Documentación nueva: `docs/COURSE_FORMAT.md`, `docs/CONFIGURATION.md`,
+  sección "Modelo de seguridad local" en `docs/ARCHITECTURE.md`, Quick
+  Start para Windows en el README.
+- Ver `CLAUDE.md` sección "Estado de fases" y `docs/ARCHITECTURE.md`
+  sección 11 para el detalle completo.
+- **Fuera de alcance deliberado** (queda para fases futuras): diagramas
+  tipo Mermaid para `process`/`hierarchy`/`architecture`/`concept_map`,
+  animaciones de mayor producción (Framer Motion u otra), persistencia de
+  resultados de certificación, autenticación empresarial, base de datos.
+
+## Fase 8 — Diagramas enriquecidos y animaciones complejas
+
 - Diagramas más ricos para `process`/`hierarchy`/`architecture`/
   `concept_map` (ej. layouts tipo Mermaid) cuando el `VisualPlan` y los
   `SourceBlock` citados establezcan relaciones explícitas suficientes —
@@ -242,7 +274,7 @@ exclusivamente en el material del curso".
 - Animaciones de mayor producción (transiciones más elaboradas entre
   escenas) evaluando si CSS sigue alcanzando o se justifica Framer Motion.
 
-## Fase 8 — Certificación avanzada y progreso persistente
+## Fase 9 — Certificación avanzada y progreso persistente
 
 - Persistencia de resultados de práctica de certificación: evaluar si
   alcanza con `localStorage`/`sessionStorage` extendido o si se justifica
@@ -254,7 +286,7 @@ exclusivamente en el material del curso".
   grounding estricto y dejando claro que seguiría sin ser un examen
   oficial.
 
-## Fase 9 — "Mi aprendizaje" y progreso del alumno
+## Fase 10 — "Mi aprendizaje" y progreso del alumno
 
 - El puntero de progreso por tópico ya existe desde Fase 4
   (`classroomStorage.ts`, `localStorage`); esta fase construye la pantalla

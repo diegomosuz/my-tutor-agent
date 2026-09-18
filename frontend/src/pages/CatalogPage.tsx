@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { CourseSummary } from "../types/api";
+import type { CourseDiagnosticReport, CourseSummary } from "../types/api";
 
 export function CatalogPage() {
   const [courses, setCourses] = useState<CourseSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Fase 7: diagnóstico discreto por curso (sección 48). Es puramente
+  // informativo — si falla, el catálogo sigue funcionando normalmente.
+  const [diagnostics, setDiagnostics] = useState<Record<string, CourseDiagnosticReport>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -18,6 +21,19 @@ export function CatalogPage() {
         if (!cancelled) {
           setError(err instanceof ApiError ? err.message : "No se pudo conectar con el servidor.");
         }
+      });
+    api
+      .getCourseDiagnostics()
+      .then((data) => {
+        if (cancelled) return;
+        const byId: Record<string, CourseDiagnosticReport> = {};
+        data.reports.forEach((r) => {
+          if (r.status !== "ok") byId[r.course_id] = r;
+        });
+        setDiagnostics(byId);
+      })
+      .catch(() => {
+        // Diagnóstico es informativo; nunca rompe el catálogo si falla.
       });
     return () => {
       cancelled = true;
@@ -58,18 +74,29 @@ export function CatalogPage() {
 
       {!error && courses !== null && courses.length > 0 && (
         <div className="card-grid">
-          {courses.map((course) => (
-            <Link key={course.id} to={`/cursos/${course.id}`} className="course-card">
-              <span className="course-card__stripe" aria-hidden="true" />
-              <h3>{course.title}</h3>
-              <p>{course.description || "Curso técnico del catálogo PwC AI Tutor."}</p>
-              <div className="course-card__meta">
-                <span>{course.module_count} módulos</span>
-                <span>{course.topic_count} tópicos</span>
-              </div>
-              <span className="course-card__cta">Ver curso →</span>
-            </Link>
-          ))}
+          {courses.map((course) => {
+            const diagnostic = diagnostics[course.id];
+            return (
+              <Link key={course.id} to={`/cursos/${course.id}`} className="course-card">
+                <span className="course-card__stripe" aria-hidden="true" />
+                <h3>{course.title}</h3>
+                <p>{course.description || "Curso técnico del catálogo PwC AI Tutor."}</p>
+                <div className="course-card__meta">
+                  <span>{course.module_count} módulos</span>
+                  <span>{course.topic_count} tópicos</span>
+                  {diagnostic && (
+                    <span
+                      className={`settings-badge settings-badge--${diagnostic.status}`}
+                      title={diagnostic.issues.map((i) => i.message).join(" | ")}
+                    >
+                      {diagnostic.status === "error" ? "revisar contenido" : "advertencia de contenido"}
+                    </span>
+                  )}
+                </div>
+                <span className="course-card__cta">Ver curso →</span>
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { AiStatusResponse } from "../types/api";
-import { speakSequence } from "./speech";
+import { speakSequenceUnified } from "./voicePlayback";
 import { TutorConversation } from "./TutorConversation";
 import { NOT_COVERED_MESSAGE, useTutor } from "./useTutor";
 import { useSpeechRecognition } from "./useSpeechRecognition";
@@ -20,6 +20,9 @@ export interface TutorPanelProps {
   aiStatus: AiStatusResponse | null;
   voiceEnabled: boolean;
   voiceRate: number;
+  /** Fase 7: si true, intenta voz neural (OpenAI TTS) en vez de Web
+   * Speech API para leer la respuesta del tutor. */
+  useNeuralVoice?: boolean;
   isInterrupting: boolean;
   onInterrupt: () => void;
   onContinueClass: () => void;
@@ -39,12 +42,14 @@ export function TutorPanel({
   aiStatus,
   voiceEnabled,
   voiceRate,
+  useNeuralVoice = false,
   isInterrupting,
   onInterrupt,
   onContinueClass,
   onInspectRef,
 }: TutorPanelProps) {
   const [question, setQuestion] = useState("");
+  const [neuralVoiceError, setNeuralVoiceError] = useState<string | null>(null);
   const tutor = useTutor({ courseId, moduleId, topicId, sceneId, onBeforeSend: onInterrupt });
   const recognition = useSpeechRecognition();
   const cancelTutorVoiceRef = useRef<(() => void) | null>(null);
@@ -83,11 +88,16 @@ export function TutorPanel({
       // cadena como cancelada) ANTES de arrancar una nueva: algunos
       // navegadores disparan "onend" al cancelar una utterance, lo que
       // podría hacer que la cadena vieja siga hablando el chunk siguiente
-      // si no se le avisa que está cancelada. speakSequence también hace
-      // su propio cancelSpeech() interno al arrancar, así que nunca se
+      // si no se le avisa que está cancelada. speakSequenceUnified también
+      // cancela ambos backends internamente al arrancar, así que nunca se
       // superponen dos voces en ningún caso.
       cancelTutorVoiceRef.current?.();
-      cancelTutorVoiceRef.current = speakSequence(texts, { rate: voiceRate });
+      setNeuralVoiceError(null);
+      cancelTutorVoiceRef.current = speakSequenceUnified(texts, {
+        useNeural: useNeuralVoice,
+        rate: voiceRate,
+        onNeuralError: (message) => setNeuralVoiceError(message),
+      });
     }
   }
 
@@ -131,6 +141,18 @@ export function TutorPanel({
         <div className="tutor-panel__error">
           <p className="tutor-panel__error-title">{tutor.error.title}</p>
           <p>{tutor.error.detail}</p>
+        </div>
+      )}
+
+      {voiceEnabled && useNeuralVoice && !neuralVoiceError && (
+        <span className="voice-disclosure">Voz generada por IA</span>
+      )}
+      {neuralVoiceError && (
+        <div className="voice-neural-error">
+          <span>{neuralVoiceError}</span>
+          <button type="button" onClick={() => setNeuralVoiceError(null)}>
+            Cerrar
+          </button>
         </div>
       )}
 

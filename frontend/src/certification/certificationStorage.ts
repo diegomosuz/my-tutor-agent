@@ -1,10 +1,16 @@
-// Persistencia local de la sesión de práctica de certificación (Fase 6).
+// Persistencia local de la sesión de práctica de certificación (Fase 6,
+// corregido en Fase 7 sección 4).
 //
-// Reglas de diseño (sección 50-51 de la especificación de Fase 6):
+// Reglas de diseño:
 // - sessionStorage, NUNCA localStorage: una práctica es de la sesión
 //   actual del navegador, no un historial permanente.
-// - Clave atada a course_id + practice_id: un practice_id nuevo (una
-//   preparación nueva) nunca se confunde con una sesión vieja.
+// - Clave atada a course_id + practice_id (no solo course_id — bug real
+//   de Fase 6 corregido en Fase 7: dos practice_id del mismo curso
+//   compartían la misma entrada de sessionStorage y podían pisarse entre
+//   sí). Como las páginas (Practice/Simulation/Results) solo conocen
+//   courseId por la URL, se mantiene además un puntero liviano
+//   "cuál es el practice_id activo de este curso" para poder encontrar la
+//   sesión activa sin tener que pasar practice_id por la URL.
 // - NUNCA se guarda el answer key (correct_option_ids/explanation) antes
 //   de que el alumno responda: `selections` solo guarda
 //   question_id -> selected_option_ids elegidos por el alumno.
@@ -20,6 +26,7 @@ import type {
   QuestionEvaluation,
 } from "../types/api";
 
+const ACTIVE_PREFIX = "pwc-tutor:certification-active:";
 const EXAM_PREFIX = "pwc-tutor:certification-exam:";
 const RESULT_PREFIX = "pwc-tutor:certification-result:";
 
@@ -47,12 +54,24 @@ function hasSessionStorage(): boolean {
   }
 }
 
-function examKey(courseId: string): string {
-  return `${EXAM_PREFIX}${courseId}`;
+function activeKey(courseId: string): string {
+  return `${ACTIVE_PREFIX}${courseId}`;
 }
 
-function resultKey(courseId: string): string {
-  return `${RESULT_PREFIX}${courseId}`;
+function examKey(courseId: string, practiceId: string): string {
+  return `${EXAM_PREFIX}${courseId}:${practiceId}`;
+}
+
+function resultKey(courseId: string, practiceId: string): string {
+  return `${RESULT_PREFIX}${courseId}:${practiceId}`;
+}
+
+function readActivePracticeId(courseId: string): string | null {
+  try {
+    return window.sessionStorage.getItem(activeKey(courseId));
+  } catch {
+    return null;
+  }
 }
 
 function isValidExamSession(value: unknown): value is StoredExamSession {
@@ -72,7 +91,9 @@ function isValidExamSession(value: unknown): value is StoredExamSession {
 export function loadExamSession(courseId: string): StoredExamSession | null {
   if (!hasSessionStorage()) return null;
   try {
-    const raw = window.sessionStorage.getItem(examKey(courseId));
+    const practiceId = readActivePracticeId(courseId);
+    if (!practiceId) return null;
+    const raw = window.sessionStorage.getItem(examKey(courseId, practiceId));
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     return isValidExamSession(parsed) ? parsed : null;
@@ -84,7 +105,16 @@ export function loadExamSession(courseId: string): StoredExamSession | null {
 export function saveExamSession(session: StoredExamSession): void {
   if (!hasSessionStorage()) return;
   try {
-    window.sessionStorage.setItem(examKey(session.courseId), JSON.stringify(session));
+    window.sessionStorage.setItem(
+      examKey(session.courseId, session.practiceId),
+      JSON.stringify(session)
+    );
+    // Marca este practice_id como el activo para el curso — así
+    // loadExamSession(courseId) lo encuentra sin necesitar el practice_id
+    // en la URL. Preparar una práctica NUEVA (prepare()) sobrescribe este
+    // puntero de forma intencional: reemplaza la práctica anterior del
+    // mismo curso, nunca mezcla datos de dos practice_id distintos.
+    window.sessionStorage.setItem(activeKey(session.courseId), session.practiceId);
   } catch {
     // Cuota excedida u otro error: la restauración es una conveniencia,
     // nunca debe romper la práctica en curso.
@@ -94,7 +124,11 @@ export function saveExamSession(session: StoredExamSession): void {
 export function clearExamSession(courseId: string): void {
   if (!hasSessionStorage()) return;
   try {
-    window.sessionStorage.removeItem(examKey(courseId));
+    const practiceId = readActivePracticeId(courseId);
+    if (practiceId) {
+      window.sessionStorage.removeItem(examKey(courseId, practiceId));
+    }
+    window.sessionStorage.removeItem(activeKey(courseId));
   } catch {
     // ignorar
   }
@@ -103,7 +137,9 @@ export function clearExamSession(courseId: string): void {
 export function loadCertificationResult(courseId: string): CertificationPracticeResult | null {
   if (!hasSessionStorage()) return null;
   try {
-    const raw = window.sessionStorage.getItem(resultKey(courseId));
+    const practiceId = readActivePracticeId(courseId);
+    if (!practiceId) return null;
+    const raw = window.sessionStorage.getItem(resultKey(courseId, practiceId));
     return raw ? (JSON.parse(raw) as CertificationPracticeResult) : null;
   } catch {
     return null;
@@ -112,11 +148,12 @@ export function loadCertificationResult(courseId: string): CertificationPractice
 
 export function saveCertificationResult(
   courseId: string,
+  practiceId: string,
   result: CertificationPracticeResult
 ): void {
   if (!hasSessionStorage()) return;
   try {
-    window.sessionStorage.setItem(resultKey(courseId), JSON.stringify(result));
+    window.sessionStorage.setItem(resultKey(courseId, practiceId), JSON.stringify(result));
   } catch {
     // ignorar
   }
@@ -125,7 +162,10 @@ export function saveCertificationResult(
 export function clearCertificationResult(courseId: string): void {
   if (!hasSessionStorage()) return;
   try {
-    window.sessionStorage.removeItem(resultKey(courseId));
+    const practiceId = readActivePracticeId(courseId);
+    if (practiceId) {
+      window.sessionStorage.removeItem(resultKey(courseId, practiceId));
+    }
   } catch {
     // ignorar
   }

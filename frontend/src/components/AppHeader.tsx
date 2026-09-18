@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { to: "/", label: "Catálogo", end: true },
   { to: "/aula", label: "Aula Virtual" },
   { to: "/recursos", label: "Recursos" },
+  { to: "/configuracion", label: "Configuración" },
 ];
 
 export function AppHeader() {

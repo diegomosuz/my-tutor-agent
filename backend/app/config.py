@@ -16,6 +16,11 @@ from app.prompts.lesson import LESSON_PROMPT_VERSION
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Versión de aplicación, informativa únicamente (Fase 7, sección 17).
+    # No hay automatización de semver: se bumpea a mano al final de cada
+    # fase relevante.
+    app_version: str = "0.7.0"
+
     # Filesystem de cursos
     content_dir: str = "/content"
 
@@ -41,8 +46,23 @@ class Settings(BaseSettings):
     # se puede sobrescribir por env var si hace falta forzar un valor.
     lesson_prompt_version: str = LESSON_PROMPT_VERSION
 
-    # Proveedor de voz (preparado para el futuro, no se usa todavía)
-    voice_provider: str = "browser"
+    # Proveedor de voz (Fase 7). "auto": usa OpenAI TTS si está configurado,
+    # si no cae a Web Speech API del navegador. "browser": fuerza Web
+    # Speech, nunca llama a OpenAI. "openai": intenta OpenAI TTS y, si
+    # falla, ofrece fallback de navegador (nunca rompe la clase).
+    voice_provider: str = "auto"
+    openai_tts_model: str = "gpt-4o-mini-tts"
+    openai_tts_voice: str = "marin"
+    # Instructions por defecto si no se configura ninguna explícita: solo
+    # controla INTERPRETACIÓN VOCAL, nunca el contenido pedagógico (el
+    # texto sintetizado ya viene validado/grounded desde antes — ver
+    # SpeechService, sección 23 de la especificación de Fase 7).
+    openai_tts_instructions: str = (
+        "Hablar en español claro, profesional y natural. Mantener "
+        "correctamente los términos técnicos en su idioma original. Usar "
+        "ritmo de explicación de clase, no de publicidad."
+    )
+    speech_cache_dir: str = "/app/data/speech-cache"
 
     # Cache local de QuestionBanks de práctica de certificación (Fase 6,
     # filesystem, sin base de datos, mismo patrón que lesson_cache_dir).
@@ -67,6 +87,17 @@ class Settings(BaseSettings):
     @property
     def certification_cache_path(self) -> Path:
         return Path(self.certification_cache_dir)
+
+    @property
+    def speech_cache_path(self) -> Path:
+        return Path(self.speech_cache_dir)
+
+    @property
+    def data_path(self) -> Path:
+        """Directorio raíz de datos escribibles (lesson-cache/
+        certification-cache/speech-cache viven todos debajo de acá). Usado
+        por /api/ready para verificar permisos de escritura."""
+        return Path(self.lesson_cache_dir).parent
 
 
 @lru_cache

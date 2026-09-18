@@ -58,6 +58,7 @@ from app.prompts.certification import (
     build_certification_messages,
 )
 from app.services import courses as course_service
+from app.services.cache_schema import CACHE_SCHEMA_VERSION
 from app.services.certification_evaluator import VERDICT_POINTS, evaluate_answer
 from app.services.certification_validation import validate_question_bank
 from app.services.llm_provider import LLMConfigurationError, LLMProvider, get_llm_provider
@@ -113,8 +114,31 @@ class CertificationInvalidOptionError(Exception):
 # --------------------------------------------------------------------------
 
 
-def _cache_key(*, content_sha256: str, provider_name: str, model: str, prompt_version: str) -> str:
-    raw = f"{content_sha256}:{provider_name}:{model}:{prompt_version}"
+def _cache_key(
+    *,
+    course_id: str,
+    module_id: str,
+    topic_id: str,
+    content_sha256: str,
+    provider_name: str,
+    model: str,
+    prompt_version: str,
+    items_per_topic: int,
+) -> str:
+    """Identidad contextual completa (course_id/module_id/topic_id) +
+    content_sha256 + provider + model + prompt_version +
+    items_per_topic + CACHE_SCHEMA_VERSION.
+
+    Fase 7, sección 2 — mismo bug de colisión que LessonPlan: dos tópicos
+    distintos con el mismo Markdown (mismo content_sha256) no pueden
+    compartir bank_id, o el segundo heredaría el course_id/module_id/
+    topic_id del primero (ver `backend/tests/test_cache_isolation.py`).
+    `items_per_topic` también entra en la key porque afecta directamente
+    la cantidad de preguntas generadas (sección 2 de la especificación)."""
+    raw = (
+        f"{CACHE_SCHEMA_VERSION}:{course_id}:{module_id}:{topic_id}:"
+        f"{content_sha256}:{provider_name}:{model}:{prompt_version}:{items_per_topic}"
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -207,11 +231,18 @@ def get_or_generate_question_bank(
 
     cache_dir = settings.certification_cache_path
     prompt_version = settings.certification_prompt_version
+    items_per_topic = max(
+        _MIN_ITEMS_PER_TOPIC, min(_MAX_ITEMS_PER_TOPIC, settings.certification_items_per_topic)
+    )
     key = _cache_key(
+        course_id=canonical.course_id,
+        module_id=canonical.module_id,
+        topic_id=canonical.topic_id,
         content_sha256=canonical.content_sha256,
         provider_name=llm_provider.name,
         model=llm_provider.model,
         prompt_version=prompt_version,
+        items_per_topic=items_per_topic,
     )
 
     log_context = {
@@ -233,9 +264,6 @@ def get_or_generate_question_bank(
     log_event(logger, "certification_bank_generation_started", **log_context)
     started_at = time.monotonic()
 
-    items_per_topic = max(
-        _MIN_ITEMS_PER_TOPIC, min(_MAX_ITEMS_PER_TOPIC, settings.certification_items_per_topic)
-    )
     messages = build_certification_messages(
         grounding_packet=grounding_packet, items_per_topic=items_per_topic
     )

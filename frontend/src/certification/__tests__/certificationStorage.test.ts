@@ -65,7 +65,11 @@ describe("certificationStorage", () => {
   });
 
   it("ignora JSON corrupto en sessionStorage sin romper", () => {
-    window.sessionStorage.setItem("pwc-tutor:certification-exam:curso-demo", "{not-json");
+    saveExamSession(SESSION);
+    window.sessionStorage.setItem(
+      `pwc-tutor:certification-exam:curso-demo:${SESSION.practiceId}`,
+      "{not-json"
+    );
     expect(loadExamSession("curso-demo")).toBeNull();
   });
 
@@ -82,7 +86,8 @@ describe("certificationStorage", () => {
       question_results: [],
       topics_to_reinforce: [],
     };
-    saveCertificationResult("curso-demo", result);
+    saveExamSession(SESSION); // marca practice-1 como el practice_id activo
+    saveCertificationResult("curso-demo", "practice-1", result);
     expect(loadCertificationResult("curso-demo")).toEqual(result);
   });
 
@@ -99,7 +104,8 @@ describe("certificationStorage", () => {
       question_results: [],
       topics_to_reinforce: [],
     };
-    saveCertificationResult("curso-demo", result);
+    saveExamSession(SESSION);
+    saveCertificationResult("curso-demo", "practice-1", result);
     clearCertificationResult("curso-demo");
     expect(loadCertificationResult("curso-demo")).toBeNull();
   });
@@ -109,5 +115,61 @@ describe("certificationStorage", () => {
     saveExamSession({ ...SESSION, courseId: "otro-curso", practiceId: "practice-2" });
     expect(loadExamSession("curso-demo")?.practiceId).toBe("practice-1");
     expect(loadExamSession("otro-curso")?.practiceId).toBe("practice-2");
+  });
+
+  it("dos practice_id del mismo curso NO comparten respuestas (sección 4 de Fase 7)", () => {
+    const first: StoredExamSession = {
+      ...SESSION,
+      practiceId: "practice-1",
+      selections: { "Q-001": ["A"] },
+    };
+    saveExamSession(first);
+    expect(loadExamSession("curso-demo")?.selections).toEqual({ "Q-001": ["A"] });
+
+    // Preparar una práctica NUEVA para el mismo curso: distinto practice_id,
+    // respuestas vacías — nunca debe heredar las selecciones de la anterior.
+    const second: StoredExamSession = {
+      ...SESSION,
+      practiceId: "practice-2",
+      selections: {},
+    };
+    saveExamSession(second);
+    const loaded = loadExamSession("curso-demo");
+    expect(loaded?.practiceId).toBe("practice-2");
+    expect(loaded?.selections).toEqual({});
+
+    // Los datos de practice-1 siguen existiendo en su propia key (no se
+    // borraron), simplemente ya no son "la práctica activa" del curso —
+    // confirmado inspeccionando sessionStorage directamente.
+    const rawPractice1 = window.sessionStorage.getItem(
+      "pwc-tutor:certification-exam:curso-demo:practice-1"
+    );
+    expect(rawPractice1).not.toBeNull();
+    expect(JSON.parse(rawPractice1 as string).selections).toEqual({ "Q-001": ["A"] });
+  });
+
+  it("guardar un resultado usa el practice_id activo, nunca el de otra práctica", () => {
+    const resultA: CertificationPracticeResult = {
+      total_questions: 1,
+      correct: 1,
+      partially_correct: 0,
+      incorrect: 0,
+      unanswered: 0,
+      practice_score_percent: 100,
+      by_topic: [],
+      by_competency: [],
+      question_results: [],
+      topics_to_reinforce: [],
+    };
+    const resultB: CertificationPracticeResult = { ...resultA, practice_score_percent: 0, correct: 0 };
+
+    saveExamSession({ ...SESSION, practiceId: "practice-1" });
+    saveCertificationResult("curso-demo", "practice-1", resultA);
+
+    saveExamSession({ ...SESSION, practiceId: "practice-2" });
+    saveCertificationResult("curso-demo", "practice-2", resultB);
+
+    // El resultado activo (curso-demo) es el de practice-2, nunca el de practice-1.
+    expect(loadCertificationResult("curso-demo")?.practice_score_percent).toBe(0);
   });
 });
