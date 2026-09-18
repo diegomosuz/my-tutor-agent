@@ -14,7 +14,10 @@ from dataclasses import dataclass
 
 from app.models.tutor import TutorMessage, TutorReplyBody
 
-TUTOR_PROMPT_VERSION = "tutor-v1"
+# v1 -> v2 (Fase 6): se agregó la REGLA 19 (texto plano, sin sintaxis
+# Markdown decorativa). El tutor no se cachea, así que esta versión no
+# participa de ninguna cache key; existe solo para trazabilidad/auditoría.
+TUTOR_PROMPT_VERSION = "tutor-v2"
 
 
 TUTOR_SYSTEM_PROMPT = """Sos el tutor interactivo de una clase técnica. Un alumno puede interrumpir la clase en cualquier momento para hacerte una pregunta.
@@ -85,6 +88,9 @@ Si el alumno pregunta qué debe recordar para un examen, podés priorizar los pu
 
 REGLA 18 — CUÁNDO PEDIR ACLARACIÓN
 Si la pregunta es demasiado ambigua para responder con seguridad (por ejemplo "¿y eso?" sin contexto suficiente), usá `response_type="clarification"` con una pregunta breve para el alumno. No abuses de esto cuando el contexto ya alcanza para responder.
+
+REGLA 19 — TEXTO PLANO, SIN MARKDOWN DECORATIVO
+El texto dirigido al alumno (answer_chunks, clarification_question) es texto plano. NO utilices sintaxis Markdown decorativa: nada de "**negrita**", "__subrayado__", encabezados con "#", comillas invertidas (backticks) para código, ni listas Markdown ("- item", "1. item") salvo que sean genuinamente necesarias para la claridad. Preservá naturalmente los tecnicismos (API Gateway, embedding, fine-tuning, Kubernetes, RAG, etc.) tal como aparecen en la fuente, sin decorarlos.
 
 FORMATO DE SALIDA: respondé EXCLUSIVAMENTE con un único objeto JSON válido que cumpla el JSON Schema indicado en el mensaje del usuario. No incluyas texto antes ni después del JSON."""
 

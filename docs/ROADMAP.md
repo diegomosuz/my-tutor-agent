@@ -1,7 +1,7 @@
 # Roadmap — PwC AI Tutor
 
 Este documento describe las fases futuras del proyecto. **Ninguna de las
-fases listadas debajo de la Fase 5 está implementada todavía.** Se incluyen
+fases listadas debajo de la Fase 6 está implementada todavía.** Se incluyen
 acá únicamente como referencia de dirección del producto, para que
 decisiones de diseño de fases tempranas (contratos de API, modelo canónico,
 interfaz `LLMProvider`, contratos de `LessonPlan`, Classroom Engine, etc.)
@@ -174,12 +174,67 @@ no las bloqueen innecesariamente.
   está completo y probado, pero rara vez aparece en contenido generado
   hoy; ver `docs/ARCHITECTURE.md`.
 
-## Fase 6 — TTS avanzado, diagramas enriquecidos y animaciones complejas
+## ✅ Fase 6 — Práctica/simulacro de certificación grounded
+
+**Esto NO representa ni afirma reproducir un examen oficial de ninguna
+certificación externa.** Es "práctica orientada a certificación basada
+exclusivamente en el material del curso".
+
+- `CertificationService` (`app/services/certification_service.py`): genera
+  un `QuestionBank` **por tópico** (nunca todo el curso en un solo
+  Grounding Packet), resuelve el scope (curso completo / módulos /
+  tópicos, contra el repositorio seguro de cursos), ensambla el examen de
+  forma determinística (round-robin entre tópicos, sin LLM) y evalúa
+  respuestas de forma determinística (comparación de conjuntos, sin LLM).
+- Preguntas objetivas únicamente: `single_choice`/`multiple_choice`
+  (permite corrección 100% determinística); estilos `conceptual`/
+  `relationship`/`application` (`application` nunca autoriza inventar un
+  caso de negocio externo). Distractores construidos exclusivamente con
+  material de la fuente (`derivation_refs`, que documenta de dónde sale
+  cada opción — no que sea verdadera).
+- `ExamQuestionView` (lo que ve el alumno antes de responder) nunca
+  incluye `correct_option_ids`/`explanation`/`competency`/
+  `derivation_refs` — verificado con un test dedicado que serializa la
+  respuesta completa. El answer key nunca se guarda en el cliente antes de
+  evaluar.
+- Cache en filesystem por tópico (`CERTIFICATION_CACHE_DIR`, mismo patrón
+  atómico que `LessonPlan`), key = `content_sha256 + provider + model +
+  certification_prompt_version`. `CERTIFICATION_ITEMS_PER_TOPIC` es un
+  objetivo (default 6, acotado 1-10), nunca un mínimo obligatorio.
+- Endpoints: `POST .../certification/prepare`,
+  `POST .../certification/evaluate-question` (modo Practice),
+  `POST .../certification/evaluate` (modo Simulation).
+- Frontend: `CertificationSetupPage` (scope/modo/cantidad) →
+  `CertificationPracticePage` (feedback inmediato por pregunta, pregunta
+  bloqueada tras corregir) / `CertificationSimulationPage` (sin feedback,
+  navegación libre, confirmación si hay preguntas sin responder) →
+  `CertificationResultsPage` ("Resultado de práctica", desglose por
+  tópico/competencia, tópicos a reforzar con link a la clase normal — nunca
+  regenera la `LessonPlan`). Sesión en `sessionStorage`, atada a
+  `course_id` (nunca `localStorage`, nunca un historial permanente
+  todavía).
+- Cierre de dos deudas de Fase 5: `LessonGenerator` ahora pide
+  razonablemente `comprehension_check` cuando el contenido lo justifica
+  (`LESSON_PROMPT_VERSION` → `lesson-v2`, sin obligación absoluta); el
+  tutor exige texto plano sin Markdown decorativo (`TUTOR_PROMPT_VERSION`
+  → `tutor-v2`).
+- 248 tests de backend y 145 de frontend pasando; validado con un smoke
+  test real completo y una inspección visual real de ambos modos +
+  resultados. Cero dependencias nuevas.
+- **Deliberadamente fuera de alcance** (ver `docs/ARCHITECTURE.md`):
+  preguntas de ensayo/texto libre/coding challenges, evaluación subjetiva
+  con LLM, persistencia de resultados o historial de intentos en backend,
+  cualquier dato de examen oficial (duración, passing score, blueprint por
+  dominio), predicción de aprobación.
+
+## Fase 7 — TTS avanzado, diagramas enriquecidos y animaciones complejas
 
 - Integración de un proveedor TTS server-side (`VOICE_PROVIDER=openai` u
   otro) como alternativa a la Web Speech API del navegador (Fase 4) cuando
   se necesite mejor calidad/control de voz; la Web Speech API se mantiene
-  como fallback sin credencial.
+  como fallback sin credencial. Esto incluiría también la voz del tutor y
+  del lector de preguntas de certificación (Fase 5/6), que hoy solo usan
+  `window.speechSynthesis`.
 - Diagramas más ricos para `process`/`hierarchy`/`architecture`/
   `concept_map` (ej. layouts tipo Mermaid) cuando el `VisualPlan` y los
   `SourceBlock` citados establezcan relaciones explícitas suficientes —
@@ -187,17 +242,19 @@ no las bloqueen innecesariamente.
 - Animaciones de mayor producción (transiciones más elaboradas entre
   escenas) evaluando si CSS sigue alcanzando o se justifica Framer Motion.
 
-## Fase 7 — Checkpoints y preguntas estilo examen de certificación
+## Fase 8 — Certificación avanzada y progreso persistente
 
-- El `InteractionPlan` de Fase 3 (`comprehension_check` / `reflection`, sin
-  scoring) se extiende con dificultad, banco de preguntas y scoring real.
-- Generación de preguntas estilo examen de certificación, derivadas
-  exclusivamente del contenido cubierto por el curso.
-- Persistencia de resultados: evaluar si alcanza con `localStorage` o si en
-  esta fase se justifica introducir almacenamiento server-side (a decidir
-  cuando se llegue a esta fase, no antes).
+- Persistencia de resultados de práctica de certificación: evaluar si
+  alcanza con `localStorage`/`sessionStorage` extendido o si se justifica
+  introducir almacenamiento server-side (a decidir cuando se llegue a esta
+  fase, no antes) — Fase 6 deliberadamente no persiste ningún resultado ni
+  historial de intentos.
+- Evaluar (con cautela) si tiene sentido agregar preguntas de desarrollo
+  corto con evaluación asistida por LLM, manteniendo la misma regla de
+  grounding estricto y dejando claro que seguiría sin ser un examen
+  oficial.
 
-## Fase 8 — "Mi aprendizaje" y progreso del alumno
+## Fase 9 — "Mi aprendizaje" y progreso del alumno
 
 - El puntero de progreso por tópico ya existe desde Fase 4
   (`classroomStorage.ts`, `localStorage`); esta fase construye la pantalla

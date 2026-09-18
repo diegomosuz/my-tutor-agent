@@ -5,6 +5,10 @@ import { CourseDetailPage } from "./pages/CourseDetailPage";
 import { ClassroomPage } from "./pages/ClassroomPage";
 import { AulaLandingPage } from "./pages/AulaLandingPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { CertificationSetupPage } from "./pages/CertificationSetupPage";
+import { CertificationPracticePage } from "./pages/CertificationPracticePage";
+import { CertificationSimulationPage } from "./pages/CertificationSimulationPage";
+import { CertificationResultsPage } from "./pages/CertificationResultsPage";
 
 export function App() {
   return (
@@ -17,6 +21,19 @@ export function App() {
         <Route
           path="/aula/:courseId/:moduleId/:topicId"
           element={<ClassroomPage />}
+        />
+        <Route path="/certificacion/:courseId" element={<CertificationSetupPage />} />
+        <Route
+          path="/certificacion/:courseId/practica"
+          element={<CertificationPracticePage />}
+        />
+        <Route
+          path="/certificacion/:courseId/simulacro"
+          element={<CertificationSimulationPage />}
+        />
+        <Route
+          path="/certificacion/:courseId/resultados"
+          element={<CertificationResultsPage />}
         />
         <Route
           path="/mi-aprendizaje"

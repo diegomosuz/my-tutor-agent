@@ -245,6 +245,25 @@ def test_different_model_produces_different_cache_entry(tmp_path):
     assert len(provider_b.calls) == 1
 
 
+def test_different_lesson_prompt_version_produces_different_cache_entry(tmp_path):
+    """Fase 6: LESSON_PROMPT_VERSION pasó de lesson-v1 a lesson-v2 (nueva
+    REGLA 13 sobre comprehension_check). Un cambio de prompt_version debe
+    invalidar la cache existente, igual que un cambio de provider/modelo."""
+    settings_v1 = _settings(tmp_path)
+    settings_v1.lesson_prompt_version = "lesson-v1"
+    provider_a = FakeLLMProvider(model="model-x", responses=[valid_lesson_body_dict()])
+    plan_a = _generate(settings_v1, provider_a)
+    assert plan_a.cached is False
+
+    settings_v2 = _settings(tmp_path, content_dir=Path(settings_v1.content_dir))
+    settings_v2.lesson_cache_dir = settings_v1.lesson_cache_dir
+    settings_v2.lesson_prompt_version = "lesson-v2"
+    provider_b = FakeLLMProvider(model="model-x", responses=[valid_lesson_body_dict()])
+    plan_b = _generate(settings_v2, provider_b)
+    assert plan_b.cached is False  # cache miss: prompt_version distinto
+    assert len(provider_b.calls) == 1
+
+
 # --------------------------------------------------------------------------
 # 10/11. Retry ante JSON/contrato inválido; no retry infinito
 # --------------------------------------------------------------------------

@@ -189,3 +189,119 @@ export interface CheckpointEvaluationBody {
   feedback: GroundedText[];
   ideal_answer: GroundedText | null;
 }
+
+// ---------------------------------------------------------------------
+// Fase 6 — Práctica / simulacro de certificación grounded
+//
+// IMPORTANTE: esto NO representa ni afirma reproducir un examen oficial
+// de ninguna certificación externa. Es "práctica orientada a
+// certificación basada exclusivamente en el material del curso".
+// ---------------------------------------------------------------------
+
+export type QuestionType = "single_choice" | "multiple_choice";
+export type QuestionStyle = "conceptual" | "relationship" | "application";
+export type CertificationMode = "practice" | "simulation";
+
+export interface CertificationScope {
+  module_ids: string[];
+  topic_ids: string[];
+}
+
+export interface CertificationPrepareRequest {
+  mode: CertificationMode;
+  scope: CertificationScope;
+  question_count: number;
+  shuffle?: boolean;
+  seed?: number | null;
+}
+
+export interface PublicOption {
+  option_id: string;
+  text: string;
+}
+
+/** Vista pública de una pregunta ANTES de responder. Nunca incluye
+ * correct_option_ids, explanation, competency ni derivation_refs. */
+export interface ExamQuestionView {
+  bank_id: string;
+  question_id: string;
+  course_id: string;
+  module_id: string;
+  topic_id: string;
+  question_type: QuestionType;
+  question_style: QuestionStyle;
+  stem: string;
+  options: PublicOption[];
+}
+
+export interface CertificationPrepareResponse {
+  practice_id: string;
+  course_id: string;
+  mode: CertificationMode;
+  requested_count: number;
+  actual_count: number;
+  questions: ExamQuestionView[];
+}
+
+export interface AnswerSubmission {
+  bank_id: string;
+  question_id: string;
+  selected_option_ids: string[];
+}
+
+export interface EvaluateSimulationRequest {
+  answers: AnswerSubmission[];
+}
+
+export type QuestionVerdict = "correct" | "partially_correct" | "incorrect";
+
+/** Solo se recibe DESPUÉS de responder: acá sí vienen correct_option_ids/
+ * explanation/competency. */
+export interface QuestionEvaluation {
+  bank_id: string;
+  question_id: string;
+  module_id: string;
+  topic_id: string;
+  question_type: QuestionType;
+  selected_option_ids: string[];
+  verdict: QuestionVerdict;
+  correct_option_ids: string[];
+  explanation: GroundedText[];
+  competency: GroundedText;
+}
+
+export interface TopicBreakdown {
+  module_id: string;
+  topic_id: string;
+  attempted: number;
+  correct: number;
+  partially_correct: number;
+  incorrect: number;
+  unanswered: number;
+  practice_score_percent: number;
+}
+
+export interface CompetencyBreakdown {
+  competency: string;
+  attempted: number;
+  correct: number;
+  partially_correct: number;
+  incorrect: number;
+  practice_score_percent: number;
+}
+
+/** practice_score_percent es EXCLUSIVAMENTE el desempeño de esta práctica
+ * puntual — nunca una predicción de aprobación de una certificación
+ * oficial. */
+export interface CertificationPracticeResult {
+  total_questions: number;
+  correct: number;
+  partially_correct: number;
+  incorrect: number;
+  unanswered: number;
+  practice_score_percent: number;
+  by_topic: TopicBreakdown[];
+  by_competency: CompetencyBreakdown[];
+  question_results: QuestionEvaluation[];
+  topics_to_reinforce: TopicBreakdown[];
+}

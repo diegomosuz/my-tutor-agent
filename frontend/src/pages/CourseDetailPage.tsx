@@ -70,15 +70,24 @@ export function CourseDetailPage() {
           {course.description ||
             "Recorré los módulos y tópicos de este curso en el orden sugerido."}
         </p>
-        {firstModule && firstTopic && (
+        <div style={{ marginTop: 14, display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {firstModule && firstTopic && (
+            <Link
+              to={`/aula/${course.id}/${firstModule.id}/${firstTopic.id}`}
+              className="course-card__cta"
+              style={{ display: "inline-flex" }}
+            >
+              Entrar al aula virtual →
+            </Link>
+          )}
           <Link
-            to={`/aula/${course.id}/${firstModule.id}/${firstTopic.id}`}
-            className="course-card__cta"
-            style={{ marginTop: 14, display: "inline-flex" }}
+            to={`/certificacion/${course.id}`}
+            className="course-card__cta course-card__cta--secondary"
+            style={{ display: "inline-flex" }}
           >
-            Entrar al aula virtual →
+            Preparación de certificación →
           </Link>
-        )}
+        </div>
       </div>
 
       <div className="module-list">

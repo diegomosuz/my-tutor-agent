@@ -80,7 +80,7 @@ export const SAMPLE_LESSON: LessonPlan = {
   module_id: "modulo-demo",
   topic_id: "topico-demo",
   content_sha256: "abc123",
-  prompt_version: "lesson-v1",
+  prompt_version: "lesson-v2",
   provider: "fake",
   model: "fake-model",
   lesson_title: groundedText("Introducción a Kubernetes"),

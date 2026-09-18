@@ -47,10 +47,13 @@ def client(content_dir: Path, tmp_path: Path) -> TestClient:
     def _override_settings() -> Settings:
         return Settings(
             content_dir=str(content_dir),
-            # Aísla la cache de LessonPlans (Fase 3) del volumen real
-            # ./data/lesson-cache: cada test usa su propio tmp_path, nunca
-            # toca el filesystem del host ni deja estado entre tests.
+            # Aísla la cache de LessonPlans (Fase 3) y de QuestionBanks de
+            # certificación (Fase 6) de los volúmenes reales
+            # ./data/lesson-cache y ./data/certification-cache: cada test
+            # usa su propio tmp_path, nunca toca el filesystem del host ni
+            # deja estado entre tests.
             lesson_cache_dir=str(tmp_path / "lesson-cache"),
+            certification_cache_dir=str(tmp_path / "certification-cache"),
         )
 
     app.dependency_overrides[get_settings] = _override_settings

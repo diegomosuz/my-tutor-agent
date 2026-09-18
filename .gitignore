@@ -38,3 +38,5 @@ Thumbs.db
 # regenerable, nunca se versiona; se conserva solo la carpeta vía .gitkeep.
 data/lesson-cache/*
 !data/lesson-cache/.gitkeep
+data/certification-cache/*
+!data/certification-cache/.gitkeep

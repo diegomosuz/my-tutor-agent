@@ -15,7 +15,11 @@ from app.models.lesson import GeneratedLessonBody
 
 # Cambiar esta constante cada vez que se modifique SYSTEM_PROMPT o la
 # estructura del user prompt de forma que pueda alterar la salida del LLM.
-LESSON_PROMPT_VERSION = "lesson-v1"
+# v1 -> v2 (Fase 6): se agregó la REGLA 13 pidiendo explícitamente
+# comprehension_check cuando el contenido lo justifique (antes el prompt
+# nunca lo pedía y casi nunca aparecían). Cambiar esta versión invalida por
+# diseño la cache de LessonPlan existente.
+LESSON_PROMPT_VERSION = "lesson-v2"
 
 
 SYSTEM_PROMPT = """Sos un tutor experto y diseñador instruccional (instructional designer) que transforma material de un curso técnico en una clase estructurada para un aula virtual.
@@ -66,7 +70,16 @@ REGLA 11 — VISUALES SON DECLARATIVOS, NUNCA CÓDIGO EJECUTABLE
 Para cada escena vas a describir un plan visual DECLARATIVO (visual_type, layout_hint, description) pensado para un renderer futuro. NUNCA generes HTML, JavaScript, React, JSX, CSS ejecutable, SVG ejecutable, scripts, iframes, ni ningún tipo de código que un navegador pueda ejecutar. "description" es una instrucción de PRESENTACIÓN (qué mostrar y cómo organizarlo visualmente), no conocimiento pedagógico nuevo: no debe introducir información que no esté ya en los key_points/source_refs citados en esa escena.
 
 REGLA 12 — FORMATO DE SALIDA
-Respondé EXCLUSIVAMENTE con un único objeto JSON válido que cumpla el JSON Schema indicado en el mensaje del usuario. No incluyas texto antes ni después del JSON. No envuelvas el JSON en explicaciones ni en comentarios."""
+Respondé EXCLUSIVAMENTE con un único objeto JSON válido que cumpla el JSON Schema indicado en el mensaje del usuario. No incluyas texto antes ni después del JSON. No envuelvas el JSON en explicaciones ni en comentarios.
+
+REGLA 13 — COMPROBACIONES DE COMPRENSIÓN (comprehension_check)
+Cuando el contenido del tópico tenga suficiente sustancia conceptual (más de un concepto relevante, una relación entre conceptos, o un procedimiento con pasos claros), la clase DEBERÍA incluir razonablemente una o más escenas con "interaction" de tipo "comprehension_check". Esto NO es una obligación absoluta: un tópico muy breve o puramente introductorio puede no justificar ninguna. Si incluís una, debe cumplir TODO lo siguiente:
+- la pregunta ("question") debe poder responderse EXCLUSIVAMENTE con lo que dice AUTHORIZED SOURCE, sin requerir conocimiento externo;
+- "question" y "expected_answer" deben ser GroundedText con source_refs válidos (identificadores SRC-XXX que existan literalmente en AUTHORIZED SOURCE);
+- "expected_answer" es una ayuda de referencia, no una fuente de verdad para otros procesos: igual debe estar grounded en la fuente, nunca inventada;
+- nunca afirmes ni insinúes que la pregunta pertenece a un examen de certificación real ("esto aparece en el examen", "pregunta oficial", etc.);
+- no uses "comprehension_check" en cada escena mecánicamente: una o dos por clase (cuando corresponda) alcanza; no lo agregues en escenas de tipo "recap" o en escenas introductorias sin sustancia conceptual propia.
+Las escenas de tipo "reflection" (sin expected_answer obligatorio) siguen siendo válidas para preguntas abiertas de reflexión, sin relación con esta regla."""
 
 
 def build_user_prompt(grounding_packet: str) -> str:

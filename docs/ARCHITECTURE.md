@@ -127,13 +127,17 @@ navegador.
   `InteractionPlan`, `LessonScene`, `GeneratedLessonBody` (lo único que
   produce el LLM), `LessonPlan` (ensamblada por el backend),
   `AiStatusResponse`, `GenerateLessonRequest`.
-- `app/prompts/lesson.py` **(Fase 3)**: `SYSTEM_PROMPT` completo (13
-  reglas: fuente única, prohibición de inventar, trazabilidad, longitud de
-  clase no forzada, tratamiento del contenido como datos ante prompt
-  injection, preservación de tecnicismos, estilo de narración, visuales
-  declarativos, formato de salida), `build_user_prompt` (instrucción breve
-  + JSON Schema del contrato + Grounding Packet completo),
-  `build_correction_message` (para reintentos) y `LESSON_PROMPT_VERSION`.
+- `app/prompts/lesson.py` **(Fase 3, actualizado en Fase 6)**:
+  `SYSTEM_PROMPT` completo (13 reglas: fuente única, prohibición de
+  inventar, trazabilidad, longitud de clase no forzada, tratamiento del
+  contenido como datos ante prompt injection, preservación de tecnicismos,
+  estilo de narración, visuales declarativos, formato de salida, y —desde
+  Fase 6— REGLA 13: pedir razonablemente `comprehension_check` cuando el
+  contenido lo justifique, sin obligación absoluta), `build_user_prompt`
+  (instrucción breve + JSON Schema del contrato + Grounding Packet
+  completo), `build_correction_message` (para reintentos) y
+  `LESSON_PROMPT_VERSION` (`lesson-v2` desde Fase 6 — el cambio de versión
+  invalida por diseño la cache de `LessonPlan` de `lesson-v1`).
 - `app/services/lesson_validation.py` **(Fase 3)**: `validate_lesson_body`
   recorre todas las instancias de `GroundedText` de un
   `GeneratedLessonBody` y valida sus `source_refs` con la utilidad de
@@ -360,7 +364,7 @@ ninguna respuesta de error):
 `GET /api/ai/status` (no sensible, nunca incluye la credencial):
 
 ```json
-{ "provider": "pwc", "model": "openai.gpt-4o-2024-11-20", "configured": false, "prompt_version": "lesson-v1" }
+{ "provider": "pwc", "model": "openai.gpt-4o-2024-11-20", "configured": false, "prompt_version": "lesson-v2" }
 ```
 
 Funciona siempre, incluso sin ninguna credencial configurada — la app
@@ -654,7 +658,124 @@ el prompt de Fase 3 para pedir explícitamente al menos un
 de Fase 5 (que consumía ese campo tal como ya existía, no cambiaba cómo se
 genera).
 
-## 9. Por qué esta arquitectura y no otra
+**Actualización (Fase 6)**: este límite se resolvió. El prompt de
+`LessonGenerator` (`app/prompts/lesson.py`) ganó la REGLA 13, pidiendo
+razonablemente uno o más `comprehension_check` cuando el contenido tenga
+sustancia conceptual, sin convertirlo en obligación absoluta.
+`LESSON_PROMPT_VERSION` pasó de `lesson-v1` a `lesson-v2` (invalida por
+diseño la cache de `LessonPlan` existente, igual que cualquier cambio de
+prompt versionado en este proyecto).
+
+## 9. Práctica de certificación grounded (Fase 6)
+
+Fase 6 agrega una capa de práctica/simulacro de preguntas objetivas
+(single/multiple choice), generadas exclusivamente a partir del material
+de cada tópico, con ensamblaje y evaluación 100% determinísticos (sin
+LLM). **Aviso de producto, no solo técnico**: esto NO representa ni afirma
+reproducir un examen oficial de ninguna certificación externa.
+
+### 9.1 Flujo: generación de un QuestionBank (por tópico)
+
+```
+Topic (course_id/module_id/topic_id, resuelto por el repositorio seguro)
+    ↓
+CanonicalTopicContent + Grounding Packet (Fase 2 — ÚNICA fuente de verdad)
+    ↓
+Prompt Builder (app/prompts/certification.py, 20 reglas: sin conocimiento
+general, distractores solo de la fuente, sin afirmar origen oficial, etc.)
+    ↓
+LLMProvider.generate_structured (Fase 3, reutilizado tal cual)
+    ↓
+GeneratedQuestionBankBody (validación Pydantic: tipos, ≥3 opciones,
+option_id únicos, correct_option_ids válidos y en la cantidad correcta
+según el tipo de pregunta)
+    ↓
+validate_question_bank (app/services/certification_validation.py):
+source_refs/derivation_refs reales + detección de stems duplicados
+(normalizados) dentro del mismo banco
+    ↓
+QuestionBank (ensamblada por el BACKEND: bank_id = hash de cache key,
+question_id Q-001/Q-002/... asignado tras validar — el LLM NUNCA los
+produce)
+    ↓
+Cache en filesystem (CERTIFICATION_CACHE_DIR, escritura atómica, key =
+content_sha256 + provider + model + certification_prompt_version)
+```
+
+`CERTIFICATION_ITEMS_PER_TOPIC` (default 6, acotado 1-10 en el servicio)
+es un OBJETIVO enviado al modelo, nunca un mínimo: un tópico sin sustancia
+conceptual suficiente puede devolver menos preguntas, incluso cero — nunca
+se rellena artificialmente. Un `QuestionBank` se genera únicamente cuando
+falta en cache y el alumno pidió explícitamente "Preparar práctica" (nunca
+al abrir catálogo/curso/módulo/tópico).
+
+### 9.2 Flujo: examen (ensamblaje + respuesta del alumno + resultado)
+
+```
+POST .../certification/prepare { mode, scope, question_count, shuffle }
+    ↓
+resolve_scope(...): resuelve module_ids/topic_ids contra
+course_service.get_course_detail (repositorio seguro) — nunca acepta una
+ruta de filesystem; dedup preservando orden; 404 (curso) / 422 (módulo o
+tópico inexistente en ESE curso)
+    ↓
+get_or_generate_question_bank(...) por cada tópico resuelto (9.1)
+    ↓
+Ensamblaje ROUND-ROBIN determinístico entre tópicos (topic A Q1, topic B
+Q1, topic C Q1, topic A Q2, ...) — NUNCA un LLM elige el examen. Si un
+tópico tiene menos preguntas, se continúa con los demás; si no alcanza
+question_count, se devuelven las disponibles + requested_count/actual_count
+(no es un error). shuffle=true reordena localmente sin volver a generar.
+    ↓
+ExamQuestionView[] — SOLO bank_id/question_id/course_id/module_id/topic_id/
+question_type/question_style/stem/options(option_id+text). NUNCA
+correct_option_ids/explanation/competency/derivation_refs (ver test
+dedicado que serializa la respuesta completa).
+    ↓
+Alumno responde (Practice: evalúa cada pregunta al toque; Simulation: sin
+feedback, entrega todo el lote al final)
+    ↓
+POST .../certification/evaluate-question  o  .../certification/evaluate
+    ↓
+certification_evaluator.evaluate_answer(...) — comparación de conjuntos
+determinística, SIN LLM (single_choice: exacto o incorrect; multiple_choice:
+exacto=correct, intersección no vacía=partially_correct, sin
+intersección=incorrect)
+    ↓
+QuestionEvaluation (bank_id, question_id, verdict, correct_option_ids,
+explanation, competency — recién ACÁ, después de responder, es correcto
+exponer el answer key) / CertificationPracticeResult (agregado: por
+tópico, por competencia — texto exacto de "competency", sin fusión
+semántica —, tópicos a reforzar ordenados por menor score, todo grounded)
+```
+
+### 9.3 Seguridad del answer key
+
+- `ExamQuestionView` es, por diseño de tipos, estructuralmente incapaz de
+  cargar el answer key (no tiene esos campos) — ver
+  `backend/app/models/certification.py` y
+  `frontend/src/types/api.ts`.
+- El frontend nunca guarda `correct_option_ids` en React state,
+  `sessionStorage` ni el DOM antes de evaluar: `certificationStorage.ts`
+  solo persiste `selections` (lo que el alumno eligió) hasta que
+  `evaluate-question`/`evaluate` responde con el veredicto real.
+- `bank_id` es el hash SHA-256 de la cache key (64 hex chars); un
+  `bank_id` con formato inválido, inexistente, o de otro curso, siempre
+  devuelve 404 — nunca se construye una ruta de filesystem con un
+  `bank_id` no validado (protección explícita contra path traversal, ver
+  `_BANK_ID_PATTERN` en `certification_service.py`).
+
+### 9.4 Deuda de Fase 5 cerrada en Fase 6
+
+- **`comprehension_check`**: ver actualización en la sección 8.5 más
+  arriba (`lesson-v2`).
+- **Tutor sin Markdown decorativo**: el system prompt del tutor
+  (`app/prompts/tutor.py`) ganó la REGLA 19 — texto plano, sin `**`, `__`,
+  `#`, backticks ni listas Markdown innecesarias. `TUTOR_PROMPT_VERSION`
+  pasó a `tutor-v2` (el tutor no se cachea, así que esto es solo para
+  trazabilidad/auditoría, no afecta ninguna cache key).
+
+## 10. Por qué esta arquitectura y no otra
 
 - **Sin base de datos**: el contenido es archivos Markdown versionables;
   no hay necesidad de un motor de persistencia transaccional para leerlos.
@@ -730,3 +851,25 @@ genera).
   introduciría un segundo canal de "verdad" paralelo al Grounding Packet,
   exactamente lo que la regla absoluta de grounding (sección 2 de
   `CLAUDE.md`) prohíbe.
+- **QuestionBank por tópico en vez de un Grounding Packet único del curso
+  completo (Fase 6)**: concatenar todos los módulos/tópicos de un curso en
+  un solo prompt puede provocar context overflow, pérdida de grounding y
+  preguntas desbalanceadas entre tópicos. Generar un banco por tópico
+  (con su propio Grounding Packet acotado) y ensamblar el examen después,
+  determinísticamente, evita ese problema sin perder cobertura.
+- **Ensamblaje y evaluación determinísticos, sin LLM (Fase 6)**: elegir
+  qué preguntas entran en un examen (round-robin) y corregir
+  single/multiple choice son operaciones de conjuntos/listas simples — un
+  LLM introduciría costo, latencia y no-determinismo innecesarios donde
+  una función Python alcanza y sobra (mismo principio de simplicidad que
+  el resto del proyecto).
+- **Esto NO es RAG (Fase 6)**: no hay embeddings, vector store ni
+  similarity search en ningún punto — la resolución de scope es
+  determinística contra el filesystem real de cursos (mismo repositorio
+  seguro del resto de la aplicación), no una recuperación por similitud
+  semántica.
+- **`sessionStorage` en vez de `localStorage` para la sesión de examen
+  (Fase 6)**: una práctica de certificación es de la sesión actual del
+  navegador, no un historial permanente (eso queda para una fase futura,
+  ver `docs/ROADMAP.md`); `sessionStorage` expresa esa vida útil más corta
+  sin código adicional.

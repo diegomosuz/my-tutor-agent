@@ -214,7 +214,7 @@ GEN_AI_API_KEY=                  # fallback de compatibilidad de PWC_GENAI_API_K
 OPENAI_API_KEY=
 OPENAI_MODEL=
 LESSON_CACHE_DIR=/app/data/lesson-cache
-LESSON_PROMPT_VERSION=lesson-v1
+LESSON_PROMPT_VERSION=lesson-v2
 VOICE_PROVIDER=browser
 ```
 
@@ -468,15 +468,95 @@ sigue siendo el Grounding Packet del `CanonicalTopicContent` (Fase 2). Ver
   `source_refs` del tutor solo visibles con `import.meta.env.DEV`. Ningún
   componente usa `dangerouslySetInnerHTML`/`eval`/`new Function` para el
   texto del tutor o del checkpoint.
-- **Límite conocido**: el prompt de `LessonGenerator` (Fase 3) nunca pide
-  explícitamente un `scene.interaction`; en la práctica la mayoría de las
-  `LessonPlan` generadas no incluyen `comprehension_check`. El
-  `CheckpointService`/`CheckpointPanel` están completos y probados, pero
-  necesitan que una fase futura actualice el prompt de Fase 3 para que un
-  checkpoint aparezca de forma consistente en contenido generado real —
-  deliberadamente fuera de alcance de Fase 5.
+- **Límite conocido, resuelto en Fase 6**: el prompt de `LessonGenerator`
+  (Fase 3) no pedía explícitamente un `scene.interaction`, por lo que en la
+  práctica casi ninguna `LessonPlan` generada incluía `comprehension_check`.
+  Fase 6 agregó la REGLA 13 al prompt (`LESSON_PROMPT_VERSION` pasó de
+  `lesson-v1` a `lesson-v2`, invalidando la cache vieja): la clase DEBERÍA
+  incluir razonablemente uno o más `comprehension_check` cuando el
+  contenido tenga sustancia conceptual suficiente, sin ser una obligación
+  absoluta (un tópico breve puede seguir sin ninguno).
 
-## 11. Convenciones
+## 11. Práctica de certificación grounded (Fase 6)
+
+Fase 6 agrega una práctica/simulacro de preguntas objetivas (single/
+multiple choice) generadas exclusivamente a partir del material del curso.
+
+**Aviso de producto (NO NEGOCIABLE, igual jerarquía que la sección 2)**:
+esto NO representa ni afirma reproducir un examen oficial de ninguna
+certificación externa. Es "práctica orientada a certificación basada
+exclusivamente en el material del curso". La UI usa siempre "Simulación
+basada en el material del curso" / "Resultado de práctica", nunca lenguaje
+de aprobación oficial, passing score oficial, blueprint oficial o
+predicción de éxito en un examen real.
+
+- **`CertificationService`** (`backend/app/services/certification_service.py`):
+  genera/reutiliza un `QuestionBank` **por tópico** (nunca todo el curso en
+  un solo Grounding Packet — evita context overflow y preguntas
+  desbalanceadas), resuelve el scope (curso completo / módulos / tópicos,
+  siempre contra el repositorio seguro de cursos), ensambla el examen
+  (round-robin determinístico entre tópicos, SIN LLM) y evalúa respuestas
+  (determinístico, SIN LLM).
+- **Tipos de pregunta**: solo `single_choice`/`multiple_choice` (permite
+  corrección 100% determinística). **Estilos**: `conceptual`/
+  `relationship`/`application` — `application` NUNCA autoriza inventar un
+  caso de negocio externo; si la fuente no alcanza para construir la
+  situación sin agregar hechos, se usa `conceptual`/`relationship`.
+- **Distractores**: el system prompt (`app/prompts/certification.py`)
+  exige que se construyan EXCLUSIVAMENTE con conceptos/términos/relaciones
+  presentes en la fuente — nunca introduciendo tecnologías, productos,
+  nombres o cifras externas, aunque parezcan plausibles.
+- **`derivation_refs`** en cada opción significa "bloques fuente usados
+  para construir esta opción" — NO significa que la opción sea verdadera.
+  Documentado explícitamente en el modelo (`app/models/certification.py`).
+- **`ExamQuestionView`**: lo único que el frontend recibe ANTES de
+  responder. NUNCA incluye `correct_option_ids`, `explanation`,
+  `competency` ni `derivation_refs` — un test dedicado
+  (`test_certification_exam_assembly.py::test_public_prepare_response_never_contains_answer_key`)
+  serializa la respuesta completa y confirma la ausencia de esos campos.
+  El answer key nunca se guarda en React state/sessionStorage/HTML antes
+  de evaluar (ver `frontend/src/certification/certificationStorage.ts`).
+- **`question_id`** (`Q-001`, `Q-002`, ...) lo asigna el backend después
+  de validar, nunca el LLM. `bank_id` es el mismo hash SHA-256 usado como
+  nombre del archivo de cache — permite resolver
+  `evaluate-question`/`evaluate` por `bank_id + question_id` sin necesitar
+  una sesión de servidor. Un `bank_id` con formato inválido (o de otro
+  curso) siempre responde 404, nunca intenta construir un path de
+  filesystem con él directamente (protección contra path traversal).
+- **Evaluación determinística** (`app/services/certification_evaluator.py`,
+  sin LLM): `single_choice` exige coincidencia exacta de conjuntos;
+  `multiple_choice` distingue `correct` (coincidencia exacta) /
+  `partially_correct` (intersección no vacía pero no exacta) / `incorrect`
+  (sin intersección, incluida selección vacía). `practice_score_percent`
+  usa 1.0 punto por correcta, 0.5 por parcialmente correcta, 0 por
+  incorrecta/sin responder — documentado explícitamente, sin porcentajes
+  de similaridad.
+- **Cache** (filesystem, `CERTIFICATION_CACHE_DIR`, mismo patrón atómico
+  que `LessonPlan`): key = `content_sha256 + provider + model +
+  certification_prompt_version`. `CERTIFICATION_ITEMS_PER_TOPIC` (default
+  6, acotado 1-10) es un OBJETIVO, nunca un mínimo: un tópico corto puede
+  devolver menos preguntas (incluso 0), nunca rellenadas artificialmente.
+- **Sin generación al cargar nada**: ningún QuestionBank se genera al
+  abrir catálogo/curso/módulo/tópico — solo cuando el alumno pulsa
+  "Preparar práctica" y falta cache.
+- **Frontend** (`frontend/src/certification/` + `frontend/src/pages/
+  Certification*Page.tsx`): pantalla dedicada, fuera de `ClassroomPage`.
+  `CertificationSetupPage` (scope/modo/cantidad) → `CertificationPracticePage`
+  (una pregunta a la vez, feedback inmediato, pregunta bloqueada tras
+  corregir) o `CertificationSimulationPage` (sin feedback, navegación
+  libre, "Entregar simulacro" con confirmación si hay pendientes) →
+  `CertificationResultsPage` ("Resultado de práctica", desglose por
+  tópico/competencia, tópicos a reforzar con "Revisar tópico" hacia el
+  aula normal — nunca regenera la LessonPlan). Sesión en
+  `sessionStorage` (nunca `localStorage`), atada a `course_id`; se limpia
+  con "Nueva práctica". Ambos modos terminan llamando al mismo
+  `POST .../certification/evaluate` para obtener el resultado (sin
+  duplicar la fórmula de score en el cliente).
+- **Sin RAG**: la selección de tópicos es determinística desde el
+  filesystem/scope pedido — no hay embeddings, vector store ni similarity
+  search en ningún punto de esta fase.
+
+## 12. Convenciones
 
 - Backend en español para nombres de dominio de negocio cuando aporte
   claridad (cursos, módulos, tópicos), pero código, nombres de funciones y
@@ -521,7 +601,7 @@ sigue siendo el Grounding Packet del `CanonicalTopicContent` (Fase 2). Ver
   `frontend/src/test/setup.ts`. No hay Cypress ni Playwright en el
   proyecto (validación visual manual, ver `docs/ROADMAP.md`).
 
-## 12. Comandos principales
+## 13. Comandos principales
 
 Todo el entorno corre encapsulado en Docker. No se requiere Python ni Node
 instalados en el host.
@@ -568,6 +648,19 @@ curl -X POST http://localhost:8000/api/courses/demo-curso-ia/modules/fundamentos
   -H "Content-Type: application/json" \
   -d '{"scene_id":"SCENE-001","answer":"una respuesta de prueba"}'
 
+# Solo los tests de Fase 6 (certificación: generación, ensamblaje, evaluador, endpoints)
+docker compose run --rm backend pytest tests/test_certification_models.py tests/test_certification_bank_generation.py tests/test_certification_exam_assembly.py tests/test_certification_evaluator.py tests/test_certification_endpoints.py tests/test_certification_prompt_injection.py
+
+# Preparar una práctica de certificación grounded (Fase 6)
+curl -X POST http://localhost:8000/api/courses/demo-curso-ia/certification/prepare \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"practice","scope":{"module_ids":[],"topic_ids":["introduccion"]},"question_count":5}'
+
+# Evaluar una pregunta de práctica (determinístico, sin LLM)
+curl -X POST http://localhost:8000/api/courses/demo-curso-ia/certification/evaluate-question \
+  -H "Content-Type: application/json" \
+  -d '{"bank_id":"<bank_id de /prepare>","question_id":"Q-001","selected_option_ids":["A"]}'
+
 # Bajar el entorno
 docker compose down
 ```
@@ -578,7 +671,7 @@ URLs en desarrollo:
 - Docs interactivas (Swagger): http://localhost:8000/docs
 - Frontend: http://localhost:5173
 
-## 13. Estado de fases
+## 14. Estado de fases
 
 Ver `docs/ROADMAP.md` para el detalle de fases futuras.
 
@@ -626,6 +719,27 @@ Ver `docs/ROADMAP.md` para el detalle de fases futuras.
   resúmenes/reorganización de contenido, sin persistencia de
   conversaciones, sin RAG/embeddings/vector DB, sin simulador de
   certificación, sin TTS de OpenAI.
+- **Fase 6** (completa): práctica/simulacro de certificación grounded
+  (`CertificationService`, endpoints `POST .../certification/prepare`,
+  `evaluate-question`, `evaluate`), 100% basada en preguntas objetivas
+  (single/multiple choice) generadas POR TÓPICO y evaluadas
+  determinísticamente (sin LLM). `ExamQuestionView` nunca expone el answer
+  key antes de responder. Cierre de dos deudas de Fase 5:
+  `LESSON_PROMPT_VERSION` avanzó a `lesson-v2` (pide razonablemente
+  `comprehension_check` sin obligación absoluta) y el tutor ahora exige
+  texto plano sin Markdown decorativo (`TUTOR_PROMPT_VERSION` a
+  `tutor-v2`). Frontend: `CertificationSetupPage` / `CertificationPracticePage`
+  / `CertificationSimulationPage` / `CertificationResultsPage`, sesión en
+  `sessionStorage`. 248 tests de backend y 145 de frontend (86 y 67
+  específicos de Fase 6 respectivamente) pasando; validado con un smoke
+  test real completo (generación, cache hit, evaluación single/multiple
+  choice, simulacro con pregunta sin responder) y una inspección visual
+  real de ambos modos + resultados (ver `docs/ARCHITECTURE.md`). Cero
+  dependencias nuevas. Aviso de producto explícito en toda la UI: esto NO
+  reproduce ni afirma reproducir un examen oficial de ninguna
+  certificación externa. Sin ensayo/free-text/coding challenges, sin
+  evaluación subjetiva con LLM, sin persistencia de resultados en backend,
+  sin historial de intentos, sin TTS de OpenAI.
 
 Cualquier trabajo futuro debe respetar este documento y actualizar la
 sección correspondiente del roadmap al avanzar de fase.

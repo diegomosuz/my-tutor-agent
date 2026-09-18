@@ -1,11 +1,16 @@
 import type {
   AiStatusResponse,
+  CertificationPracticeResult,
+  CertificationPrepareRequest,
+  CertificationPrepareResponse,
   CheckpointEvaluationBody,
   CheckpointRequest,
   CourseDetail,
   CourseSummary,
+  EvaluateSimulationRequest,
   GroundingResponse,
   LessonPlan,
+  QuestionEvaluation,
   TopicResponse,
   TutorReplyBody,
   TutorRequest,
@@ -97,4 +102,37 @@ export const api = {
       `/api/courses/${courseId}/modules/${moduleId}/topics/${topicId}/checkpoint`,
       { method: "POST", body, signal }
     ),
+  // Fase 6: práctica/simulacro de certificación grounded. `prepare` NUNCA
+  // devuelve el answer key (ver ExamQuestionView); solo se llama al
+  // pulsar "Preparar práctica", nunca automáticamente.
+  prepareCertification: (
+    courseId: string,
+    body: CertificationPrepareRequest,
+    signal?: AbortSignal
+  ) =>
+    request<CertificationPrepareResponse>(`/api/courses/${courseId}/certification/prepare`, {
+      method: "POST",
+      body,
+      signal,
+    }),
+  evaluateCertificationQuestion: (
+    courseId: string,
+    body: { bank_id: string; question_id: string; selected_option_ids: string[] },
+    signal?: AbortSignal
+  ) =>
+    request<QuestionEvaluation>(`/api/courses/${courseId}/certification/evaluate-question`, {
+      method: "POST",
+      body,
+      signal,
+    }),
+  evaluateCertificationSimulation: (
+    courseId: string,
+    body: EvaluateSimulationRequest,
+    signal?: AbortSignal
+  ) =>
+    request<CertificationPracticeResult>(`/api/courses/${courseId}/certification/evaluate`, {
+      method: "POST",
+      body,
+      signal,
+    }),
 };

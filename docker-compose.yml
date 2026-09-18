@@ -18,7 +18,10 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       LESSON_CACHE_DIR: /app/data/lesson-cache
-      LESSON_PROMPT_VERSION: ${LESSON_PROMPT_VERSION:-lesson-v1}
+      LESSON_PROMPT_VERSION: ${LESSON_PROMPT_VERSION:-lesson-v2}
+      CERTIFICATION_CACHE_DIR: /app/data/certification-cache
+      CERTIFICATION_PROMPT_VERSION: ${CERTIFICATION_PROMPT_VERSION:-certification-v1}
+      CERTIFICATION_ITEMS_PER_TOPIC: ${CERTIFICATION_ITEMS_PER_TOPIC:-6}
       VOICE_PROVIDER: ${VOICE_PROVIDER:-browser}
     volumes:
       # Bind mount long-form: evita problemas de interpretación de rutas de
@@ -31,6 +34,10 @@ services:
       - type: bind
         source: ./backend/app
         target: /app/app
+      # Hot-reload de tests (evita rebuild de imagen al iterar con pytest).
+      - type: bind
+        source: ./backend/tests
+        target: /app/tests
       # Cache local de LessonPlans (filesystem, lectura/escritura). Separado
       # del mount read-only de /content: acá el backend SÍ escribe.
       - type: bind

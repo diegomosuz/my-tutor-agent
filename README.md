@@ -7,18 +7,21 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **Fase actual: Fase 5** — catálogo de cursos, detalle de curso, modelo
+> **Fase actual: Fase 6** — catálogo de cursos, detalle de curso, modelo
 > canónico de contenido 100% determinístico, integración real con un LLM
 > para generar clases estructuradas (`LessonPlan`) grounded, aula virtual
 > interactiva (Classroom Engine + 11 tipos de slide, animaciones CSS con
-> pausa real, progreso local, voz con la Web Speech API), y ahora un
-> **tutor conversacional grounded de verdad**: preguntas y respuestas
-> sobre el tópico activo (con interrupción/reanudación real de la clase),
-> y checkpoints interactivos que evalúan la respuesta del alumno contra el
-> material autorizado (nunca contra la respuesta esperada generada por el
-> LLM). Reconocimiento de voz opcional para dictar preguntas. Sin
+> pausa real, progreso local, voz con la Web Speech API), un tutor
+> conversacional grounded (preguntas y respuestas sobre el tópico activo,
+> con interrupción/reanudación real de la clase, y checkpoints
+> interactivos evaluados contra el material autorizado), y ahora una
+> **práctica/simulacro de certificación grounded**: preguntas de opción
+> única/múltiple generadas exclusivamente a partir del material del curso,
+> evaluadas de forma 100% determinística (sin LLM), con resultado de
+> práctica por tópico y por competencia. **Esto NO representa ni afirma
+> reproducir un examen oficial de ninguna certificación externa.** Sin
 > resúmenes/reorganización de contenido, sin TTS server-side, sin
-> simulador de certificación todavía.
+> persistencia de resultados de práctica todavía.
 
 ## Requisitos
 
@@ -76,7 +79,7 @@ docker compose run --rm backend pytest
 # Build de producción del frontend (type-check + bundle)
 docker compose run --rm frontend npm run build
 
-# Tests del frontend (Vitest + React Testing Library, 30 tests)
+# Tests del frontend (Vitest + React Testing Library)
 docker compose run --rm frontend npm test -- --run
 
 # Inspeccionar el Grounding Packet determinístico de un tópico (Fase 2)
@@ -87,6 +90,11 @@ curl http://localhost:8000/api/ai/status
 
 # Generar (o recuperar de cache) la clase de un tópico con IA
 curl -X POST http://localhost:8000/api/courses/demo-curso-ia/modules/fundamentos/topics/introduccion/lesson
+
+# Preparar una práctica de certificación grounded (Fase 6)
+curl -X POST http://localhost:8000/api/courses/demo-curso-ia/certification/prepare \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"practice","scope":{"module_ids":[],"topic_ids":["introduccion"]},"question_count":5}'
 
 # Logs en vivo
 docker compose logs -f backend
@@ -164,6 +172,43 @@ curl -X POST http://localhost:8000/api/courses/demo-curso-ia/modules/fundamentos
 - La conversación vive en memoria durante la sesión del navegador; no se
   persiste en el backend ni en `localStorage`.
 
+## Práctica de certificación grounded (Fase 6)
+
+**Esto NO representa ni afirma reproducir un examen oficial de ninguna
+certificación externa.** Es práctica orientada a certificación basada
+exclusivamente en el material del curso.
+
+Desde el detalle de un curso, "Preparación de certificación →" lleva a una
+pantalla dedicada para elegir alcance (curso completo / módulos / tópicos
+específicos), modo (Práctica guiada o Simulacro) y cantidad de preguntas.
+
+```
+curl -X POST http://localhost:8000/api/courses/demo-curso-ia/certification/prepare \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"practice","scope":{"module_ids":[],"topic_ids":["introduccion"]},"question_count":5}'
+```
+
+- Las preguntas (opción única/múltiple) se generan **por tópico** —nunca
+  concatenando todo el curso en un solo prompt— y se cachean en
+  filesystem (`data/certification-cache/`, gitignored), igual patrón que
+  las `LessonPlan`. Los distractores se construyen exclusivamente con
+  conceptos presentes en el material; nunca se introduce una tecnología,
+  producto o cifra externa como opción incorrecta.
+- El ensamblaje del examen y la corrección de las respuestas son **100%
+  determinísticos, sin LLM**: round-robin entre tópicos para armar el
+  examen, comparación de conjuntos para corregir. Antes de responder, el
+  frontend nunca recibe `correct_option_ids` ni la explicación — solo
+  después de evaluar.
+- **Práctica guiada**: feedback grounded inmediato después de cada
+  pregunta. **Simulacro**: sin feedback hasta entregar, con navegación
+  libre entre preguntas.
+- El resultado final se llama siempre "Resultado de práctica" (nunca
+  "aprobado"/"resultado oficial"): desglose por tópico y por competencia,
+  y una lista de tópicos a reforzar con un link directo a la clase normal
+  de ese tópico.
+- La sesión de la práctica vive en `sessionStorage` del navegador (nunca
+  `localStorage`); no hay historial de intentos persistido todavía.
+
 ## Estructura del repositorio
 
 ```
@@ -175,8 +220,12 @@ pwc-tutor-agent/
         src/
             classroom/      Classroom Engine, SceneRenderer, visuals, voz,
                             tutor conversacional, checkpoints
+            certification/  Práctica de certificación grounded (Fase 6)
     courses/             Curso de demo (filesystem de cursos)
         demo-curso-ia/
+    data/
+        lesson-cache/       Cache de LessonPlan (gitignored)
+        certification-cache/  Cache de QuestionBank (gitignored)
     docs/
         ARCHITECTURE.md
         ROADMAP.md
