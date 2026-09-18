@@ -42,12 +42,22 @@ export function SafeMarkdown({ markdown, courseId, moduleId, topicId }: SafeMark
         img({ src, alt }) {
           if (!src) return null;
           if (isExternalImageSrc(src)) {
+            // El placeholder solo es clickeable para http/https reales:
+            // un `src="data:..."` cae en esta rama (es "externo", nunca se
+            // carga automático) pero jamás debe terminar como href de un
+            // link — mismo criterio que isSafeLinkHref para <a> (sección
+            // 16 de la Fase 8).
             return (
               <span className="safe-markdown__external-image">
-                🖼 Imagen externa no cargada automáticamente —{" "}
-                <a href={src} target="_blank" rel="noopener noreferrer">
-                  {alt || "ver imagen"}
-                </a>
+                🖼 Imagen externa no cargada automáticamente
+                {isSafeLinkHref(src) ? (
+                  <>
+                    {" — "}
+                    <a href={src} target="_blank" rel="noopener noreferrer">
+                      {alt || "ver imagen"}
+                    </a>
+                  </>
+                ) : null}
               </span>
             );
           }

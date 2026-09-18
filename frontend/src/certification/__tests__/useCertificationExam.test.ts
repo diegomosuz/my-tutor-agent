@@ -82,6 +82,33 @@ describe("useCertificationExam", () => {
     expect(loadExamSession(COURSE_ID)?.practiceId).toBe("practice-1");
   });
 
+  it("prepare() con actual_count=0 NUNCA guarda la sesión ni navega (bug real, Fase 8 sección 28)", async () => {
+    // Antes del fix: una sesión con questions=[] se persistía igual y
+    // CertificationPracticePage/SimulationPage rompían al hacer
+    // session.questions[0].question_id (undefined). prepare() ahora debe
+    // devolver false y exponer un error claro, sin persistir la sesión.
+    mockedPrepare.mockResolvedValue({
+      ...samplePrepareResponse(0),
+      questions: [],
+      actual_count: 0,
+    });
+    const { result } = renderHook(() => useCertificationExam(COURSE_ID));
+
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.prepare({
+        mode: "practice",
+        scope: { module_ids: [], topic_ids: [] },
+        question_count: 5,
+      });
+    });
+
+    expect(ok).toBe(false);
+    expect(result.current.session).toBeNull();
+    expect(result.current.error).not.toBeNull();
+    expect(loadExamSession(COURSE_ID)).toBeNull();
+  });
+
   it("selectAnswer() guarda la selección sin incluir el answer key", async () => {
     mockedPrepare.mockResolvedValue(samplePrepareResponse());
     const { result } = renderHook(() => useCertificationExam(COURSE_ID));

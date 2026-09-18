@@ -45,6 +45,23 @@ export function CertificationPracticePage() {
   }
 
   const { session } = exam;
+  if (session.questions.length === 0) {
+    // Defensa adicional (Fase 8, sección 28): una sesión sin preguntas
+    // nunca debería llegar acá (useCertificationExam.prepare() ya lo
+    // evita), pero si una sesión vieja de sessionStorage la tuviera,
+    // nunca debe romper la página con un acceso a questions[0] undefined.
+    return (
+      <div className="page">
+        <div className="state-box state-box--error">
+          <h3>No hay preguntas en esta práctica</h3>
+          <p>Preparación una práctica nueva con otro alcance.</p>
+          <Link to={`/certificacion/${courseId}`} className="course-card__cta">
+            Ir a preparación de certificación
+          </Link>
+        </div>
+      </div>
+    );
+  }
   const question = session.questions[session.currentIndex];
   const total = session.questions.length;
   const selected = session.selections[question.question_id] ?? [];

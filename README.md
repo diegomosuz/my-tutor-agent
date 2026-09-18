@@ -7,16 +7,26 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **Fase actual: Fase 7** — productización y hardening sobre las Fases 1 a
-> 6 (catálogo, aula virtual, tutor conversacional, checkpoints, práctica de
-> certificación grounded): scripts de Windows para setup/arranque/
-> diagnóstico, assets Markdown (imágenes relativas) servidos de forma
-> segura, diagnóstico de cursos, pantalla de Configuración, voz neural
-> opcional (OpenAI TTS) sobre el mismo motor de reproducción que la voz del
-> navegador, ErrorBoundary/404, corrección de un bug real de colisión de
-> cache entre tópicos con contenido idéntico, y documentación ampliada. Ver
-> [`docs/COURSE_FORMAT.md`](./docs/COURSE_FORMAT.md) y
-> [`docs/CONFIGURATION.md`](./docs/CONFIGURATION.md).
+> **v1.0.0** — release candidate. Catálogo de cursos, aula virtual con
+> generación de clases grounded, tutor conversacional y checkpoints, voz
+> del navegador + voz neural opcional, práctica de certificación grounded,
+> assets de curso seguros, scripts de Windows, y una auditoría completa de
+> punta a punta (Fase 8: seguridad, coherencia, formato de curso,
+> proveedores LLM, caches, responsive, instalación limpia). Ver
+> [`docs/PRODUCT_AUDIT.md`](./docs/PRODUCT_AUDIT.md) y
+> [`docs/RELEASE_NOTES_v1.0.0.md`](./docs/RELEASE_NOTES_v1.0.0.md).
+
+## Requisitos
+
+- **Docker Desktop** corriendo. No hace falta tener Python ni Node
+  instalados en el host: todo corre encapsulado en contenedores.
+- (Opcional) una credencial de PwC GenAI Shared Service u OpenAI para que
+  la generación de clases con IA funcione de verdad. **Sin ninguna
+  credencial, el resto de la aplicación (catálogo, cursos, tópicos)
+  funciona igual**; la generación de clases devuelve un `503` claro.
+- (Opcional) una credencial de OpenAI para voz neural (`VOICE_PROVIDER`).
+  Sin ella, la aplicación sigue funcionando con la voz nativa del
+  navegador (Web Speech API).
 
 ## Quick Start — Windows
 
@@ -54,18 +64,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\doctor.ps1
 > podés usar directamente `docker compose up -d --build` / `docker compose
 > down` como se muestra más abajo. `scripts/*.ps1` sólo automatizan esos
 > mismos pasos y agregan validaciones para Windows.
-
-## Requisitos
-
-- **Docker Desktop** corriendo. No hace falta tener Python ni Node
-  instalados en el host: todo corre encapsulado en contenedores.
-- (Opcional) una credencial de PwC GenAI Shared Service u OpenAI para que
-  la generación de clases con IA funcione de verdad. **Sin ninguna
-  credencial, el resto de la aplicación (catálogo, cursos, tópicos)
-  funciona igual**; la generación de clases devuelve un `503` claro.
-- (Opcional) una credencial de OpenAI para voz neural (`VOICE_PROVIDER`).
-  Sin ella, la aplicación sigue funcionando con la voz nativa del
-  navegador (Web Speech API).
 
 ## Cómo levantar el proyecto (sin los scripts de Windows)
 
@@ -286,6 +284,55 @@ volver a la voz del navegador ante cualquier error, sin romper la clase.
 El audio nunca se genera reescribiendo el texto: siempre es exactamente la
 narración/respuesta ya validada por el grounding. Se cachea en
 `data/speech-cache/` (gitignored) por contenido+voz+modelo+velocidad.
+
+## Arquitectura
+
+`browser → React → HTTP REST → FastAPI → filesystem de cursos +
+proveedores LLM`. Ver [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
+para el detalle completo (componentes, flujos por fase, decisiones de
+diseño) y [`docs/PRODUCT_AUDIT.md`](./docs/PRODUCT_AUDIT.md) para el
+estado real de cada subsistema.
+
+## Troubleshooting
+
+- **Docker Desktop no responde / "docker compose" falla**: corré
+  `scripts/doctor.ps1` primero — valida Docker, containers, backend,
+  `/content`, cursos detectados y estado de IA/voz en un solo paso.
+- **El backend no queda "healthy"**: `docker compose logs -f backend`;
+  revisá que `COURSES_HOST_PATH` en tu `.env` apunte a un directorio que
+  realmente exista.
+- **Puertos 8000/5173 ocupados**: cerrá el proceso que los esté usando o
+  bajá otro stack de Docker que los tenga tomados (`docker compose down`
+  en ese otro proyecto).
+- **`.env` fue sobrescrito por error**: no hay problema — es gitignored y
+  siempre se puede recrear copiando `.env.example`.
+- **La generación de clases/certificación da `503`**: significa que el
+  proveedor LLM configurado no tiene credencial disponible; ver
+  [`docs/CONFIGURATION.md`](./docs/CONFIGURATION.md).
+
+## Desarrollo
+
+```bash
+docker compose run --rm backend pytest        # tests backend
+docker compose run --rm frontend npm test -- --run   # tests frontend
+docker compose run --rm frontend npx tsc --noEmit    # typecheck
+docker compose run --rm frontend npm run build       # build de producción
+```
+
+Convenciones de código, contratos de API y decisiones de diseño en
+[`CLAUDE.md`](./CLAUDE.md) (contrato completo del proyecto) y
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
+
+## Seguridad
+
+Resumen: las credenciales nunca salen del backend ni se loguean; `/content`
+se monta read-only y toda ruta de filesystem se resuelve por enumeración
+segura (nunca concatenando input del cliente); los assets de curso usan
+una allow-list de extensiones y excluyen symlinks que intenten escapar del
+árbol autorizado; el frontend nunca ejecuta salida del LLM; la respuesta
+de certificación nunca incluye el answer key antes de responder. Detalle
+completo en la sección "Modelo de seguridad local" de
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
 
 ## Estructura del repositorio
 

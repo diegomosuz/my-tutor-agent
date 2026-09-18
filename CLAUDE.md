@@ -779,6 +779,48 @@ Ver `docs/ROADMAP.md` para el detalle de fases futuras.
   dependencias nuevas. Sin Kubernetes, sin Redis, sin PostgreSQL, sin
   autenticación empresarial, sin RAG/embeddings/vector DB, sin LangChain/
   LangGraph.
+- **Fase 8** (completa): auditoría final de producto + release candidate
+  **v1.0.0** (`APP_VERSION` `0.7.0` → `1.0.0`). Sin features nuevas — solo
+  auditoría y corrección de bugs reales encontrados:
+  1. **Symlink escape** (seguridad, real): un curso/módulo/tópico podía
+     ser un symlink apuntando fuera de `/content`, escapando el chequeo
+     de contención de `resolve_topic_asset` (que terminaba comparando
+     contra la raíz YA escapada). Corregido excluyendo symlinks en
+     `_list_subdirs`/`_list_topic_files` (`courses.py`); 3 tests nuevos.
+  2. **Certification `actual_count: 0`** (crash real de frontend): un
+     scope sin material suficiente devolvía `questions: []` sin error
+     HTTP; `CertificationPracticePage`/`SimulationPage` rompían al
+     acceder a `questions[0]` (undefined). Corregido en
+     `useCertificationExam.prepare()` (nunca persiste ni navega con 0
+     preguntas) + guard defensivo en ambas páginas; 3 tests nuevos.
+  3. **`frontend/package-lock.json` faltante**: el Dockerfile usaba
+     `npm install` sin lockfile commiteado (build no reproducible).
+     Generado y commiteado; Dockerfile pasa a `npm ci`.
+  4. **`SafeMarkdown` defensa en profundidad**: una imagen `data:` caía en
+     la rama "externa" sin pasar por el mismo filtro de esquemas que los
+     links — nunca explotable en la práctica (react-markdown ya sanea
+     `src`/`href` a esquemas `https?/ircs?/mailto/xmpp` antes de que el
+     componente los vea), pero se agregó el mismo chequeo por consistencia
+     y se corrigió el test que asumía lo contrario.
+  5. **`.env.example`/`docs/CONFIGURATION.md`**: `CERTIFICATION_CACHE_DIR`
+     existía en `Settings`/`docker-compose.yml` pero no estaba
+     documentada; agregada, junto con una aclaración de que
+     `LESSON_CACHE_DIR`/`CERTIFICATION_CACHE_DIR`/`SPEECH_CACHE_DIR`/
+     `CONTENT_DIR` son rutas fijas del container (no se leen realmente
+     desde `.env`, a diferencia de lo que su presencia en `.env.example`
+     podría sugerir).
+  Auditoría completa documentada en `docs/PRODUCT_AUDIT.md` (estado real
+  de cada subsistema), `docs/RELEASE_NOTES_v1.0.0.md` y
+  `docs/RELEASE_CHECKLIST.md` (nuevo, reproducible para releases
+  futuros). Validado con: 326 tests de backend (+5 vs. Fase 7) y 190 de
+  frontend (+3 vs. Fase 7) pasando; build limpio (`--no-cache`, proyecto
+  Compose aislado) exitoso; regresión de curso externo real (Markdown +
+  PNG + JPG + link + code + table); QA E2E real con LLM configurado
+  (catálogo→curso→aula→lección real→tutor real grounded→certificación
+  real grounded→resultados→configuración→404→catálogo, 0 errores de
+  consola); QA responsive en 5 resoluciones sin overflow. README
+  reordenado (Requisitos antes de Quick Start) y con secciones nuevas de
+  Troubleshooting/Desarrollo/Seguridad.
 
 Cualquier trabajo futuro debe respetar este documento y actualizar la
 sección correspondiente del roadmap al avanzar de fase.

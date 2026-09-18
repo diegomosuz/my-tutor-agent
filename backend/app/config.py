@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # Versión de aplicación, informativa únicamente (Fase 7, sección 17).
     # No hay automatización de semver: se bumpea a mano al final de cada
     # fase relevante.
-    app_version: str = "0.7.0"
+    app_version: str = "1.0.0"
 
     # Filesystem de cursos
     content_dir: str = "/content"

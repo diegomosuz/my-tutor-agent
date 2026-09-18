@@ -33,11 +33,20 @@ describe("SafeMarkdown", () => {
     expect(link).toHaveAttribute("target", "_blank");
   });
 
-  it("NUNCA carga automáticamente una imagen data:", () => {
+  it("NUNCA carga automáticamente una imagen data: NI la ofrece como link clicable", () => {
+    // Fase 8, sección 15/16: react-markdown (defaultUrlTransform) ya
+    // sanea `src`/`href` a "" para cualquier esquema fuera de
+    // https?/ircs?/mailto/xmpp ANTES de que nuestros renderers custom se
+    // ejecuten, así que un `data:` nunca llega como string no vacío acá
+    // (el <img> no se renderiza en absoluto). El componente además nunca
+    // ofrece un link clicable para lo que sí llegara a detectar como
+    // "imagen externa" con un esquema no http(s) (defensa en profundidad,
+    // ver isSafeLinkHref en la rama img()).
     const { container } = render(
       <SafeMarkdown markdown="![Data](data:image/png;base64,AAAA)" {...IDS} />
     );
     expect(container.querySelector("img")).toBeNull();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
   it("links http/https usan target=_blank y rel=noopener noreferrer", () => {

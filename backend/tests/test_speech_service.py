@@ -118,6 +118,19 @@ def test_cache_key_changes_by_text(tmp_path):
     assert len(client.calls) == 2
 
 
+def test_cache_key_changes_by_model(tmp_path):
+    settings_a = _settings(tmp_path)
+    settings_a.openai_tts_model = "gpt-4o-mini-tts"
+    client = FakeSpeechClient()
+    synthesize_speech(settings=settings_a, text="hola", client=client)
+
+    settings_b = _settings(tmp_path)
+    settings_b.speech_cache_dir = settings_a.speech_cache_dir
+    settings_b.openai_tts_model = "tts-1-hd"
+    synthesize_speech(settings=settings_b, text="hola", client=client)
+    assert len(client.calls) == 2  # modelo distinto -> cache miss, se llama de nuevo
+
+
 def test_cache_key_changes_by_voice(tmp_path):
     settings_a = _settings(tmp_path)
     settings_a.openai_tts_voice = "marin"

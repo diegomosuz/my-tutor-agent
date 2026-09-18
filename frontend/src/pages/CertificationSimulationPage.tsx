@@ -39,6 +39,21 @@ export function CertificationSimulationPage() {
   }
 
   const { session } = exam;
+  if (session.questions.length === 0) {
+    // Defensa adicional (Fase 8, sección 28): ver misma nota en
+    // CertificationPracticePage.tsx.
+    return (
+      <div className="page">
+        <div className="state-box state-box--error">
+          <h3>No hay preguntas en este simulacro</h3>
+          <p>Preparación un simulacro nuevo con otro alcance.</p>
+          <Link to={`/certificacion/${courseId}`} className="course-card__cta">
+            Ir a preparación de certificación
+          </Link>
+        </div>
+      </div>
+    );
+  }
   const question = session.questions[session.currentIndex];
   const total = session.questions.length;
   const selected = session.selections[question.question_id] ?? [];

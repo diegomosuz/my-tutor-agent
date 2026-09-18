@@ -50,7 +50,17 @@ def _is_ignored(name: str) -> bool:
 def _list_subdirs(path: Path) -> list[Path]:
     if not path.is_dir():
         return []
-    entries = [p for p in path.iterdir() if p.is_dir() and not _is_ignored(p.name)]
+    # Fase 8, sección 7: un curso/módulo nunca puede ser un symlink. Sin
+    # este chequeo, un directorio symlinkeado a fuera de /content pasaría
+    # `is_dir()` igual (sigue symlinks) y luego el propio `.resolve()` de
+    # ese directorio pasaría a ser la nueva "raíz" contra la que se
+    # comparan sus assets/tópicos — el chequeo de contención de
+    # `resolve_topic_asset` terminaría comparando contra la raíz ya
+    # escapada, no contra /content real. Se rechaza cualquier symlink acá,
+    # sin excepción (no hace falta resolver ni comparar rutas).
+    entries = [
+        p for p in path.iterdir() if p.is_dir() and not p.is_symlink() and not _is_ignored(p.name)
+    ]
     entries.sort(key=lambda p: (extract_order(p.name), p.name.lower()))
     return entries
 
@@ -61,7 +71,10 @@ def _list_topic_files(path: Path) -> list[Path]:
     entries = [
         p
         for p in path.iterdir()
-        if p.is_file() and p.suffix.lower() == ".md" and not _is_ignored(p.name)
+        if p.is_file()
+        and not p.is_symlink()
+        and p.suffix.lower() == ".md"
+        and not _is_ignored(p.name)
     ]
     entries.sort(key=lambda p: (extract_order(p.name), p.name.lower()))
     return entries

@@ -59,6 +59,22 @@ export function useCertificationExam(courseId: string | undefined): UseCertifica
     setError(null);
     try {
       const response = await api.prepareCertification(courseId, request);
+      if (response.actual_count === 0) {
+        // Bug real encontrado en auditoría Fase 8 (sección 28): el
+        // backend puede devolver actual_count=0 (el alcance elegido no
+        // tenía material suficiente para generar ninguna pregunta) sin
+        // que eso sea un error HTTP — antes de este fix, la sesión se
+        // persistía igual y CertificationPracticePage/SimulationPage
+        // rompían al acceder a session.questions[0] (undefined). Ahora
+        // se trata como un resultado no utilizable: se muestra un error
+        // claro y nunca se navega a la pantalla de práctica/simulacro.
+        setError({
+          title: "No se pudieron generar preguntas",
+          detail:
+            "El alcance elegido no tiene material suficiente para generar preguntas de práctica. Probá con otro módulo o tópico.",
+        });
+        return false;
+      }
       const next: StoredExamSession = {
         practiceId: response.practice_id,
         courseId,

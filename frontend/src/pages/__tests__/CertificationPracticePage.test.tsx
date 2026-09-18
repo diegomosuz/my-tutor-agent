@@ -104,6 +104,12 @@ describe("CertificationPracticePage", () => {
     expect(screen.getByText("No hay una práctica en curso")).toBeInTheDocument();
   });
 
+  it("una sesión con 0 preguntas muestra un estado vacío, nunca rompe la página (Fase 8, sección 28)", () => {
+    mockExamReturn = { ...mockExamReturn, session: baseSession({ questions: [] }) };
+    renderPage();
+    expect(screen.getByText("No hay preguntas en esta práctica")).toBeInTheDocument();
+  });
+
   it("renderiza la pregunta actual", () => {
     renderPage();
     expect(screen.getByText("¿Pregunta 1?")).toBeInTheDocument();

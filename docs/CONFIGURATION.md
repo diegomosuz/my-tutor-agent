@@ -56,6 +56,7 @@ variable y funciona siempre que el navegador la soporte.
 | `LESSON_PROMPT_VERSION` | `lesson-v2` | Forma parte de la cache key de lecciones; cambiarla invalida la cache existente por diseño. |
 | `CERTIFICATION_PROMPT_VERSION` | `certification-v1` | Forma parte de la cache key de bancos de preguntas. |
 | `CERTIFICATION_ITEMS_PER_TOPIC` | `6` | Cantidad objetivo de preguntas por tópico (1-10). También forma parte de la cache key. |
+| `CERTIFICATION_CACHE_DIR` | `/app/data/certification-cache` | Cache de `QuestionBank` generados. |
 | `SPEECH_CACHE_DIR` | `/app/data/speech-cache` | Cache de audio TTS ya sintetizado. |
 
 Todas las caches son descartables: se pueden borrar manualmente en
@@ -63,11 +64,18 @@ cualquier momento sin romper la aplicación (se regeneran en la próxima
 solicitud). Ninguna se versiona en git (ver `.gitignore`; solo se
 commitean `data/*/.gitkeep`).
 
+`LESSON_CACHE_DIR`/`CERTIFICATION_CACHE_DIR`/`SPEECH_CACHE_DIR` (y
+`CONTENT_DIR`, la ruta interna fija `/content` que NO aparece en
+`.env.example`) están fijados en `docker-compose.yml` como rutas dentro
+del container, alineadas con sus bind mounts (`./data:/app/data` y
+`COURSES_HOST_PATH:/content`) — no se leen desde `.env`; ponerlos ahí es
+solo informativo.
+
 ## Aplicación
 
 | Variable | Default | Descripción |
 |---|---|---|
-| `APP_VERSION` | `0.7.0` | Versión mostrada en `GET /api/system/status` y en la pantalla de Configuración. Sin automatización de semver. |
+| `APP_VERSION` | `1.0.0` | Versión mostrada en `GET /api/system/status` y en la pantalla de Configuración. Sin automatización de semver. |
 
 ## Notas de seguridad
 

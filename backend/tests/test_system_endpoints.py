@@ -112,6 +112,20 @@ def test_request_id_replaced_when_malformed(tmp_path):
     app.dependency_overrides.clear()
 
 
+def test_request_id_replaced_when_excessively_long(tmp_path):
+    """Fase 8, sección 19: un X-Request-ID desproporcionadamente largo
+    (potencial vector de log flooding / header abuse) nunca debe romper el
+    middleware ni propagarse tal cual — se reemplaza por un UUID nuevo,
+    igual que cualquier otro formato inválido."""
+    client = _client(tmp_path)
+    too_long = "a" * 5000
+    response = client.get("/api/health", headers={"X-Request-ID": too_long})
+    assert response.status_code == 200
+    assert response.headers["x-request-id"] != too_long
+    assert len(response.headers["x-request-id"]) < 200
+    app.dependency_overrides.clear()
+
+
 def test_security_headers_present(tmp_path):
     client = _client(tmp_path)
     response = client.get("/api/health")

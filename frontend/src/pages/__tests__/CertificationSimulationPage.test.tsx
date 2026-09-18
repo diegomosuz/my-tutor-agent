@@ -106,6 +106,12 @@ describe("CertificationSimulationPage", () => {
     expect(screen.getByText("No hay un simulacro en curso")).toBeInTheDocument();
   });
 
+  it("una sesión con 0 preguntas muestra un estado vacío, nunca rompe la página (Fase 8, sección 28)", () => {
+    mockExamReturn = { ...mockExamReturn, session: baseSession({ questions: [] }) };
+    renderPage();
+    expect(screen.getByText("No hay preguntas en este simulacro")).toBeInTheDocument();
+  });
+
   it("renderiza la pregunta actual SIN feedback", () => {
     renderPage();
     expect(screen.getByText("¿Pregunta 1?")).toBeInTheDocument();
