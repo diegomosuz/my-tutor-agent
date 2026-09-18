@@ -395,7 +395,88 @@ Tests: `frontend/src/classroom/__tests__/` (Vitest + React Testing
 Library, `jsdom`). Ningún test hace llamadas de red ni depende de un
 navegador real: HTTP y `window.speechSynthesis` se mockean explícitamente.
 
-## 10. Convenciones
+## 10. Tutor bidireccional grounded + Checkpoints (Fase 5)
+
+Fase 5 agrega un tutor conversacional y checkpoints interactivos sobre la
+base de Fases 2-4, reutilizando `LLMProvider` sin crear una segunda
+abstracción de proveedor.
+
+**Regla dura (idéntica en espíritu a la sección 2)**: el historial de
+conversación reciente (`recent_history`), el "contexto de clase generado"
+(título/`source_refs` de la escena activa) y `scene.interaction.
+expected_answer` **nunca** son fuente de verdad. La única fuente de verdad
+sigue siendo el Grounding Packet del `CanonicalTopicContent` (Fase 2). Ver
+`docs/ARCHITECTURE.md` sección 8 para los dos flujos completos
+(pregunta al tutor / respuesta a un checkpoint) con diagramas.
+
+- **`TutorService`** (`backend/app/services/tutor_service.py`):
+  `POST .../topics/{topic_id}/tutor` con `{ message, scene_id,
+  recent_history }` (límites explícitos vía Pydantic: mensaje 1-4000
+  caracteres, historial máx. 10 mensajes, roles solo `user`/`assistant`).
+  Nunca acepta filesystem paths, Grounding Packet, prompt, API key,
+  provider o modelo desde el request. Responde `TutorReplyBody`:
+  `response_type` (`answer`/`not_covered`/`clarification`) con forma
+  estructuralmente distinta por tipo — `not_covered` nunca tiene un campo
+  de texto libre (el mensaje fijo lo redacta el backend, nunca el LLM).
+- **`CheckpointService`** (`backend/app/services/checkpoint_service.py`):
+  hace funcional `scene.interaction` (definido en Fase 3, antes sin uso).
+  `POST .../topics/{topic_id}/checkpoint` con `{ scene_id, answer }`.
+  Verifica tópico → `LessonPlan` cacheada → escena → tipo
+  `comprehension_check`, en ese orden, ANTES de exigir credencial LLM
+  (404/409 deben funcionar incluso sin proveedor configurado, mismo patrón
+  que Fase 3 usa para tópico-no-encontrado). Responde
+  `CheckpointEvaluationBody`: `verdict` (`correct`/`partially_correct`/
+  `incorrect`/`not_assessable`, sin score ni gamificación), `feedback`
+  grounded, `ideal_answer` opcional grounded.
+- **`expected_answer` nunca autoritativo**: se envía al LLM evaluador
+  únicamente dentro de un bloque marcado explícitamente "NO ES FUENTE DE
+  VERDAD", con la regla "si contradice AUTHORIZED SOURCE, AUTHORIZED
+  SOURCE gana siempre" en el system prompt. El backend nunca compara
+  programáticamente `answer` contra `expected_answer`; solo valida que
+  `feedback`/`ideal_answer` citen `source_refs` reales.
+- **Prompts versionados** (`app/prompts/tutor.py`, `app/prompts/
+  checkpoint.py`): separan con delimitadores explícitos la pregunta del
+  alumno (datos), el historial (marcado no confiable), el contexto de
+  clase generado (marcado no autoritativo) y el `AUTHORIZED SOURCE`
+  (única fuente). Reutilizan `generate_with_retries`
+  (`app/services/llm_retry.py`, extraído del loop de Fase 3 para no
+  tocarlo) con el mismo criterio de reintentos: nunca ante auth/config,
+  reintento simple ante upstream, reintento con corrección ante
+  contrato/grounding inválido.
+- **Sin cache de tutor/checkpoint**: cada pregunta o respuesta depende del
+  contexto conversacional puntual; nunca se persiste una conversación ni
+  una respuesta de checkpoint en el backend (ni filesystem ni DB). La
+  única cache que sigue existiendo es la de `LessonPlan` (Fase 3).
+- **Logging** (`app/services/service_logging.py`): eventos
+  `tutor_query_started/completed/failed` y
+  `checkpoint_evaluation_started/completed/failed` con solo ids, provider,
+  model, `duration_ms`, `response_type`/`verdict` — nunca el texto de la
+  pregunta, el historial, el prompt, el Grounding Packet ni la respuesta
+  cruda del LLM.
+- **Frontend** (`frontend/src/classroom/`): `TutorPanel` +
+  `TutorConversation` + `useTutor` (conversación en memoria React durante
+  la sesión, nunca persistida; se reinicia al cambiar de tópico vía `key`
+  en `ClassroomPage`); `CheckpointPanel` (nunca muestra `expected_answer`,
+  ni antes ni después de evaluar; nunca bloquea "Siguiente"). Interrupción/
+  reanudación de la clase: composición externa sobre `pause()`/`resume()`
+  ya existentes en `useClassroomEngine` (Fase 4) — el engine no se
+  modificó. Voz: se reutiliza `speech.ts` (nueva función `speakSequence`);
+  nunca suena la narración de la clase y la respuesta del tutor a la vez.
+  Reconocimiento de voz opcional (`speechRecognition.ts`, nuevo): envoltorio
+  fino sobre `window.SpeechRecognition`/`webkitSpeechRecognition`, sin
+  paquete npm nuevo, deshabilitado con tooltip claro si no hay soporte.
+  `source_refs` del tutor solo visibles con `import.meta.env.DEV`. Ningún
+  componente usa `dangerouslySetInnerHTML`/`eval`/`new Function` para el
+  texto del tutor o del checkpoint.
+- **Límite conocido**: el prompt de `LessonGenerator` (Fase 3) nunca pide
+  explícitamente un `scene.interaction`; en la práctica la mayoría de las
+  `LessonPlan` generadas no incluyen `comprehension_check`. El
+  `CheckpointService`/`CheckpointPanel` están completos y probados, pero
+  necesitan que una fase futura actualice el prompt de Fase 3 para que un
+  checkpoint aparezca de forma consistente en contenido generado real —
+  deliberadamente fuera de alcance de Fase 5.
+
+## 11. Convenciones
 
 - Backend en español para nombres de dominio de negocio cuando aporte
   claridad (cursos, módulos, tópicos), pero código, nombres de funciones y
@@ -440,7 +521,7 @@ navegador real: HTTP y `window.speechSynthesis` se mockean explícitamente.
   `frontend/src/test/setup.ts`. No hay Cypress ni Playwright en el
   proyecto (validación visual manual, ver `docs/ROADMAP.md`).
 
-## 11. Comandos principales
+## 12. Comandos principales
 
 Todo el entorno corre encapsulado en Docker. No se requiere Python ni Node
 instalados en el host.
@@ -462,6 +543,9 @@ docker compose run --rm backend pytest tests/test_canonical.py tests/test_ground
 # Solo los tests de Fase 3 (providers LLM + LessonGenerator + prompt injection)
 docker compose run --rm backend pytest tests/test_llm_provider_pwc.py tests/test_llm_provider_openai.py tests/test_lesson_generator.py tests/test_prompt_injection.py tests/test_ai_endpoints.py
 
+# Solo los tests de Fase 5 (tutor + checkpoints + prompt injection del tutor)
+docker compose run --rm backend pytest tests/test_tutor_service.py tests/test_checkpoint_service.py tests/test_tutor_prompt_injection.py tests/test_tutor_endpoints.py tests/test_checkpoint_endpoints.py
+
 # Build de producción del frontend (verificación de tipos + bundle)
 docker compose run --rm frontend npm run build
 
@@ -474,6 +558,16 @@ curl http://localhost:8000/api/ai/status
 # Generar (o recuperar de cache) la LessonPlan de un tópico
 curl -X POST http://localhost:8000/api/courses/demo-curso-ia/modules/fundamentos/topics/introduccion/lesson
 
+# Preguntarle algo al tutor sobre un tópico (grounded, Fase 5)
+curl -X POST http://localhost:8000/api/courses/demo-curso-ia/modules/fundamentos/topics/introduccion/tutor \
+  -H "Content-Type: application/json" \
+  -d '{"message":"¿Qué es la IA?","scene_id":null,"recent_history":[]}'
+
+# Evaluar la respuesta de un alumno a un checkpoint (Fase 5)
+curl -X POST http://localhost:8000/api/courses/demo-curso-ia/modules/fundamentos/topics/introduccion/checkpoint \
+  -H "Content-Type: application/json" \
+  -d '{"scene_id":"SCENE-001","answer":"una respuesta de prueba"}'
+
 # Bajar el entorno
 docker compose down
 ```
@@ -484,7 +578,7 @@ URLs en desarrollo:
 - Docs interactivas (Swagger): http://localhost:8000/docs
 - Frontend: http://localhost:5173
 
-## 12. Estado de fases
+## 13. Estado de fases
 
 Ver `docs/ROADMAP.md` para el detalle de fases futuras.
 
@@ -517,6 +611,21 @@ Ver `docs/ROADMAP.md` para el detalle de fases futuras.
   la columna derecha. Validado con Vitest (30 tests) y con una inspección
   visual real (Playwright headless, ver `docs/ARCHITECTURE.md`). Sin TTS
   de OpenAI, sin chat bidireccional, sin simulador de certificación.
+- **Fase 5** (completa): tutor bidireccional grounded (`TutorService`,
+  `POST .../topics/{topic_id}/tutor`) con interrupción/reanudación real de
+  la clase, y checkpoints interactivos (`CheckpointService`,
+  `POST .../topics/{topic_id}/checkpoint`) que hacen funcional
+  `scene.interaction` de Fase 3. `expected_answer` nunca autoritativo en la
+  evaluación (regla dura, ver sección 10). Frontend: `TutorPanel` +
+  `TutorConversation` + `useTutor` + `CheckpointPanel`, voz reutilizando
+  `speech.ts` de Fase 4, reconocimiento de voz opcional nuevo
+  (`speechRecognition.ts`, sin paquete npm nuevo). 153 tests de backend y
+  78 de frontend (39 específicos de Fase 5) pasando; validado con un smoke
+  test real (preguntas cubiertas/no cubiertas, prompt injection) y una
+  inspección visual real (ver `docs/ARCHITECTURE.md` sección 8). Sin
+  resúmenes/reorganización de contenido, sin persistencia de
+  conversaciones, sin RAG/embeddings/vector DB, sin simulador de
+  certificación, sin TTS de OpenAI.
 
 Cualquier trabajo futuro debe respetar este documento y actualizar la
 sección correspondiente del roadmap al avanzar de fase.

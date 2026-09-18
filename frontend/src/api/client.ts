@@ -1,10 +1,14 @@
 import type {
   AiStatusResponse,
+  CheckpointEvaluationBody,
+  CheckpointRequest,
   CourseDetail,
   CourseSummary,
   GroundingResponse,
   LessonPlan,
   TopicResponse,
+  TutorReplyBody,
+  TutorRequest,
 } from "../types/api";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
@@ -19,12 +23,13 @@ export class ApiError extends Error {
 
 async function request<T>(
   path: string,
-  options?: { method?: "GET" | "POST"; body?: unknown }
+  options?: { method?: "GET" | "POST"; body?: unknown; signal?: AbortSignal }
 ): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: options?.method ?? "GET",
     headers: options?.body !== undefined ? { "Content-Type": "application/json" } : undefined,
     body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+    signal: options?.signal,
   });
   if (!response.ok) {
     let detail = response.statusText;
@@ -66,5 +71,30 @@ export const api = {
     request<LessonPlan>(
       `/api/courses/${courseId}/modules/${moduleId}/topics/${topicId}/lesson`,
       { method: "POST", body: { force_regenerate: forceRegenerate } }
+    ),
+  // Fase 5: tutor interactivo grounded. `signal` permite cancelar la
+  // solicitud (AbortController) al cambiar de tópico o desmontar el aula.
+  askTutor: (
+    courseId: string,
+    moduleId: string,
+    topicId: string,
+    body: TutorRequest,
+    signal?: AbortSignal
+  ) =>
+    request<TutorReplyBody>(
+      `/api/courses/${courseId}/modules/${moduleId}/topics/${topicId}/tutor`,
+      { method: "POST", body, signal }
+    ),
+  // Fase 5: evaluación grounded de un checkpoint de comprensión.
+  evaluateCheckpoint: (
+    courseId: string,
+    moduleId: string,
+    topicId: string,
+    body: CheckpointRequest,
+    signal?: AbortSignal
+  ) =>
+    request<CheckpointEvaluationBody>(
+      `/api/courses/${courseId}/modules/${moduleId}/topics/${topicId}/checkpoint`,
+      { method: "POST", body, signal }
     ),
 };

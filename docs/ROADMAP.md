@@ -1,7 +1,7 @@
 # Roadmap — PwC AI Tutor
 
 Este documento describe las fases futuras del proyecto. **Ninguna de las
-fases listadas debajo de la Fase 4 está implementada todavía.** Se incluyen
+fases listadas debajo de la Fase 5 está implementada todavía.** Se incluyen
 acá únicamente como referencia de dirección del producto, para que
 decisiones de diseño de fases tempranas (contratos de API, modelo canónico,
 interfaz `LLMProvider`, contratos de `LessonPlan`, Classroom Engine, etc.)
@@ -113,18 +113,66 @@ no las bloqueen innecesariamente.
 - Sin TTS server-side (OpenAI), sin chat bidireccional, sin simulador de
   certificación.
 
-## Fase 5 — Asistente conversacional grounded (Q&A) y reorganización/resúmenes
+## ✅ Fase 5 — Tutor bidireccional grounded + interrupción/reanudación + checkpoints
 
-- Endpoint de preguntas y respuestas sobre un tópico (el panel "Pregunta al
-  asistente IA" del aula virtual, hoy todavía placeholder), usando el mismo
-  patrón de Fase 3: Grounding Packet como único contexto, respuesta con
-  `source_refs` validadas, manejo explícito del caso "no cubierto por el
-  material disponible".
-- Generación de resúmenes y explicaciones alternativas del contenido de un
-  tópico (o de un módulo completo), siempre grounded en los `SourceBlock`
-  del tópico (con referencias `SRC-XXX` verificables) y cacheados con el
-  mismo mecanismo de Fase 3 (filesystem, cache key por contenido/provider/
-  modelo/prompt_version).
+- `TutorService` (`app/services/tutor_service.py`): endpoint de preguntas y
+  respuestas sobre un tópico (el panel "Pregunta al asistente IA" del aula
+  virtual, antes placeholder), reutilizando la interfaz `LLMProvider` de
+  Fase 3. El Grounding Packet del tópico sigue siendo la ÚNICA fuente de
+  verdad; el historial de conversación reciente y el "contexto de clase
+  generado" (título/`source_refs` de la escena activa, nunca la narración
+  ni la `LessonPlan` completa) se envían siempre marcados explícitamente
+  como NO autoritativos, solo para resolver referencias deícticas ("esto",
+  "eso").
+- `TutorReplyBody`: `response_type` (`answer` / `not_covered` /
+  `clarification`) con forma estructuralmente distinta por tipo — el caso
+  "no cubierto" nunca tiene un campo de texto libre que el modelo pueda
+  usar para inventar una explicación alternativa.
+- `POST .../topics/{topic_id}/tutor`: acepta únicamente `message`,
+  `scene_id` y `recent_history` (máx. 10 mensajes, roles `user`/
+  `assistant`); nunca acepta paths de filesystem, Grounding Packet,
+  prompt, API key, provider o modelo desde el request.
+- `CheckpointService` (`app/services/checkpoint_service.py`): hace
+  funcional `scene.interaction` (`comprehension_check`/`reflection`,
+  definido en Fase 3). Evalúa la respuesta del alumno contra el
+  `AUTHORIZED SOURCE`, nunca contra `expected_answer` (ese campo, generado
+  por el LLM en Fase 3 junto con la `LessonPlan`, se pasa al prompt
+  exclusivamente como contexto no autoritativo — si contradice la fuente,
+  la fuente gana siempre). `CheckpointEvaluationBody`: `verdict` (4
+  valores, sin puntaje/porcentaje/gamificación), `feedback` grounded,
+  `ideal_answer` opcional grounded (nunca el `expected_answer` original).
+- `POST .../topics/{topic_id}/checkpoint`: valida existencia de tópico →
+  `LessonPlan` cacheada → escena → tipo `comprehension_check`, en ese
+  orden, ANTES de exigir credencial LLM configurada (mismo patrón que la
+  Fase 3 usa para tópico-no-encontrado).
+- Reintentos acotados reutilizando el mismo patrón de Fase 3
+  (`app/services/llm_retry.py`, extraído para no tocar el loop ya probado
+  de `LessonGenerator`).
+- Frontend: `TutorPanel` + `TutorConversation` + `useTutor` (conversación en
+  memoria React durante la sesión, nunca persistida — se resetea al
+  cambiar de tópico); interrupción/reanudación de la clase por composición
+  externa sobre `useClassroomEngine.pause()/resume()` (sin tocar el motor);
+  reutilización de `speechSynthesis` para leer la respuesta del tutor
+  (nunca superpuesta con la narración de la clase); reconocimiento de voz
+  opcional vía `window.SpeechRecognition`/`webkitSpeechRecognition`
+  (`speechRecognition.ts`, sin paquetes nuevos, deshabilitado con tooltip
+  claro si el navegador no lo soporta); `CheckpointPanel` (pregunta,
+  respuesta, verdict, feedback grounded, `ideal_answer` — nunca bloquea
+  "Siguiente"). `source_refs` del tutor solo visibles en modo desarrollo.
+- Sin caché de respuestas del tutor/checkpoint (cada pregunta depende del
+  contexto conversacional); sin persistencia de conversaciones ni
+  respuestas de checkpoint en el backend.
+- Ver `docs/ARCHITECTURE.md` sección "Fase 5" para los diagramas de flujo
+  completos y el detalle de qué garantiza (y qué no) esta fase.
+- **Nota / deuda técnica**: la generación de resúmenes y explicaciones
+  alternativas de un tópico completo (mencionada originalmente para esta
+  fase) NO se implementó — quedó fuera de alcance del pedido real de Fase
+  5. Sigue pendiente para una fase futura. Además, el prompt de
+  `LessonGenerator` (Fase 3) nunca instruye explícitamente a incluir un
+  `scene.interaction`, por lo que en la práctica muy pocas lecciones
+  generadas contienen un `comprehension_check` real — el `CheckpointPanel`
+  está completo y probado, pero rara vez aparece en contenido generado
+  hoy; ver `docs/ARCHITECTURE.md`.
 
 ## Fase 6 — TTS avanzado, diagramas enriquecidos y animaciones complejas
 

@@ -151,3 +151,41 @@ export interface AiStatusResponse {
   configured: boolean;
   prompt_version: string;
 }
+
+// ---------------------------------------------------------------------
+// Fase 5 — Tutor interactivo grounded + Checkpoints
+// ---------------------------------------------------------------------
+
+export type TutorRole = "user" | "assistant";
+
+export interface TutorMessage {
+  role: TutorRole;
+  content: string;
+}
+
+export interface TutorRequest {
+  message: string;
+  scene_id: string | null;
+  recent_history: TutorMessage[];
+}
+
+export type TutorResponseType = "answer" | "not_covered" | "clarification";
+
+export interface TutorReplyBody {
+  response_type: TutorResponseType;
+  answer_chunks: GroundedText[];
+  clarification_question: string | null;
+}
+
+export interface CheckpointRequest {
+  scene_id: string;
+  answer: string;
+}
+
+export type CheckpointVerdict = "correct" | "partially_correct" | "incorrect" | "not_assessable";
+
+export interface CheckpointEvaluationBody {
+  verdict: CheckpointVerdict;
+  feedback: GroundedText[];
+  ideal_answer: GroundedText | null;
+}

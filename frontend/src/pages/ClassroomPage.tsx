@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, ApiError } from "../api/client";
 import { Breadcrumb } from "../components/Breadcrumb";
 import { GroundingPanel } from "../components/GroundingPanel";
+import { CheckpointPanel } from "../classroom/CheckpointPanel";
 import { CompletionScreen } from "../classroom/CompletionScreen";
 import { LoadingSteps } from "../classroom/LoadingSteps";
 import { SceneRenderer } from "../classroom/SceneRenderer";
+import { TutorPanel } from "../classroom/TutorPanel";
+import { buildSourceBlockLookup } from "../classroom/sourceBlockLookup";
 import {
   loadVoiceEnabled,
   loadVoiceSpeed,
@@ -28,13 +31,6 @@ import type {
   LessonScene,
   TopicResponse,
 } from "../types/api";
-
-const SUGGESTIONS = [
-  "Resumime este tema en 3 puntos",
-  "Explicalo con otras palabras",
-  "Dame un ejemplo del contenido",
-  "¿Qué relación tiene con el módulo anterior?",
-];
 
 type ContentTab = "explicacion" | "puntos-clave" | "recursos";
 
@@ -65,8 +61,18 @@ export function ClassroomPage() {
   const [course, setCourse] = useState<CourseDetail | null>(null);
   const [topic, setTopic] = useState<TopicResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [question, setQuestion] = useState("");
   const [contentTab, setContentTab] = useState<ContentTab>("explicacion");
+
+  // Fase 5: interrupción de la clase para conversar con el tutor, y
+  // referencia SRC-XXX inspeccionada desde una respuesta del tutor (solo
+  // desarrollo — reutiliza el mismo lookup que SceneRenderer/GroundingPanel,
+  // sin un segundo sistema de debugging).
+  const [tutorInterrupting, setTutorInterrupting] = useState(false);
+  const [inspectedTutorRef, setInspectedTutorRef] = useState<string | null>(null);
+  const lookupSourceBlock = useMemo(
+    () => buildSourceBlockLookup(topic?.canonical),
+    [topic?.canonical]
+  );
 
   // Fase 3: estado del agente IA y de la LessonPlan generada.
   const [aiStatus, setAiStatus] = useState<AiStatusResponse | null>(null);
@@ -137,6 +143,8 @@ export function ClassroomPage() {
     // para no consumir IA solo por entrar al tópico (sección 45).
     setLesson(null);
     setLessonError(null);
+    setTutorInterrupting(false);
+    setInspectedTutorRef(null);
     cancelSpeech();
     api
       .getTopic(courseId, moduleId, topicId)
@@ -232,6 +240,22 @@ export function ClassroomPage() {
     navigate(courseId ? `/cursos/${courseId}` : "/");
   }
 
+  // Fase 5: interrupción/reanudación de la clase al conversar con el
+  // tutor (sección 27). Preserva currentSceneIndex/currentNarrationIndex
+  // por construcción: nunca se llama nextScene/previousScene/repeatScene
+  // acá, solo pause()/resume() ya existentes del Classroom Engine.
+  function handleTutorInterrupt() {
+    if (tutorInterrupting) return;
+    cancelSpeech(); // corta la narración de la clase antes de que hable el tutor
+    if (lesson) engine.pause();
+    setTutorInterrupting(true);
+  }
+
+  function handleContinueClass() {
+    setTutorInterrupting(false);
+    if (lesson) engine.resume();
+  }
+
   function handleModuleChange(newModuleId: string) {
     if (!course || !courseId) return;
     const module = course.modules.find((m) => m.id === newModuleId);
@@ -239,12 +263,6 @@ export function ClassroomPage() {
     if (firstTopic) {
       navigate(`/aula/${courseId}/${module.id}/${firstTopic.id}`);
     }
-  }
-
-  function handleAskSubmit(e: FormEvent) {
-    e.preventDefault();
-    // El tutor interactivo grounded todavía no está implementado — ver
-    // docs/ROADMAP.md (Fase 5). Este panel es un placeholder de UI.
   }
 
   if (error) {
@@ -401,6 +419,36 @@ export function ClassroomPage() {
               </div>
             )}
 
+            {lesson &&
+              !engine.isCompleted &&
+              engine.currentScene?.interaction?.interaction_type === "comprehension_check" &&
+              courseId &&
+              moduleId &&
+              topicId && (
+                <CheckpointPanel
+                  courseId={courseId}
+                  moduleId={moduleId}
+                  topicId={topicId}
+                  scene={engine.currentScene}
+                  voiceEnabled={voiceEnabled}
+                  voiceRate={voiceSpeed}
+                />
+              )}
+
+            {lesson &&
+              !engine.isCompleted &&
+              engine.currentScene?.interaction?.interaction_type === "reflection" && (
+                <div className="checkpoint-panel checkpoint-panel--reflection">
+                  <h4 className="checkpoint-panel__title">Reflexión</h4>
+                  <p className="checkpoint-panel__question">
+                    {engine.currentScene.interaction.question.text}
+                  </p>
+                  <p className="checkpoint-panel__hint">
+                    Compartí tu reflexión con el tutor en el panel de abajo.
+                  </p>
+                </div>
+              )}
+
             {course && course.modules.length > 0 && (
               <div className="module-topic-nav">
                 {flatTopics.map((t) => (
@@ -512,48 +560,45 @@ export function ClassroomPage() {
           />
         )}
 
-        <div className="assistant-panel">
-          <div className="assistant-panel__header">
-            <span className="assistant-panel__icon" aria-hidden="true" />
-            <h3>Pregunta al asistente IA</h3>
-            {aiStatus && (
-              <span
-                className={
-                  "assistant-panel__ai-status " +
-                  (aiStatus.configured
-                    ? "assistant-panel__ai-status--on"
-                    : "assistant-panel__ai-status--off")
-                }
-              >
-                {aiStatus.configured ? "● Agente IA activo" : "○ IA no configurada"}
-              </span>
-            )}
+        {courseId && moduleId && topicId && (
+          <TutorPanel
+            key={`${courseId}-${moduleId}-${topicId}`}
+            courseId={courseId}
+            moduleId={moduleId}
+            topicId={topicId}
+            sceneId={engine.currentScene?.scene_id ?? null}
+            aiStatus={aiStatus}
+            voiceEnabled={voiceEnabled}
+            voiceRate={voiceSpeed}
+            isInterrupting={tutorInterrupting}
+            onInterrupt={handleTutorInterrupt}
+            onContinueClass={handleContinueClass}
+            onInspectRef={import.meta.env.DEV ? setInspectedTutorRef : undefined}
+          />
+        )}
+
+        {import.meta.env.DEV && inspectedTutorRef && (
+          <div className="grounding-panel__block-preview grounding-panel__block-preview--floating">
+            {(() => {
+              const block = lookupSourceBlock(inspectedTutorRef);
+              return block ? (
+                <>
+                  <strong>
+                    {block.source_ref} · {block.block_type}
+                  </strong>
+                  <p>{block.plain_text}</p>
+                </>
+              ) : (
+                <p className="grounding-panel__block-preview--missing">
+                  {inspectedTutorRef} no existe en los SourceBlocks del tópico.
+                </p>
+              );
+            })()}
+            <button type="button" onClick={() => setInspectedTutorRef(null)}>
+              Cerrar
+            </button>
           </div>
-          <form className="assistant-panel__form" onSubmit={handleAskSubmit}>
-            <input
-              type="text"
-              placeholder="Escribí tu pregunta sobre este tema…"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-            />
-            <button type="submit">Enviar</button>
-          </form>
-          <div className="assistant-panel__suggestions">
-            {SUGGESTIONS.map((s) => (
-              <button
-                key={s}
-                type="button"
-                className="assistant-panel__chip"
-                onClick={() => setQuestion(s)}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-          <p className="assistant-panel__hint">
-            El tutor interactivo estará disponible en la próxima fase.
-          </p>
-        </div>
+        )}
 
         <div className="controls-bar">
           <button

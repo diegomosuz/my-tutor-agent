@@ -484,7 +484,177 @@ Pause/Resume/Repetir/Previo/Siguiente/Salir cancelan o pausan la síntesis
 en curso para evitar voces superpuestas. Preferencia de voz activada y de
 velocidad se persisten en `localStorage` como valores simples.
 
-## 8. Por qué esta arquitectura y no otra
+## 8. Tutor bidireccional grounded + Checkpoints (Fase 5)
+
+Fase 5 agrega dos capacidades nuevas sobre la base de Fases 2/3/4: un tutor
+conversacional (preguntas y respuestas sobre el tópico activo) y
+checkpoints interactivos (evaluación grounded de la respuesta del alumno a
+`scene.interaction`). Ambas reutilizan la interfaz `LLMProvider` de Fase 3
+sin crear una segunda abstracción de proveedor.
+
+### 8.1 Flujo: pregunta del alumno al tutor
+
+```
+Alumno escribe una pregunta en TutorPanel
+    ↓
+useTutor.sendMessage()
+    ├── onBeforeSend() → pausa la clase (composición externa sobre
+    │                     useClassroomEngine.pause(), sin tocar el engine)
+    └── construye recent_history (máx. 10 mensajes, en memoria React)
+    ↓
+POST .../topics/{topic_id}/tutor
+    { message, scene_id, recent_history }
+    ↓
+TutorService.ask_tutor (backend/app/services/tutor_service.py)
+    ├── resuelve CanonicalTopicContent + Grounding Packet (Fase 2, SIEMPRE
+    │   la fuente de verdad — nunca cambia por esta fase)
+    ├── resuelve SceneContext (título + source_refs de la escena activa,
+    │   vía la LessonPlan cacheada de Fase 3 — NUNCA la LessonPlan
+    │   completa, y NUNCA la narración de la escena)
+    ├── build_tutor_messages(...) separa con delimitadores explícitos:
+    │     A) pregunta del alumno (datos, nunca instrucción)
+    │     B) recent_history (marcado NO CONFIABLE)
+    │     C) contexto de clase generado (marcado NO ES FUENTE DE VERDAD)
+    │     D) AUTHORIZED SOURCE = Grounding Packet completo (única fuente)
+    │     E) JSON Schema de TutorReplyBody
+    └── generate_with_retries(...) (llm_retry.py, mismo patrón de Fase 3:
+        1 intento + hasta 2 correcciones; sin retry en auth/config)
+    ↓
+TutorReplyBody validado (Pydantic + validate_tutor_reply: cada
+answer_chunks[*].source_refs debe existir en el CanonicalTopicContent)
+    ↓
+Respuesta al frontend: answer (con source_refs) | not_covered (mensaje fijo
+determinístico, el modelo NUNCA redacta esta respuesta) | clarification
+    ↓
+TutorPanel muestra la respuesta; si voiceEnabled, la lee con
+speechSynthesis (cancelando cualquier lectura previa; nunca simultánea con
+la narración de la clase); el alumno hace click en "Continuar clase" para
+reanudar exactamente en la misma escena/punto de narración donde estaba
+(el estado de progreso del engine nunca se tocó durante la pregunta).
+```
+
+**Qué NUNCA es fuente de verdad en este flujo** (para que quede explícito y
+no se relaje accidentalmente en una fase futura): `recent_history`, la
+`LessonPlan` completa, el `SceneContext` derivado de ella, y — en el flujo
+de checkpoints, ver 8.2 — `expected_answer`. La única fuente de verdad
+sigue siendo el Grounding Packet del `CanonicalTopicContent` del tópico
+activo (Fase 2).
+
+### 8.2 Flujo: respuesta del alumno a un checkpoint
+
+```
+Alumno responde la pregunta de scene.interaction en CheckpointPanel
+(expected_answer NUNCA se le muestra, ni antes ni después de responder)
+    ↓
+POST .../topics/{topic_id}/checkpoint
+    { scene_id, answer }
+    ↓
+CheckpointService.evaluate_checkpoint (backend/app/services/checkpoint_service.py)
+    ├── 1) resuelve CanonicalTopicContent + Grounding Packet (404 si el
+    │      tópico no existe — ANTES de exigir credencial LLM)
+    ├── 2) busca la LessonPlan cacheada (404 si no hay una generada)
+    ├── 3) busca la escena por scene_id (404 si no existe)
+    ├── 4) verifica interaction_type == comprehension_check (409 si no)
+    ├── 5) recién acá exige llm_provider.is_configured() (503 si no)
+    └── build_checkpoint_messages(...): la pregunta + expected_answer de
+        scene.interaction se envían SOLO como "contexto de clase generado,
+        NO autoritativo" — con una regla explícita en el system prompt:
+        "si expected_answer contradice o sobreextiende AUTHORIZED SOURCE,
+        AUTHORIZED SOURCE gana siempre". El evaluador nunca compara
+        programáticamente answer contra expected_answer: el LLM evalúa
+        contra el Grounding Packet, y el backend solo valida que
+        feedback/ideal_answer citen source_refs reales.
+    ↓
+CheckpointEvaluationBody validado (verdict sin score/porcentaje/
+gamificación; feedback grounded; ideal_answer opcional grounded — un campo
+NUEVO, distinto de expected_answer)
+    ↓
+CheckpointPanel muestra verdict + feedback + ideal_answer (si viene). Nunca
+bloquea el botón "Siguiente" de la clase.
+```
+
+El orden de validaciones (2)→(3)→(4) antes de (5) replica a propósito el
+mismo patrón ya usado en Fase 3 para `POST .../lesson` (un tópico
+inexistente da 404 incluso sin credencial configurada) — ver
+`backend/tests/test_checkpoint_service.py::test_checkpoint_existence_checks_happen_before_provider_config`.
+
+### 8.3 Contrato HTTP y manejo de errores
+
+- `POST .../topics/{topic_id}/tutor`: acepta únicamente `message` (1–4000
+  caracteres), `scene_id` (opcional) y `recent_history` (máx. 10 mensajes,
+  roles `user`/`assistant`, cada uno máx. 4000 caracteres) — nunca un path
+  de filesystem, Grounding Packet, prompt, API key, provider o modelo.
+  Errores: `404` (tópico no encontrado), `503` (LLM no configurado), `502`
+  (fallo del proveedor tras agotar reintentos), `422` (respuesta inválida
+  tras agotar reintentos). Nunca se filtra el prompt, el Grounding Packet,
+  la respuesta cruda del proveedor ni encabezados/API keys en ningún error.
+- `POST .../topics/{topic_id}/checkpoint`: acepta `scene_id` y `answer`
+  (1–4000 caracteres). Errores: `404` (tópico/`LessonPlan`/escena
+  inexistente), `409` (la escena no es un `comprehension_check`), `503`/
+  `502`/`422` con el mismo criterio que el tutor.
+- Ninguno de los dos endpoints cachea su respuesta (cada pregunta o
+  respuesta de checkpoint depende del contexto conversacional puntual);
+  la única cache que sigue existiendo es la de `LessonPlan` (Fase 3).
+- Logging (`app/services/service_logging.py`): eventos
+  `tutor_query_started/completed/failed` y
+  `checkpoint_evaluation_started/completed/failed` con únicamente ids,
+  provider, model, `duration_ms` y `response_type`/`verdict` — nunca el
+  texto de la pregunta, el historial, el prompt, el Grounding Packet, la
+  API key ni la respuesta cruda del LLM.
+
+### 8.4 Frontend: interrupción/reanudación, voz y reconocimiento de voz
+
+- `TutorPanel` + `TutorConversation` + `useTutor` (`frontend/src/
+  classroom/`): la conversación vive en memoria React durante la sesión
+  (`useState` dentro de `useTutor`), nunca persistida en `localStorage` ni
+  en el backend; se reinicia sola al cambiar de tópico porque
+  `ClassroomPage` monta una instancia nueva vía `key={courseId-moduleId-
+  topicId}`.
+- Interrupción/reanudación de la clase: composición externa en
+  `ClassroomPage` sobre `pause()`/`resume()`, ya existentes en
+  `useClassroomEngine` desde Fase 4 — no se agregó ningún método nuevo al
+  engine. `currentSceneIndex`/`currentNarrationIndex` nunca se tocan
+  durante una pregunta al tutor.
+- Voz: se reutiliza `speech.ts` de Fase 4 (`speakSequence`, nueva función
+  que encadena varios `GroundedText` con el mismo `speakText` de siempre);
+  nunca hay narración de la clase y respuesta del tutor sonando a la vez
+  (se cancela explícitamente la lectura anterior antes de empezar una
+  nueva, incluso ante un reintento rápido).
+- Reconocimiento de voz (`speechRecognition.ts`, nuevo): envoltorio fino
+  sobre `window.SpeechRecognition`/`webkitSpeechRecognition` con feature
+  detection explícita — sin paquete npm nuevo. `continuous=false`,
+  `interimResults=false`, idioma preferido `es-AR`. El transcript final se
+  coloca en el input del tutor SIN enviarlo automáticamente. Si el
+  navegador no lo soporta, el botón de micrófono se deshabilita con un
+  tooltip claro; nunca es un requisito para usar el tutor.
+- `CheckpointPanel`: nunca muestra `scene.interaction.expected_answer` (ni
+  antes ni después de evaluar) — el campo que sí se muestra tras evaluar es
+  `result.ideal_answer`, estructuralmente distinto y producido por la
+  evaluación misma.
+- Seguridad de renderizado: `TutorConversation` y `CheckpointPanel`
+  renderizan todo el texto del tutor/checkpoint como texto React normal
+  (JSX `{texto}`), nunca `dangerouslySetInnerHTML`; el tutor nunca produce
+  Markdown/HTML interpretado ni enlaces clicables arbitrarios.
+- `source_refs` de una respuesta del tutor solo son visibles con
+  `import.meta.env.DEV` (mismo patrón del panel de grounding de Fase 2),
+  nunca al alumno en producción.
+
+### 8.5 Límite conocido: `expected_answer` casi nunca existe en la práctica
+
+El prompt de `LessonGenerator` (Fase 3, `app/prompts/lesson.py`) nunca
+instruye explícitamente al modelo a incluir un `scene.interaction`; es un
+campo opcional del esquema que el modelo puede omitir libremente. En la
+práctica, la mayoría de las `LessonPlan` generadas hoy no incluyen ningún
+`comprehension_check`. El `CheckpointService`/`CheckpointPanel` de Fase 5
+están completos y probados (con `FakeLLMProvider` en tests, y con
+fixtures reales en el smoke test), pero para que el alumno vea un
+checkpoint en una clase real haría falta, en una fase futura, actualizar
+el prompt de Fase 3 para pedir explícitamente al menos un
+`comprehension_check` por tema — cambio deliberadamente fuera de alcance
+de Fase 5 (que consumía ese campo tal como ya existía, no cambiaba cómo se
+genera).
+
+## 9. Por qué esta arquitectura y no otra
 
 - **Sin base de datos**: el contenido es archivos Markdown versionables;
   no hay necesidad de un motor de persistencia transaccional para leerlos.
@@ -542,3 +712,21 @@ velocidad se persisten en `localStorage` como valores simples.
   ni credencial nueva; un proveedor TTS server-side (ej. OpenAI) queda
   para una fase posterior cuando se necesite mejor calidad/control de voz
   que el navegador no pueda ofrecer.
+- **Composición externa en vez de extender `useClassroomEngine` (Fase
+  5)**: interrumpir/reanudar la clase al preguntarle algo al tutor se
+  resolvió reutilizando `pause()`/`resume()`, ya existentes desde Fase 4,
+  desde un componente que los orquesta (`ClassroomPage`) — evita agregar
+  responsabilidades nuevas a un motor que ya tenía un contrato estable y
+  probado.
+- **`window.SpeechRecognition` nativo en vez de un SDK de reconocimiento de
+  voz (Fase 5)**: igual que la síntesis de voz en Fase 4, se prioriza cero
+  dependencias/credenciales nuevas; el dictado es una mejora opcional
+  (feature-detected) del input de texto, nunca un requisito.
+- **`expected_answer` nunca autoritativo en la evaluación de checkpoints
+  (Fase 5)**: ese campo lo generó el LLM durante la generación de la
+  `LessonPlan` (Fase 3) y, aunque pasó la validación estructural de
+  grounding en ese momento, es una afirmación pedagógica más — no una
+  fuente canónica. Tratarlo como autoritativo en la evaluación
+  introduciría un segundo canal de "verdad" paralelo al Grounding Packet,
+  exactamente lo que la regla absoluta de grounding (sección 2 de
+  `CLAUDE.md`) prohíbe.

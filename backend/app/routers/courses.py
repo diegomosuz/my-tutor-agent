@@ -5,9 +5,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.config import Settings, get_settings
 from app.models.lesson import GenerateLessonRequest, LessonPlan
 from app.models.schemas import CourseDetail, CourseSummary, GroundingResponse, TopicResponse
-from app.services import courses as course_service
+from app.models.tutor import (
+    CheckpointEvaluationBody,
+    CheckpointRequest,
+    TutorReplyBody,
+    TutorRequest,
+)
+from app.services import checkpoint_service, courses as course_service, tutor_service
 from app.services import lesson_generator
 from app.services.llm_provider import LLMAuthError, LLMConfigurationError, LLMUpstreamError
+from app.services.llm_retry import GenerationFailedError
 
 router = APIRouter(prefix="/api/courses", tags=["courses"])
 logger = logging.getLogger("pwc_tutor.lesson")
@@ -15,6 +22,12 @@ logger = logging.getLogger("pwc_tutor.lesson")
 _COURSE_NOT_FOUND = "Curso '{}' no encontrado"
 _MODULE_NOT_FOUND = "Módulo '{}' no encontrado"
 _TOPIC_NOT_FOUND = "Tópico '{}' no encontrado"
+_LLM_AUTH_REJECTED = (
+    "El proveedor LLM configurado rechazó la credencial. Verificá la configuración del backend."
+)
+_LLM_UPSTREAM_FAILED = (
+    "El proveedor LLM externo no respondió correctamente. Intentá nuevamente más tarde."
+)
 
 
 @router.get("", response_model=list[CourseSummary])
@@ -137,4 +150,117 @@ def generate_topic_lesson(
         raise HTTPException(
             status_code=422,
             detail="No se pudo generar una lección válida a partir del material de este tópico.",
+        ) from exc
+
+
+@router.post(
+    "/{course_id}/modules/{module_id}/topics/{topic_id}/tutor",
+    response_model=TutorReplyBody,
+)
+def ask_topic_tutor(
+    course_id: str,
+    module_id: str,
+    topic_id: str,
+    body: TutorRequest,
+    settings: Settings = Depends(get_settings),
+) -> TutorReplyBody:
+    """Tutor interactivo grounded (Fase 5). El navegador solo puede enviar
+    la pregunta, un `scene_id` opcional y hasta 10 mensajes de historial
+    reciente (roles `user`/`assistant` únicamente, nunca `system`). El
+    backend resuelve siempre el tópico verdadero a través del repositorio
+    seguro y arma el Grounding Packet (única fuente de verdad) por su
+    cuenta; nunca acepta una ruta de filesystem, el system prompt, el
+    Grounding Packet, una API key, un provider ni SourceBlocks arbitrarios
+    desde el request.
+    """
+    try:
+        return tutor_service.ask_tutor(
+            settings=settings,
+            course_id=course_id,
+            module_id=module_id,
+            topic_id=topic_id,
+            message=body.message,
+            scene_id=body.scene_id,
+            recent_history=body.recent_history,
+        )
+    except course_service.CourseNotFoundError:
+        raise HTTPException(status_code=404, detail=_COURSE_NOT_FOUND.format(course_id))
+    except course_service.ModuleNotFoundError:
+        raise HTTPException(status_code=404, detail=_MODULE_NOT_FOUND.format(module_id))
+    except course_service.TopicNotFoundError:
+        raise HTTPException(status_code=404, detail=_TOPIC_NOT_FOUND.format(topic_id))
+    except LLMConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except LLMAuthError:
+        raise HTTPException(status_code=503, detail=_LLM_AUTH_REJECTED)
+    except LLMUpstreamError:
+        raise HTTPException(status_code=502, detail=_LLM_UPSTREAM_FAILED)
+    except GenerationFailedError as exc:
+        logger.warning(
+            "tutor_query_rejected course_id=%s module_id=%s topic_id=%s", course_id, module_id, topic_id
+        )
+        raise HTTPException(
+            status_code=422,
+            detail="El tutor no pudo generar una respuesta válida a partir del material de este tópico.",
+        ) from exc
+
+
+@router.post(
+    "/{course_id}/modules/{module_id}/topics/{topic_id}/checkpoint",
+    response_model=CheckpointEvaluationBody,
+)
+def evaluate_topic_checkpoint(
+    course_id: str,
+    module_id: str,
+    topic_id: str,
+    body: CheckpointRequest,
+    settings: Settings = Depends(get_settings),
+) -> CheckpointEvaluationBody:
+    """Evalúa la respuesta del alumno a un checkpoint de comprensión
+    (`interaction_type=comprehension_check`) de una escena ya generada
+    (Fase 4/5). `scene.interaction.expected_answer` se usa únicamente como
+    contexto para el LLM, nunca como autoridad: la evaluación real siempre
+    se hace contra el Grounding Packet del tópico.
+    """
+    try:
+        return checkpoint_service.evaluate_checkpoint(
+            settings=settings,
+            course_id=course_id,
+            module_id=module_id,
+            topic_id=topic_id,
+            scene_id=body.scene_id,
+            answer=body.answer,
+        )
+    except course_service.CourseNotFoundError:
+        raise HTTPException(status_code=404, detail=_COURSE_NOT_FOUND.format(course_id))
+    except course_service.ModuleNotFoundError:
+        raise HTTPException(status_code=404, detail=_MODULE_NOT_FOUND.format(module_id))
+    except course_service.TopicNotFoundError:
+        raise HTTPException(status_code=404, detail=_TOPIC_NOT_FOUND.format(topic_id))
+    except checkpoint_service.CheckpointLessonPlanNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except checkpoint_service.CheckpointSceneNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Escena '{body.scene_id}' no encontrada")
+    except checkpoint_service.CheckpointNotComprehensionCheckError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"La escena '{body.scene_id}' no tiene una comprobación de comprensión para evaluar.",
+        )
+    except LLMConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except LLMAuthError:
+        raise HTTPException(status_code=503, detail=_LLM_AUTH_REJECTED)
+    except LLMUpstreamError:
+        raise HTTPException(status_code=502, detail=_LLM_UPSTREAM_FAILED)
+    except GenerationFailedError as exc:
+        logger.warning(
+            "checkpoint_evaluation_rejected course_id=%s module_id=%s topic_id=%s scene_id=%s",
+            course_id,
+            module_id,
+            topic_id,
+            body.scene_id,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail="No se pudo evaluar el checkpoint a partir del material de este tópico.",
         ) from exc

@@ -98,3 +98,40 @@ export function cancelSpeech(): void {
     // ignorar
   }
 }
+
+/**
+ * Lee una lista de textos en orden, uno detrás de otro (mismo mecanismo
+ * que la narración de la clase, reutilizado acá para la voz del tutor —
+ * ver `useClassroomVoice.ts` para el caso de la clase y
+ * `classroom/TutorPanel.tsx` para el del tutor; no es un subsistema de voz
+ * nuevo, solo otro consumidor de las mismas funciones de este módulo).
+ * Cancela cualquier speech previo antes de empezar (nunca se superponen
+ * dos utterances). Devuelve una función para cancelar la secuencia.
+ */
+export function speakSequence(
+  texts: string[],
+  options: { rate?: number; voice?: SpeechSynthesisVoice; onDone?: () => void } = {}
+): () => void {
+  let cancelled = false;
+
+  function speakAt(index: number) {
+    if (cancelled) return;
+    if (index >= texts.length) {
+      options.onDone?.();
+      return;
+    }
+    speakText(texts[index], {
+      rate: options.rate,
+      voice: options.voice,
+      onEnd: () => speakAt(index + 1),
+    });
+  }
+
+  cancelSpeech();
+  speakAt(0);
+
+  return () => {
+    cancelled = true;
+    cancelSpeech();
+  };
+}

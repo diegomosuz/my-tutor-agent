@@ -7,15 +7,18 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **Fase actual: Fase 4** — catálogo de cursos, detalle de curso, modelo
+> **Fase actual: Fase 5** — catálogo de cursos, detalle de curso, modelo
 > canónico de contenido 100% determinístico, integración real con un LLM
-> para generar clases estructuradas (`LessonPlan`) grounded, y ahora un
-> **aula virtual interactiva de verdad**: Classroom Engine + 11 tipos de
-> slide (hero, bullets, proceso, comparación, jerarquía, arquitectura,
-> mapa conceptual, tabla, código, cita, sin visual), animaciones CSS con
-> pausa real, progreso local, y una primera voz funcional con la Web
-> Speech API del navegador. Sin TTS server-side, sin chat bidireccional,
-> sin simulador de certificación todavía.
+> para generar clases estructuradas (`LessonPlan`) grounded, aula virtual
+> interactiva (Classroom Engine + 11 tipos de slide, animaciones CSS con
+> pausa real, progreso local, voz con la Web Speech API), y ahora un
+> **tutor conversacional grounded de verdad**: preguntas y respuestas
+> sobre el tópico activo (con interrupción/reanudación real de la clase),
+> y checkpoints interactivos que evalúan la respuesta del alumno contra el
+> material autorizado (nunca contra la respuesta esperada generada por el
+> LLM). Reconocimiento de voz opcional para dictar preguntas. Sin
+> resúmenes/reorganización de contenido, sin TTS server-side, sin
+> simulador de certificación todavía.
 
 ## Requisitos
 
@@ -131,6 +134,36 @@ del `SourceBlock` citado (tabla, código o cita reales del Markdown).
 - Columna derecha con pestañas Explicación (Markdown completo) / Puntos
   clave / Recursos (enlaces literalmente presentes en el Markdown).
 
+## Tutor conversacional grounded + checkpoints (Fase 5)
+
+El panel "Pregunta al asistente IA" del aula ahora conversa de verdad:
+
+```
+curl -X POST http://localhost:8000/api/courses/demo-curso-ia/modules/fundamentos/topics/introduccion/tutor \
+  -H "Content-Type: application/json" \
+  -d '{"message":"¿Qué es la IA?","scene_id":null,"recent_history":[]}'
+```
+
+- La única fuente de verdad sigue siendo el Grounding Packet del tópico
+  (Fase 2): el historial de conversación y el contexto de la escena activa
+  ayudan a interpretar la pregunta, pero **nunca** son tratados como
+  autoritativos. Si la pregunta no está cubierta por el material, la
+  respuesta es `not_covered` con un mensaje fijo — el modelo nunca redacta
+  esa respuesta.
+- Preguntar algo pausa la clase automáticamente (nunca sigue avanzando de
+  fondo); "Continuar clase" retoma exactamente en la misma escena.
+- Si `scene.interaction` de tipo `comprehension_check` está presente en la
+  `LessonPlan`, aparece un panel de "Comprobación de comprensión": la
+  respuesta del alumno se evalúa contra el material autorizado, **nunca**
+  contra la `expected_answer` que el LLM generó junto con la clase (si esa
+  respuesta esperada contradice el material, el material gana siempre).
+  Sin puntaje ni gamificación — solo `verdict` + feedback grounded.
+- Reconocimiento de voz opcional para dictar la pregunta (botón de
+  micrófono, deshabilitado con un tooltip si el navegador no lo soporta) —
+  usa la Web Speech API nativa, sin ninguna librería nueva.
+- La conversación vive en memoria durante la sesión del navegador; no se
+  persiste en el backend ni en `localStorage`.
+
 ## Estructura del repositorio
 
 ```
@@ -140,7 +173,8 @@ pwc-tutor-agent/
         tests/
     frontend/           SPA (React + TypeScript + Vite)
         src/
-            classroom/      Classroom Engine, SceneRenderer, visuals, voz
+            classroom/      Classroom Engine, SceneRenderer, visuals, voz,
+                            tutor conversacional, checkpoints
     courses/             Curso de demo (filesystem de cursos)
         demo-curso-ia/
     docs/

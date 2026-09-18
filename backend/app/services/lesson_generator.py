@@ -87,6 +87,23 @@ def _read_cache(cache_dir: Path, key: str) -> LessonPlan | None:
         return None
 
 
+def get_cached_lesson_plan(
+    settings: Settings, provider: LLMProvider, canonical: CanonicalTopicContent
+) -> LessonPlan | None:
+    """Lee (sin generar) la `LessonPlan` cacheada para este
+    content_sha256/provider/modelo/prompt_version, si existe. Usado por
+    `TutorService` y `CheckpointService` (Fase 5) para resolver contexto de
+    escena / preguntas de checkpoint sin duplicar la lógica de cache y sin
+    disparar una generación nueva. Nunca llama al LLM."""
+    key = _cache_key(
+        content_sha256=canonical.content_sha256,
+        provider_name=provider.name,
+        model=provider.model,
+        prompt_version=settings.lesson_prompt_version,
+    )
+    return _read_cache(settings.lesson_cache_path, key)
+
+
 def _write_cache(cache_dir: Path, key: str, plan: LessonPlan) -> None:
     """Escritura atómica simple: escribe a un archivo temporal y hace
     replace (rename atómico en el mismo filesystem)."""
