@@ -310,7 +310,92 @@ como contenido de curso citable, nunca ejecutado. Ver
 determinística de esta separación (qué demuestra y qué NO demuestra ese
 test está documentado en el docstring del archivo).
 
-## 9. Convenciones
+## 9. Classroom Engine y Scene Renderer (Fase 4)
+
+Fase 4 transforma una `LessonPlan` ya generada (Fase 3) en la experiencia
+visual del aula virtual, íntegramente en el frontend:
+
+```
+LessonPlan
+    ↓
+Classroom Engine (frontend/src/classroom/useClassroomEngine.ts)
+    ├── progress state    (currentSceneIndex, isCompleted, progressPercent)
+    ├── playback state    (isPlaying, isPaused, renderKey)
+    └── narration state   (currentNarrationIndex, nextNarrationChunk)
+    ↓
+SceneRenderer (frontend/src/classroom/SceneRenderer.tsx)
+    ↓  despacha por scene.visual.visual_type (tabla de componentes, sin if/else gigante)
+Visual Components (frontend/src/classroom/visuals/*.tsx)
+    ↓
+React + CSS animations (nunca Canvas/WebGL, nunca librerías de diagramación)
+```
+
+**Regla dura del renderer**: el frontend NUNCA interpreta código generado
+por el LLM. No se usa `dangerouslySetInnerHTML`, `eval`, `new Function`,
+iframes dinámicos ni SVG/HTML crudo proveniente de la LessonPlan en ningún
+componente de `frontend/src/classroom/`. Todo elemento visual es un
+componente React escrito por el equipo; `VisualPlan` es exclusivamente una
+especificación declarativa (`visual_type` de un enum cerrado +
+`layout_hint` + `source_refs`).
+
+**Fuente de información visible en una slide** (por prioridad):
+1. `scene.title` / `scene.key_points` (siempre).
+2. El `SourceBlock` citado por `scene.visual.source_refs` cuando el visual
+   lo amerita (`TableVisual` busca un bloque `table`, `CodeVisual` un
+   bloque `code`, `QuoteVisual` un `blockquote` — resueltos vía
+   `frontend/src/classroom/sourceBlockLookup.ts`, sin duplicar lógica del
+   backend).
+
+`scene.visual.description` **NUNCA se renderiza como texto**: es una
+instrucción de presentación para el renderer (ya cubierta explícitamente
+por `layout_hint`), no conocimiento pedagógico nuevo. Ningún componente en
+`frontend/src/classroom/visuals/` lee `.description` para mostrar
+contenido al alumno (ver el docstring de
+`frontend/src/classroom/visuals/types.ts`).
+
+**Cero alucinación introducida por el renderer**: `ProcessVisual`,
+`HierarchyVisual`, `ArchitectureVisual` y `ConceptMapVisual` nunca dibujan
+una conexión/relación entre dos conceptos que los datos no establezcan
+explícitamente (`GroundedText` es una lista plana, sin relaciones
+codificadas entre sus elementos) — se muestran como componentes/nodos
+dentro de un marco visual, sin flechas semánticas inventadas.
+`ComparisonVisual` solo arma dos columnas cuando hay exactamente 2
+`key_points` (lo único que permite identificar "dos lados" sin inventar una
+clasificación); en cualquier otro caso usa cards paralelas neutrales.
+
+**Progreso local** (`frontend/src/classroom/classroomStorage.ts`): por
+tópico se guarda solo `{ courseId, moduleId, topicId, contentSha256,
+currentSceneIndex, completed, updatedAt }` en `localStorage` — nunca la
+`LessonPlan` completa (esa ya tiene su cache en el backend, Fase 3). Si
+`contentSha256` no coincide con el de la `LessonPlan` activa, el progreso
+guardado se ignora (el motor arranca desde la escena 0).
+
+**Voz (Web Speech API, `frontend/src/classroom/speech.ts` +
+`useClassroomVoice.ts`)**: primera implementación funcional de "Activar
+Voz" usando exclusivamente `window.speechSynthesis` del navegador — **no**
+es integración con un TTS avanzado (eso es una fase posterior, ver
+`docs/ROADMAP.md`). Reglas duras:
+- feature detection explícita (`isSpeechSupported()`); sin soporte, el
+  botón se deshabilita con un estado claro, nunca rompe la app;
+- selección de voz: `es-AR` exacto > cualquier `es-*` > voz default del
+  navegador — nunca se asume el nombre de una voz específica instalada;
+- el texto leído es SIEMPRE `narration.text` tal cual, sin modificar
+  tecnicismos (API Gateway, embedding, fine-tuning, Kubernetes, RAG, etc.);
+  la calidad de pronunciación depende de las voces disponibles en el
+  SO/navegador del usuario, no de la aplicación;
+- sin autoplay: la síntesis solo arranca tras una interacción explícita
+  ("Activar Voz"), nunca al simplemente entrar a un tópico;
+- Pause/Resume/Repetir/Previo/Siguiente/Salir controlan la síntesis en
+  curso (`pause()`/`resume()`/`cancel()`) para evitar voces superpuestas;
+- preferencia de velocidad (0.85x/1.0x/1.15x/1.3x) y de voz activada se
+  persisten en `localStorage` como valores simples (nunca un objeto
+  `SpeechSynthesisVoice`).
+
+Tests: `frontend/src/classroom/__tests__/` (Vitest + React Testing
+Library, `jsdom`). Ningún test hace llamadas de red ni depende de un
+navegador real: HTTP y `window.speechSynthesis` se mockean explícitamente.
+
+## 10. Convenciones
 
 - Backend en español para nombres de dominio de negocio cuando aporte
   claridad (cursos, módulos, tópicos), pero código, nombres de funciones y
@@ -345,8 +430,17 @@ test está documentado en el docstring del archivo).
   (`backend/app/prompts/lesson.py`), nunca escondido en un router.
   `LESSON_PROMPT_VERSION` cambia cada vez que el prompt cambia de forma
   que pueda alterar la salida del modelo (forma parte de la cache key).
+- El frontend no tiene librería de estado global (Redux/Zustand/XState):
+  `useClassroomEngine` es un hook con `useState`/`useEffect` plano. No
+  agregar una de estas librerías salvo necesidad real y validada.
+- Tests de frontend con Vitest + React Testing Library (`frontend/src/
+  classroom/__tests__/`, `frontend/vite.config.ts` sección `test`). Sin
+  `globals: true`: cada test importa explícitamente de `"vitest"`: el
+  cleanup de RTL entre tests se registra a mano en
+  `frontend/src/test/setup.ts`. No hay Cypress ni Playwright en el
+  proyecto (validación visual manual, ver `docs/ROADMAP.md`).
 
-## 10. Comandos principales
+## 11. Comandos principales
 
 Todo el entorno corre encapsulado en Docker. No se requiere Python ni Node
 instalados en el host.
@@ -371,6 +465,9 @@ docker compose run --rm backend pytest tests/test_llm_provider_pwc.py tests/test
 # Build de producción del frontend (verificación de tipos + bundle)
 docker compose run --rm frontend npm run build
 
+# Tests del frontend (Vitest + React Testing Library)
+docker compose run --rm frontend npm test -- --run
+
 # Estado del proveedor LLM configurado (nunca expone la API key)
 curl http://localhost:8000/api/ai/status
 
@@ -387,7 +484,7 @@ URLs en desarrollo:
 - Docs interactivas (Swagger): http://localhost:8000/docs
 - Frontend: http://localhost:5173
 
-## 11. Estado de fases
+## 12. Estado de fases
 
 Ver `docs/ROADMAP.md` para el detalle de fases futuras.
 
@@ -409,6 +506,17 @@ Ver `docs/ROADMAP.md` para el detalle de fases futuras.
   `docs/ARCHITECTURE.md`). Sin TTS, sin reconocimiento de voz, sin
   simulador de certificación, sin RAG/embeddings/vector DB, sin agentes
   autónomos.
+- **Fase 4** (completa): Classroom Engine (`useClassroomEngine`) +
+  `SceneRenderer` + 11 visual renderers (hero, bullets, process,
+  comparison, hierarchy, architecture, concept_map, table, code, quote,
+  none), animaciones CSS con soporte real de pausa y de
+  `prefers-reduced-motion`, progreso local en `localStorage`, primera
+  implementación funcional de voz (Web Speech API del navegador),
+  controles Previo/Siguiente/Pausa/Repetir/Voz/Salir reales, pantalla de
+  finalización con `recap`, pestañas Explicación/Puntos clave/Recursos en
+  la columna derecha. Validado con Vitest (30 tests) y con una inspección
+  visual real (Playwright headless, ver `docs/ARCHITECTURE.md`). Sin TTS
+  de OpenAI, sin chat bidireccional, sin simulador de certificación.
 
 Cualquier trabajo futuro debe respetar este documento y actualizar la
 sección correspondiente del roadmap al avanzar de fase.

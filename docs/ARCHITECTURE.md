@@ -49,28 +49,33 @@ navegador.
   - `CourseDetailPage`: detalle de un curso con sus módulos y tópicos
     (`GET /api/courses/{course_id}`).
   - `ClassroomPage`: aula virtual. Combina el detalle del curso (para el
-    selector de módulo y la navegación previo/siguiente) con el detalle
-    del tópico activo (`GET /api/courses/{course_id}/modules/{module_id}/
-    topics/{topic_id}`). Renderiza el Markdown del tópico con
-    `react-markdown` + `remark-gfm`, sin ninguna transformación adicional.
-    Desde Fase 3, también: consulta `GET /api/ai/status` (estado del
-    agente IA, nunca la credencial); ofrece un botón "Preparar clase con
-    IA" que dispara `POST .../lesson` bajo demanda (nunca automáticamente
-    al entrar al tópico, para controlar el consumo); una vez generada la
-    `LessonPlan`, muestra el título, la escena activa (título, key_points,
-    narración en un panel auxiliar) y un indicador "Escena X de Y"; los
-    controles Previo/Siguiente navegan escenas de la lección cuando hay una
-    activa (si no, siguen navegando tópicos, como en Fase 1).
+    selector de módulo) con el detalle del tópico activo (`GET
+    /api/courses/{course_id}/modules/{module_id}/topics/{topic_id}`).
+    Renderiza el Markdown del tópico con `react-markdown` + `remark-gfm` en
+    la pestaña "Explicación" de la columna derecha (junto a "Puntos clave"
+    y "Recursos", Fase 4), sin ninguna transformación adicional. Consulta
+    `GET /api/ai/status` (estado del agente IA, nunca la credencial);
+    ofrece un botón "Preparar clase con IA" que dispara `POST .../lesson`
+    bajo demanda (nunca automáticamente al entrar al tópico). Una vez
+    generada la `LessonPlan`, delega el renderizado de cada escena al
+    Classroom Engine + `SceneRenderer` (Fase 4, ver sección 7): título,
+    escena activa vía componentes visuales reales, narración en un panel
+    auxiliar, indicador "Escena X de Y" con barra de progreso, controles
+    Previo/Siguiente/Pausa/Repetir/Voz/Salir reales, y una pantalla de
+    finalización con el `recap`. Sin `LessonPlan` activa, Previo/Siguiente
+    siguen navegando tópicos del curso (comportamiento de Fase 1).
   - `AulaLandingPage`, `PlaceholderPage`: pantallas auxiliares de Fase 1.
+- `src/classroom/` **(Fase 4)**: Classroom Engine, Scene Renderer y los 11
+  componentes visuales. Ver detalle completo en la sección 7.
 - `src/components/GroundingPanel.tsx`: panel colapsable visible solo en
-  desarrollo (`import.meta.env.DEV`, mecanismo nativo de Vite). Desde
-  Fase 3 también permite inspeccionar las `source_refs` citadas por la
-  escena activa de la lección y ver el `SourceBlock` correspondiente al
-  hacer click en una referencia `SRC-XXX`.
-- El LLM nunca genera HTML/JS/SVG ejecutable: `VisualPlan.description` es
-  texto libre que el frontend solo puede llegar a mostrar como texto plano
-  en fases futuras (el renderer de slides no está implementado todavía);
-  nunca se interpreta como markup ni se pasa a `dangerouslySetInnerHTML`.
+  desarrollo (`import.meta.env.DEV`, mecanismo nativo de Vite). Permite
+  inspeccionar las `source_refs` citadas por la escena activa de la
+  lección y ver el `SourceBlock` correspondiente al hacer click en una
+  referencia `SRC-XXX`.
+- El LLM nunca genera HTML/JS/SVG ejecutable: ningún componente de
+  `src/classroom/` usa `dangerouslySetInnerHTML`, `eval` ni `new Function`
+  sobre contenido de la `LessonPlan`. Todo elemento visual es un
+  componente React propio (ver sección 7).
 - Todo el contenido Markdown se renderiza en el cliente; el backend nunca
   lo convierte a HTML.
 
@@ -367,7 +372,119 @@ varios tópicos de un módulo) como única entrada de contenido, valida
 cualquier referencia `SRC-XXX` que el LLM produzca, y cachea en
 filesystem con una cache key que incluya su propio `prompt_version`.
 
-## 7. Por qué esta arquitectura y no otra
+## 7. Classroom Engine y Scene Renderer (Fase 4)
+
+```
+LessonPlan (Fase 3)
+    ↓
+Classroom Engine (frontend/src/classroom/useClassroomEngine.ts)
+    ├── progress state    currentSceneIndex, isCompleted, progressPercent
+    ├── playback state    isPlaying, isPaused, renderKey
+    └── narration state   currentNarrationIndex, nextNarrationChunk()
+    ↓
+SceneRenderer (frontend/src/classroom/SceneRenderer.tsx)
+    ↓  tabla de despacho por scene.visual.visual_type
+Visual Components (frontend/src/classroom/visuals/*.tsx)
+    ↓
+React + animaciones CSS
+```
+
+### 7.1 Classroom Engine
+
+Hook simple (`useState`/`useEffect`, sin librería de state machine) con
+acciones determinísticas: `nextScene`, `previousScene`, `pause`, `resume`,
+`repeatScene`, `goToScene`, `resetLesson`, `nextNarrationChunk`.
+
+- "Siguiente" en la última escena no saca el índice del arreglo: marca
+  `isCompleted = true` (dispara la pantalla de finalización en
+  `ClassroomPage`, con el `recap` de la `LessonPlan`).
+- "Repetir" mantiene `currentSceneIndex`, reinicia `currentNarrationIndex`
+  a 0 e incrementa `renderKey` (los componentes visuales y la síntesis de
+  voz usan `renderKey`/`scene_id` como dependencia para reiniciar
+  animaciones y lectura).
+- `progressPercent` es determinístico: `0` en la primera escena, `100` al
+  llegar a la última o al completar (fórmula:
+  `round(sceneIndex / (total - 1) * 100)`).
+- Progreso local (`frontend/src/classroom/classroomStorage.ts`): por
+  tópico se persiste únicamente `{ courseId, moduleId, topicId,
+  contentSha256, currentSceneIndex, completed, updatedAt }` en
+  `localStorage` — nunca la `LessonPlan` completa. Si `contentSha256` no
+  coincide con el de la lección activa, el progreso guardado se ignora (el
+  motor arranca en la escena 0). Toda lectura/escritura está en
+  `try/catch`: `localStorage` no disponible nunca rompe el aula.
+
+### 7.2 Scene Renderer y Visual Components
+
+`SceneRenderer` resuelve `scene.visual.visual_type` contra una tabla de
+componentes (`Record<VisualType, Component>`), no un `if/else` gigante:
+`HeroVisual`, `BulletsVisual`, `ProcessVisual`, `ComparisonVisual`,
+`HierarchyVisual`, `ArchitectureVisual`, `ConceptMapVisual`, `TableVisual`,
+`CodeVisual`, `QuoteVisual`, `NoVisual`.
+
+**Fuente de información de cada visual** (por prioridad):
+1. `scene.title` / `scene.key_points` — siempre.
+2. El `SourceBlock` citado por `scene.visual.source_refs`, resuelto vía
+   `frontend/src/classroom/sourceBlockLookup.ts` (indexa
+   `CanonicalInfo.source_blocks` ya calculado por el backend, Fase 2; no
+   duplica su lógica): `TableVisual` busca un bloque `block_type="table"`
+   y lo parsea con un parser Markdown propio y mínimo
+   (`frontend/src/classroom/markdownTable.ts`, nunca
+   `dangerouslySetInnerHTML`); `CodeVisual` busca `block_type="code"` y
+   muestra `plain_text` en `<pre><code>` (sin ejecutar nada); `QuoteVisual`
+   busca `block_type="blockquote"`. Sin un bloque citado del tipo
+   correspondiente, cada uno cae a una representación neutral basada en
+   `key_points` — nunca inventa columnas, datos ni una atribución de cita.
+
+**`scene.visual.description` nunca se renderiza como texto.** Es una
+instrucción de presentación para el renderer (ya cubierta explícitamente
+por `layout_hint`), no conocimiento pedagógico nuevo; ningún componente de
+`src/classroom/visuals/` la lee para mostrar contenido (contrato
+documentado en `src/classroom/visuals/types.ts` y verificado en
+`SceneRenderer.test.tsx`: "visual.description nunca aparece como texto
+visible en ningún renderer").
+
+**Cero alucinación introducida por el renderer**: como `GroundedText` es
+una lista plana (sin relaciones codificadas entre sus elementos),
+`ProcessVisual` (etapas conectadas por una línea puramente visual, sin
+afirmar causalidad), `HierarchyVisual` (raíz + un único nivel de hijos,
+sin inventar sub-niveles), `ArchitectureVisual` (nodos dentro de un marco,
+sin flechas semánticas) y `ConceptMapVisual` (concepto central + conceptos
+relacionados, sin relaciones entre sí) nunca dibujan una conexión que los
+datos no establezcan explícitamente. `ComparisonVisual` arma dos columnas
+únicamente cuando hay exactamente 2 `key_points` (lo único que permite
+identificar "dos lados" sin inventar una clasificación); en cualquier otro
+caso usa cards paralelas neutrales, sin etiquetas de grupo inventadas.
+
+### 7.3 Animaciones
+
+CSS puro (`@keyframes` + `animation-delay` escalonado por índice), sin
+Framer Motion ni ninguna librería de animación: no hizo falta para el
+alcance de Fase 4. `.classroom-paused` (aplicada cuando
+`engine.isPaused`) fija `animation-play-state: paused` sobre las clases de
+animación propias (`classroom-stagger-item`, `classroom-scene-enter`,
+`visual-process__connector`) — no intenta congelar cualquier transition
+del browser, alcanza con cubrir las que la app dispara. `@media
+(prefers-reduced-motion: reduce)` neutraliza esas mismas animaciones
+(`animation: none`, contenido siempre visible sin depender de que la
+animación corra).
+
+### 7.4 Voz (Web Speech API)
+
+`frontend/src/classroom/speech.ts` (envoltorio sobre
+`window.speechSynthesis`) + `useClassroomVoice.ts` (orquestación:
+habla el chunk de narración de la escena activa, avanza
+`currentNarrationIndex` al terminar cada uno vía `onend`, nunca avanza de
+escena sola). Primera implementación funcional — **no** es un TTS
+avanzado; la calidad de pronunciación depende de las voces instaladas en
+el SO/navegador del usuario. Selección de voz: `es-AR` exacto > cualquier
+`es-*` > voz default (nunca se asume un nombre de voz específico). El
+texto leído es siempre `narration.text` tal cual (nunca se modifican
+tecnicismos). Sin autoplay: solo arranca tras click en "Activar Voz".
+Pause/Resume/Repetir/Previo/Siguiente/Salir cancelan o pausan la síntesis
+en curso para evitar voces superpuestas. Preferencia de voz activada y de
+velocidad se persisten en `localStorage` como valores simples.
+
+## 8. Por qué esta arquitectura y no otra
 
 - **Sin base de datos**: el contenido es archivos Markdown versionables;
   no hay necesidad de un motor de persistencia transaccional para leerlos.
@@ -403,3 +520,25 @@ filesystem con una cache key que incluya su propio `prompt_version`.
   errores no recuperables (auth/config) y recuperables (upstream/contrato)
   alcanza para este caso de uso; no se justifica una librería de retry
   policies.
+- **`useState`/`useEffect` en vez de Redux/Zustand/XState (Fase 4)**: el
+  estado del Classroom Engine (índice de escena, narración, pausa,
+  completado) es local a un tópico a la vez, sin necesidad de compartirse
+  entre componentes lejanos ni de una máquina de estados formal; un hook
+  plano es suficiente y más simple de leer/testear.
+- **CSS puro en vez de Framer Motion (Fase 4)**: `@keyframes` +
+  `animation-delay` escalonado cubre entrada de slide, aparición
+  progresiva de conceptos y transición de escena sin agregar una
+  dependencia nueva; `animation-play-state` resuelve pausa real y
+  `prefers-reduced-motion` se maneja íntegramente en CSS.
+- **Vitest + React Testing Library en vez de Cypress/Playwright (Fase
+  4)**: para la lógica crítica de Fase 4 (engine, storage, selección de
+  visual por `visual_type`) alcanza con tests unitarios/de componente
+  rápidos sobre `jsdom`; no se justifica todavía un framework E2E de
+  navegador real dentro del proyecto (la validación visual manual de esta
+  fase se hizo con un script Playwright fuera del repositorio, ver el
+  informe de la Fase 4).
+- **Web Speech API del navegador en vez de un TTS server-side (Fase 4)**:
+  primera implementación funcional de voz sin agregar ninguna dependencia
+  ni credencial nueva; un proveedor TTS server-side (ej. OpenAI) queda
+  para una fase posterior cuando se necesite mejor calidad/control de voz
+  que el navegador no pueda ofrecer.

@@ -7,13 +7,15 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **Fase actual: Fase 3** — catálogo de cursos, detalle de curso, aula
-> virtual, modelo canónico de contenido 100% determinístico (SourceBlocks +
-> Grounding Packet), y la primera integración REAL con un LLM: generación
-> de clases estructuradas (`LessonPlan`) grounded, con validación de
-> referencias `SRC-XXX`, cache en filesystem y providers reales
-> (PwC GenAI / OpenAI). Sin TTS, sin reconocimiento de voz, sin simulador
-> de certificación todavía.
+> **Fase actual: Fase 4** — catálogo de cursos, detalle de curso, modelo
+> canónico de contenido 100% determinístico, integración real con un LLM
+> para generar clases estructuradas (`LessonPlan`) grounded, y ahora un
+> **aula virtual interactiva de verdad**: Classroom Engine + 11 tipos de
+> slide (hero, bullets, proceso, comparación, jerarquía, arquitectura,
+> mapa conceptual, tabla, código, cita, sin visual), animaciones CSS con
+> pausa real, progreso local, y una primera voz funcional con la Web
+> Speech API del navegador. Sin TTS server-side, sin chat bidireccional,
+> sin simulador de certificación todavía.
 
 ## Requisitos
 
@@ -71,6 +73,9 @@ docker compose run --rm backend pytest
 # Build de producción del frontend (type-check + bundle)
 docker compose run --rm frontend npm run build
 
+# Tests del frontend (Vitest + React Testing Library, 30 tests)
+docker compose run --rm frontend npm test -- --run
+
 # Inspeccionar el Grounding Packet determinístico de un tópico (Fase 2)
 curl http://localhost:8000/api/courses/demo-curso-ia/modules/arquitecturas/topics/patrones-tecnicos/grounding
 
@@ -105,6 +110,27 @@ cachean en `data/lesson-cache/` (filesystem, gitignored); una segunda
 solicitud para el mismo tópico/provider/modelo devuelve `cached: true` sin
 volver a llamar al LLM.
 
+## Aula virtual interactiva (Fase 4)
+
+Una vez generada una `LessonPlan`, el aula la recorre escena por escena con
+un motor propio (`frontend/src/classroom/useClassroomEngine.ts`, sin
+Redux/Zustand/XState) y un renderer visual (`SceneRenderer` + 11
+componentes en `frontend/src/classroom/visuals/`) que **nunca** interpreta
+código generado por el LLM (nada de `dangerouslySetInnerHTML`, `eval` ni
+`new Function`): cada slide es un componente React escrito a mano, cuyo
+contenido sale de `scene.title`/`scene.key_points` y, cuando corresponde,
+del `SourceBlock` citado (tabla, código o cita reales del Markdown).
+
+- Controles reales: Previo / Siguiente (se convierte en "Finalizar" en la
+  última escena) / Pausa-Reanudar / Repetir / Activar voz / Salir.
+- Voz: primera implementación funcional con la Web Speech API del
+  navegador (`window.speechSynthesis`, sin backend ni credencial nueva),
+  con selección de voz en español y velocidad configurable.
+- Progreso local por tópico en `localStorage` (se invalida solo si cambia
+  el contenido del tópico).
+- Columna derecha con pestañas Explicación (Markdown completo) / Puntos
+  clave / Recursos (enlaces literalmente presentes en el Markdown).
+
 ## Estructura del repositorio
 
 ```
@@ -114,6 +140,7 @@ pwc-tutor-agent/
         tests/
     frontend/           SPA (React + TypeScript + Vite)
         src/
+            classroom/      Classroom Engine, SceneRenderer, visuals, voz
     courses/             Curso de demo (filesystem de cursos)
         demo-curso-ia/
     docs/

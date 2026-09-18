@@ -448,8 +448,23 @@ p {
 
 .slide-panel__content {
   position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
-  padding: 24px;
+  padding: 24px 28px;
+  overflow-y: auto;
+}
+
+.slide-panel__content--lesson {
+  justify-content: flex-start;
+  align-items: stretch;
+  text-align: left;
 }
 
 .slide-panel__badge {
@@ -510,33 +525,27 @@ p {
   cursor: pointer;
 }
 
-.slide-panel__content--lesson {
-  text-align: left;
-  max-width: 480px;
-}
-
 .slide-panel__lesson-title {
+  position: relative;
+  z-index: 1;
   font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0.3px;
   color: #cfc7ba;
   margin-bottom: 4px;
-}
-
-.slide-panel__key-points {
-  margin: 12px 0 0;
-  padding-left: 18px;
   text-align: left;
-  font-size: 13px;
-  color: #ece5d8;
-  line-height: 1.6;
+  width: 100%;
 }
 
-.slide-panel__key-points li {
+.slide-panel__error-title {
+  font-weight: 700;
+  color: var(--color-accent-yellow);
   margin-bottom: 4px;
 }
 
 .slide-panel__scene-indicator {
+  position: relative;
+  z-index: 1;
   margin-top: 16px;
   font-size: 11.5px;
   font-weight: 700;
@@ -606,6 +615,24 @@ p {
   margin-bottom: 0;
 }
 
+.narration-panel__chunk--active {
+  color: var(--color-primary-dark);
+  font-weight: 600;
+  position: relative;
+  padding-left: 10px;
+}
+
+.narration-panel__chunk--active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--color-primary);
+}
+
 .content-panel {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -638,12 +665,76 @@ p {
   border-radius: 999px;
 }
 
+.content-panel__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.content-panel__tab {
+  padding: 10px 12px;
+  border: none;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.content-panel__tab:hover {
+  color: var(--color-text);
+}
+
+.content-panel__tab.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
 .content-panel__body {
   padding: 18px 22px 28px;
   overflow-y: auto;
   font-size: 14.5px;
   line-height: 1.65;
   color: var(--color-text);
+}
+
+.key-points-tab h4 {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--color-text-faint);
+  margin: 18px 0 8px;
+}
+
+.key-points-tab h4:first-child {
+  margin-top: 0;
+}
+
+.key-points-tab ul,
+.resources-tab ul {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.key-points-tab li,
+.resources-tab li {
+  margin-bottom: 6px;
+}
+
+.key-points-tab__empty,
+.resources-tab__empty {
+  color: var(--color-text-faint);
+  font-style: italic;
+}
+
+.resources-tab a {
+  color: var(--color-primary);
+  font-weight: 600;
+  text-decoration: underline;
 }
 
 .content-panel__body h1,
@@ -678,6 +769,632 @@ p {
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 13px;
+}
+
+/* ---------- Classroom Engine: progreso, pausa, animaciones (Fase 4) ---------- */
+
+.classroom-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-bg-muted);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.classroom-progress__bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-accent-yellow));
+  transition: width 0.35s ease;
+}
+
+.classroom-stage {
+  /* Ocupa la primera columna de .classroom-grid, igual que un <div> común;
+     esta clase solo existe como hook para .classroom-paused. */
+  min-width: 0;
+}
+
+/* Pause detiene animaciones de entrada de las visuales y transiciones de
+   escena (sección 22 de la especificación de Fase 4). No intenta congelar
+   absolutamente cualquier transition del browser: alcanza con cubrir las
+   animaciones que nuestros propios componentes disparan. */
+.classroom-paused .classroom-stagger-item,
+.classroom-paused .classroom-scene-enter,
+.classroom-paused .visual-process__connector {
+  animation-play-state: paused !important;
+}
+
+@keyframes classroom-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes classroom-scene-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.classroom-scene-enter {
+  animation: classroom-scene-enter 0.35s ease both;
+}
+
+.classroom-stagger-item {
+  animation: classroom-fade-up 0.4s ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .classroom-stagger-item,
+  .classroom-scene-enter,
+  .visual-process__connector,
+  .classroom-progress__bar {
+    animation: none !important;
+    transition: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* ---------- Scene Renderer / Visuals (Fase 4) ---------- */
+
+.scene-renderer {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.visual {
+  width: 100%;
+  max-width: 620px;
+  color: #f2ece4;
+}
+
+.visual__title {
+  font-size: 19px;
+  font-weight: 700;
+  margin-bottom: 14px;
+  color: #ffffff;
+}
+
+/* --- hero --- */
+
+.visual--hero {
+  position: relative;
+  text-align: center;
+  padding: 8px 0;
+}
+
+.visual-hero__shapes {
+  position: absolute;
+  inset: -20px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.visual-hero__shape {
+  position: absolute;
+  border-radius: 999px;
+  opacity: 0.5;
+  filter: blur(1px);
+}
+
+.visual-hero__shape--a {
+  width: 90px;
+  height: 90px;
+  background: var(--color-primary);
+  top: -10px;
+  left: -10px;
+}
+
+.visual-hero__shape--b {
+  width: 60px;
+  height: 60px;
+  background: var(--color-accent-yellow);
+  bottom: -6px;
+  right: 10%;
+  border-radius: 16px;
+  transform: rotate(18deg);
+}
+
+.visual-hero__shape--c {
+  width: 40px;
+  height: 40px;
+  background: var(--color-accent-red);
+  top: 30%;
+  right: -6px;
+}
+
+.visual-hero__content {
+  position: relative;
+  z-index: 1;
+}
+
+.visual-hero__title {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.25;
+  margin-bottom: 16px;
+}
+
+.visual-hero__ideas {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 460px;
+}
+
+.visual-hero__ideas li {
+  font-size: 15px;
+  color: #ece5d8;
+  padding: 10px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* --- bullets --- */
+
+.visual-bullets__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.visual-bullets__list--centered {
+  align-items: center;
+  text-align: center;
+}
+
+.visual-bullets__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #ece5d8;
+}
+
+.visual-bullets__marker {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 2px;
+  background: var(--color-accent-yellow);
+}
+
+/* --- process --- */
+
+.visual-process__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 6px;
+}
+
+.visual-process--horizontal .visual-process__steps {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: stretch;
+}
+
+.visual-process--vertical .visual-process__steps {
+  flex-direction: column;
+}
+
+.visual-process__step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 140px;
+}
+
+.visual-process--vertical .visual-process__step {
+  min-width: 0;
+}
+
+.visual-process__index {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.visual-process__label {
+  font-size: 13.5px;
+  color: #ece5d8;
+  line-height: 1.4;
+}
+
+.visual-process__connector {
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.visual-process--horizontal .visual-process__connector {
+  width: 22px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.25);
+  margin: 0 2px;
+}
+
+.visual-process--vertical .visual-process__connector {
+  width: 2px;
+  height: 16px;
+  margin: 2px 0 2px 12px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* --- comparison --- */
+
+.visual-comparison__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.visual-comparison__grid--pair {
+  grid-template-columns: 1fr 1fr;
+}
+
+.visual-comparison__card {
+  position: relative;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  font-size: 13.5px;
+  color: #ece5d8;
+  line-height: 1.5;
+}
+
+.visual-comparison__side {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  color: var(--color-accent-yellow);
+  border: 1px solid rgba(255, 182, 0, 0.4);
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin-bottom: 8px;
+}
+
+/* --- hierarchy --- */
+
+.visual--hierarchy {
+  text-align: center;
+}
+
+.visual-hierarchy__root {
+  display: inline-block;
+  font-size: 16px;
+  font-weight: 700;
+  color: #16130f;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-accent-yellow));
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+}
+
+.visual-hierarchy__trunk {
+  width: 2px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.25);
+  margin: 4px auto;
+}
+
+.visual-hierarchy__children {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.visual-hierarchy__child {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #ece5d8;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+
+.visual-hierarchy__connector {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent-yellow);
+  flex-shrink: 0;
+}
+
+/* --- architecture --- */
+
+.visual-architecture__frame {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  padding: 16px;
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  border-radius: var(--radius-md);
+}
+
+.visual-architecture__node {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  font-size: 13px;
+  text-align: center;
+  color: #ece5d8;
+}
+
+/* --- concept map --- */
+
+.visual--concept-map {
+  text-align: center;
+}
+
+.visual-concept-map__center {
+  display: inline-block;
+  font-size: 16px;
+  font-weight: 700;
+  color: #16130f;
+  background: var(--color-accent-yellow);
+  padding: 10px 18px;
+  border-radius: 999px;
+  margin-bottom: 18px;
+}
+
+.visual-concept-map__related {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.visual-concept-map__node {
+  position: relative;
+  font-size: 13px;
+  color: #ece5d8;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 8px 16px;
+  padding-top: 14px;
+}
+
+.visual-concept-map__stem {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* --- table --- */
+
+.visual-table__wrap {
+  overflow-x: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.visual-table__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.visual-table__table th,
+.visual-table__table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: #ece5d8;
+}
+
+.visual-table__table th {
+  background: rgba(255, 255, 255, 0.06);
+  font-weight: 700;
+  color: #fff;
+}
+
+.visual-table__table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* --- code --- */
+
+.visual-code__block {
+  background: #0d0b08;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  overflow-x: auto;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.visual-code__block code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #f2ece4;
+  white-space: pre;
+}
+
+/* --- quote --- */
+
+.visual--quote {
+  position: relative;
+  text-align: center;
+  padding: 10px 30px;
+}
+
+.visual-quote__mark {
+  font-size: 40px;
+  font-family: Georgia, serif;
+  color: var(--color-accent-yellow);
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.visual-quote__text {
+  margin: 6px 0;
+  font-size: 19px;
+  font-weight: 600;
+  font-style: italic;
+  line-height: 1.45;
+  color: #ffffff;
+}
+
+/* --- none --- */
+
+.visual--none {
+  text-align: center;
+}
+
+.visual-none__empty {
+  color: #cfc7ba;
+  font-size: 13.5px;
+}
+
+/* ---------- Loading steps (generación de LessonPlan) ---------- */
+
+.loading-steps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 10px;
+  color: #ece5d8;
+  font-size: 13.5px;
+}
+
+.loading-steps__spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--color-accent-yellow);
+  animation: classroom-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes classroom-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-steps__spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+/* ---------- Completion screen ---------- */
+
+.completion-screen {
+  width: 100%;
+  max-width: 480px;
+  text-align: center;
+  margin: 0 auto;
+}
+
+.completion-screen__badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: #16130f;
+  background: var(--color-accent-yellow);
+  border-radius: 999px;
+  padding: 5px 14px;
+  margin-bottom: 14px;
+}
+
+.completion-screen__title {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 14px;
+  color: #fff;
+}
+
+.completion-screen__recap {
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+
+.completion-screen__recap li {
+  font-size: 13.5px;
+  color: #ece5d8;
+  line-height: 1.5;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-sm);
+}
+
+.completion-screen__actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.completion-screen__button {
+  padding: 9px 18px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: transparent;
+  color: #f2ece4;
+  font-weight: 600;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.completion-screen__button--primary {
+  background: linear-gradient(90deg, var(--color-primary), var(--color-accent-yellow));
+  border-color: transparent;
+  color: #16130f;
 }
 
 /* ---------- Panel de asistente IA ---------- */
@@ -1013,6 +1730,32 @@ p {
   height: 22px;
   background: var(--color-border);
   margin: 0 4px;
+}
+
+.controls-bar__voice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.controls-bar__voice select {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* Foco visible consistente para navegación por teclado (sección 39). */
+.controls-bar button:focus-visible,
+.content-panel__tab:focus-visible,
+.completion-screen__button:focus-visible,
+.grounding-panel__ref-chip:focus-visible,
+.slide-panel__cta:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 /* ---------- Estados: loading / error / vacío ---------- */

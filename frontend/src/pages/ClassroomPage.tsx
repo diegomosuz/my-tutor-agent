@@ -5,7 +5,29 @@ import remarkGfm from "remark-gfm";
 import { api, ApiError } from "../api/client";
 import { Breadcrumb } from "../components/Breadcrumb";
 import { GroundingPanel } from "../components/GroundingPanel";
-import type { AiStatusResponse, CourseDetail, LessonPlan, LessonScene, TopicResponse } from "../types/api";
+import { CompletionScreen } from "../classroom/CompletionScreen";
+import { LoadingSteps } from "../classroom/LoadingSteps";
+import { SceneRenderer } from "../classroom/SceneRenderer";
+import {
+  loadVoiceEnabled,
+  loadVoiceSpeed,
+  saveVoiceEnabled,
+  saveVoiceSpeed,
+  VOICE_SPEED_OPTIONS,
+  type VoiceSpeed,
+} from "../classroom/classroomStorage";
+import { describeLessonError } from "../classroom/lessonErrors";
+import { extractMarkdownLinks } from "../classroom/markdownLinks";
+import { cancelSpeech, isSpeechSupported } from "../classroom/speech";
+import { useClassroomEngine } from "../classroom/useClassroomEngine";
+import { useClassroomVoice } from "../classroom/useClassroomVoice";
+import type {
+  AiStatusResponse,
+  CourseDetail,
+  LessonPlan,
+  LessonScene,
+  TopicResponse,
+} from "../types/api";
 
 const SUGGESTIONS = [
   "Resumime este tema en 3 puntos",
@@ -13,6 +35,8 @@ const SUGGESTIONS = [
   "Dame un ejemplo del contenido",
   "¿Qué relación tiene con el módulo anterior?",
 ];
+
+type ContentTab = "explicacion" | "puntos-clave" | "recursos";
 
 /** Todas las source_refs citadas por una escena (título, key_points,
  * narration, visual e interacción), sin duplicados. Se usa para el panel
@@ -42,15 +66,33 @@ export function ClassroomPage() {
   const [topic, setTopic] = useState<TopicResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
-  const [isPaused, setIsPaused] = useState(false);
-  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [contentTab, setContentTab] = useState<ContentTab>("explicacion");
 
   // Fase 3: estado del agente IA y de la LessonPlan generada.
   const [aiStatus, setAiStatus] = useState<AiStatusResponse | null>(null);
   const [lesson, setLesson] = useState<LessonPlan | null>(null);
   const [lessonLoading, setLessonLoading] = useState(false);
-  const [lessonError, setLessonError] = useState<string | null>(null);
-  const [sceneIndex, setSceneIndex] = useState(0);
+  const [lessonError, setLessonError] = useState<{ title: string; detail: string } | null>(null);
+
+  // Fase 4: preferencias de voz, persistidas como valores simples
+  // (nunca objetos SpeechSynthesisVoice) en localStorage.
+  const [voiceEnabled, setVoiceEnabled] = useState(() => loadVoiceEnabled());
+  const [voiceSpeed, setVoiceSpeed] = useState<VoiceSpeed>(() => loadVoiceSpeed());
+  const speechSupported = useMemo(() => isSpeechSupported(), []);
+
+  // Fase 4: Classroom Engine — navegación determinística de escenas,
+  // progreso local y estado de reproducción.
+  const engine = useClassroomEngine({ lesson, courseId, moduleId, topicId });
+
+  useClassroomVoice({
+    scene: engine.currentScene,
+    narrationIndex: engine.currentNarrationIndex,
+    renderKey: engine.renderKey,
+    enabled: voiceEnabled && !engine.isCompleted,
+    rate: voiceSpeed,
+    isPaused: engine.isPaused,
+    onAdvanceChunk: engine.nextNarrationChunk,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -89,12 +131,13 @@ export function ClassroomPage() {
     let cancelled = false;
     setTopic(null);
     setError(null);
+    setContentTab("explicacion");
     // Nunca arrastramos la LessonPlan de un tópico anterior: cada tópico
     // tiene la suya (o ninguna todavía). No se genera automáticamente acá
-    // para no consumir IA solo por entrar al tópico.
+    // para no consumir IA solo por entrar al tópico (sección 45).
     setLesson(null);
     setLessonError(null);
-    setSceneIndex(0);
+    cancelSpeech();
     api
       .getTopic(courseId, moduleId, topicId)
       .then((data) => {
@@ -115,7 +158,7 @@ export function ClassroomPage() {
   }, [courseId, moduleId, topicId]);
 
   // Lista plana de tópicos del curso, en orden, para poder calcular
-  // "previo" / "siguiente" entre módulos.
+  // "previo" / "siguiente" entre módulos cuando todavía no hay LessonPlan.
   const flatTopics = useMemo(() => {
     if (!course) return [];
     return course.modules.flatMap((module) =>
@@ -132,30 +175,28 @@ export function ClassroomPage() {
       ? flatTopics[currentIndex + 1]
       : null;
 
-  function goTo(target: { moduleId: string; topicId: string } | null) {
+  function goToTopic(target: { moduleId: string; topicId: string } | null) {
     if (!target || !courseId) return;
     navigate(`/aula/${courseId}/${target.moduleId}/${target.topicId}`);
   }
 
-  const currentScene = lesson ? lesson.scenes[sceneIndex] ?? null : null;
-
   // Con una LessonPlan activa, Previo/Siguiente navegan escenas de la
-  // clase generada; sin ella, siguen navegando entre tópicos del curso
-  // (comportamiento de Fase 1).
+  // clase generada (Classroom Engine); sin ella, siguen navegando entre
+  // tópicos del curso (comportamiento de Fase 1-3).
   function goPrev() {
     if (lesson) {
-      setSceneIndex((i) => Math.max(0, i - 1));
+      engine.previousScene();
       return;
     }
-    goTo(prevTopic);
+    goToTopic(prevTopic);
   }
 
   function goNext() {
     if (lesson) {
-      setSceneIndex((i) => Math.min(lesson.scenes.length - 1, i + 1));
+      engine.nextScene();
       return;
     }
-    goTo(nextTopic);
+    goToTopic(nextTopic);
   }
 
   async function handleGenerateLesson(forceRegenerate: boolean) {
@@ -165,16 +206,30 @@ export function ClassroomPage() {
     try {
       const plan = await api.generateLesson(courseId, moduleId, topicId, forceRegenerate);
       setLesson(plan);
-      setSceneIndex(0);
     } catch (err) {
-      setLessonError(
-        err instanceof ApiError
-          ? err.message
-          : "No se pudo conectar con el servidor para generar la clase."
-      );
+      setLessonError(describeLessonError(err));
     } finally {
       setLessonLoading(false);
     }
+  }
+
+  function toggleVoice() {
+    setVoiceEnabled((prev) => {
+      const next = !prev;
+      saveVoiceEnabled(next);
+      if (!next) cancelSpeech();
+      return next;
+    });
+  }
+
+  function changeVoiceSpeed(speed: VoiceSpeed) {
+    setVoiceSpeed(speed);
+    saveVoiceSpeed(speed);
+  }
+
+  function handleExit() {
+    cancelSpeech();
+    navigate(courseId ? `/cursos/${courseId}` : "/");
   }
 
   function handleModuleChange(newModuleId: string) {
@@ -188,9 +243,8 @@ export function ClassroomPage() {
 
   function handleAskSubmit(e: FormEvent) {
     e.preventDefault();
-    // Placeholder: el motor LLM todavía no está implementado (Fase 1).
-    // El asistente solo podrá responder basándose en el Markdown del tópico
-    // cuando se integre el proveedor LLM en una fase futura.
+    // El tutor interactivo grounded todavía no está implementado — ver
+    // docs/ROADMAP.md (Fase 5). Este panel es un placeholder de UI.
   }
 
   if (error) {
@@ -206,6 +260,8 @@ export function ClassroomPage() {
       </div>
     );
   }
+
+  const resourceLinks = topic ? extractMarkdownLinks(topic.content_markdown) : [];
 
   return (
     <>
@@ -245,8 +301,14 @@ export function ClassroomPage() {
       />
 
       <div className="page" style={{ paddingTop: 16 }}>
+        {lesson && (
+          <div className="classroom-progress" aria-hidden="true">
+            <div className="classroom-progress__bar" style={{ width: `${engine.progressPercent}%` }} />
+          </div>
+        )}
+
         <div className="classroom-grid">
-          <div>
+          <div className={engine.isPaused ? "classroom-stage classroom-paused" : "classroom-stage"}>
             <div className="slide-panel">
               {import.meta.env.DEV && lesson && (
                 <span className="slide-panel__dev-cache">
@@ -274,10 +336,11 @@ export function ClassroomPage() {
                       </button>
                     </>
                   )}
-                  {lessonLoading && <p>Generando clase con IA…</p>}
+                  {lessonLoading && <LoadingSteps />}
                   {lessonError && (
                     <div className="slide-panel__error">
-                      <p>{lessonError}</p>
+                      <p className="slide-panel__error-title">{lessonError.title}</p>
+                      <p>{lessonError.detail}</p>
                       <button type="button" onClick={() => handleGenerateLesson(false)}>
                         Reintentar
                       </button>
@@ -286,20 +349,26 @@ export function ClassroomPage() {
                 </div>
               )}
 
-              {lesson && currentScene && (
+              {lesson && engine.isCompleted && (
+                <div className="slide-panel__content">
+                  <CompletionScreen
+                    lesson={lesson}
+                    onRepeat={() => engine.resetLesson()}
+                    onBackToCourse={handleExit}
+                  />
+                </div>
+              )}
+
+              {lesson && !engine.isCompleted && engine.currentScene && (
                 <div className="slide-panel__content slide-panel__content--lesson">
-                  <span className="slide-panel__badge">{currentScene.scene_type}</span>
                   <div className="slide-panel__lesson-title">{lesson.lesson_title.text}</div>
-                  <h2>{currentScene.title.text}</h2>
-                  {currentScene.key_points.length > 0 && (
-                    <ul className="slide-panel__key-points">
-                      {currentScene.key_points.map((kp, i) => (
-                        <li key={i}>{kp.text}</li>
-                      ))}
-                    </ul>
-                  )}
+                  <SceneRenderer
+                    scene={engine.currentScene}
+                    canonical={topic?.canonical}
+                    renderKey={engine.renderKey}
+                  />
                   <div className="slide-panel__scene-indicator">
-                    Escena {sceneIndex + 1} de {lesson.scenes.length}
+                    Escena {engine.currentSceneIndex + 1} de {engine.totalScenes}
                     {" · "}
                     <button
                       type="button"
@@ -314,11 +383,20 @@ export function ClassroomPage() {
               )}
             </div>
 
-            {lesson && currentScene && (
+            {lesson && !engine.isCompleted && engine.currentScene && (
               <div className="narration-panel">
                 <h4>Narración</h4>
-                {currentScene.narration.map((n, i) => (
-                  <p key={i}>{n.text}</p>
+                {engine.currentScene.narration.map((n, i) => (
+                  <p
+                    key={i}
+                    className={
+                      voiceEnabled && i === engine.currentNarrationIndex
+                        ? "narration-panel__chunk--active"
+                        : undefined
+                    }
+                  >
+                    {n.text}
+                  </p>
                 ))}
               </div>
             )}
@@ -345,12 +423,82 @@ export function ClassroomPage() {
               <h2>Contenido del tema</h2>
               {topic && <span className="content-panel__badge">Fuente: Markdown</span>}
             </div>
+            <div className="content-panel__tabs" role="tablist" aria-label="Secciones del contenido">
+              {(
+                [
+                  ["explicacion", "Explicación"],
+                  ["puntos-clave", "Puntos clave"],
+                  ["recursos", "Recursos"],
+                ] as [ContentTab, string][]
+              ).map(([tab, label]) => (
+                <button
+                  key={tab}
+                  type="button"
+                  role="tab"
+                  aria-selected={contentTab === tab}
+                  className={contentTab === tab ? "content-panel__tab active" : "content-panel__tab"}
+                  onClick={() => setContentTab(tab)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <div className="content-panel__body">
               {!topic && !error && <p>Cargando contenido del tema…</p>}
-              {topic && (
+
+              {topic && contentTab === "explicacion" && (
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {topic.content_markdown}
                 </ReactMarkdown>
+              )}
+
+              {topic && contentTab === "puntos-clave" && (
+                <div className="key-points-tab">
+                  {lesson && engine.currentScene ? (
+                    <>
+                      <h4>Escena actual: {engine.currentScene.title.text}</h4>
+                      <ul>
+                        {engine.currentScene.key_points.map((kp, i) => (
+                          <li key={i}>{kp.text}</li>
+                        ))}
+                      </ul>
+                      {lesson.learning_objectives.length > 0 && (
+                        <>
+                          <h4>Objetivos de aprendizaje</h4>
+                          <ul>
+                            {lesson.learning_objectives.map((obj, i) => (
+                              <li key={i}>{obj.text}</li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <p className="key-points-tab__empty">
+                      Preparar la clase con IA para ver los puntos clave de cada escena.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {topic && contentTab === "recursos" && (
+                <div className="resources-tab">
+                  {resourceLinks.length > 0 ? (
+                    <ul>
+                      {resourceLinks.map((link) => (
+                        <li key={link.url}>
+                          <a href={link.url} target="_blank" rel="noreferrer">
+                            {link.text}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="resources-tab__empty">
+                      Este tema no incluye enlaces adicionales en su material.
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -359,8 +507,8 @@ export function ClassroomPage() {
         {topic && (
           <GroundingPanel
             canonical={topic.canonical}
-            activeSceneId={currentScene?.scene_id}
-            activeSceneRefs={currentScene ? collectSceneRefs(currentScene) : undefined}
+            activeSceneId={engine.currentScene?.scene_id}
+            activeSceneRefs={engine.currentScene ? collectSceneRefs(engine.currentScene) : undefined}
           />
         )}
 
@@ -403,9 +551,7 @@ export function ClassroomPage() {
             ))}
           </div>
           <p className="assistant-panel__hint">
-            El asistente responderá únicamente en base al contenido de este
-            tópico. Esta funcionalidad todavía no está activa (disponible en
-            una fase futura).
+            El tutor interactivo estará disponible en la próxima fase.
           </p>
         </div>
 
@@ -413,33 +559,68 @@ export function ClassroomPage() {
           <button
             type="button"
             onClick={goPrev}
-            disabled={lesson ? sceneIndex === 0 : !prevTopic}
+            disabled={lesson ? engine.isFirstScene : !prevTopic}
+            aria-label="Escena o tópico anterior"
           >
             ← Previo
           </button>
           <button
             type="button"
             onClick={goNext}
-            disabled={lesson ? sceneIndex === lesson.scenes.length - 1 : !nextTopic}
+            disabled={lesson ? engine.isCompleted : !nextTopic}
+            aria-label={lesson && engine.isLastScene ? "Finalizar tema" : "Siguiente escena o tópico"}
           >
-            Siguiente →
+            {lesson && engine.isLastScene ? "Finalizar" : "Siguiente →"}
           </button>
           <span className="controls-bar__divider" aria-hidden="true" />
-          <button type="button" onClick={() => setIsPaused((p) => !p)}>
-            {isPaused ? "▶ Reanudar" : "⏸ Pausar"}
-          </button>
-          <button type="button" onClick={() => window.location.reload()}>
-            ↻ Repetir
+          <button
+            type="button"
+            onClick={() => (engine.isPaused ? engine.resume() : engine.pause())}
+            disabled={!lesson || engine.isCompleted}
+            aria-label={engine.isPaused ? "Reanudar clase" : "Pausar clase"}
+          >
+            {engine.isPaused ? "▶ Reanudar" : "⏸ Pausar"}
           </button>
           <button
             type="button"
-            className={voiceEnabled ? "primary" : undefined}
-            onClick={() => setVoiceEnabled((v) => !v)}
+            onClick={() => engine.repeatScene()}
+            disabled={!lesson || engine.isCompleted}
+            aria-label="Repetir escena actual"
           >
-            {voiceEnabled ? "🔊 Voz activada" : "🔈 Activar voz"}
+            ↻ Repetir
           </button>
           <span className="controls-bar__divider" aria-hidden="true" />
-          <button type="button" className="danger" onClick={() => navigate(`/cursos/${courseId}`)}>
+          <div className="controls-bar__voice">
+            <button
+              type="button"
+              className={voiceEnabled ? "primary" : undefined}
+              onClick={toggleVoice}
+              disabled={!speechSupported}
+              aria-pressed={voiceEnabled}
+              aria-label={voiceEnabled ? "Desactivar voz" : "Activar voz"}
+            >
+              {!speechSupported
+                ? "🔈 Voz no disponible"
+                : voiceEnabled
+                  ? "🔊 Voz activada"
+                  : "🔈 Activar voz"}
+            </button>
+            {voiceEnabled && speechSupported && (
+              <select
+                aria-label="Velocidad de voz"
+                value={voiceSpeed}
+                onChange={(e) => changeVoiceSpeed(Number(e.target.value) as VoiceSpeed)}
+              >
+                {VOICE_SPEED_OPTIONS.map((speed) => (
+                  <option key={speed} value={speed}>
+                    {speed}x
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          <span className="controls-bar__divider" aria-hidden="true" />
+          <button type="button" className="danger" onClick={handleExit}>
             Salir de la clase
           </button>
         </div>
