@@ -1,0 +1,185 @@
+"""Repositorio de cursos: lee el filesystem de cursos montado en /content.
+
+El contenido Markdown es la única fuente de verdad. Este módulo SOLO lee
+(nunca escribe) y nunca construye rutas de filesystem a partir de input
+del usuario sin antes validarlas contra los directorios/archivos reales
+existentes, evitando así path traversal.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import frontmatter
+
+from app.models.schemas import (
+    CourseDetail,
+    CourseSummary,
+    ModuleSummary,
+    TopicMetadata,
+    TopicResponse,
+    TopicSummary,
+)
+from app.services.naming import extract_order, humanize, slugify
+
+
+class CourseNotFoundError(Exception):
+    pass
+
+
+class ModuleNotFoundError(Exception):
+    pass
+
+
+class TopicNotFoundError(Exception):
+    pass
+
+
+def _list_subdirs(path: Path) -> list[Path]:
+    if not path.is_dir():
+        return []
+    entries = [p for p in path.iterdir() if p.is_dir() and not p.name.startswith(".")]
+    entries.sort(key=lambda p: (extract_order(p.name), p.name.lower()))
+    return entries
+
+
+def _list_topic_files(path: Path) -> list[Path]:
+    if not path.is_dir():
+        return []
+    entries = [
+        p
+        for p in path.iterdir()
+        if p.is_file() and p.suffix.lower() == ".md" and not p.name.startswith(".")
+    ]
+    entries.sort(key=lambda p: (extract_order(p.name), p.name.lower()))
+    return entries
+
+
+def _resolve_by_slug(candidates: list[Path], requested_id: str) -> Path | None:
+    """Busca, entre directorios/archivos REALES del filesystem, cuál slug
+    coincide con el id solicitado. Nunca construye una ruta a partir del
+    input del usuario: solo compara contra entradas ya enumeradas.
+    """
+    for candidate in candidates:
+        stem = candidate.stem if candidate.is_file() else candidate.name
+        if slugify(stem) == requested_id:
+            return candidate
+    return None
+
+
+def _read_topic_frontmatter(md_path: Path) -> tuple[dict, str]:
+    raw = md_path.read_text(encoding="utf-8")
+    post = frontmatter.loads(raw)
+    return post.metadata or {}, raw
+
+
+def _build_topic_summary(md_path: Path) -> TopicSummary:
+    metadata, _raw = _read_topic_frontmatter(md_path)
+    title = metadata.get("title") or humanize(md_path.stem)
+    order = metadata.get("order")
+    if not isinstance(order, int):
+        order = extract_order(md_path.name)
+    return TopicSummary(id=slugify(md_path.stem), title=str(title), order=order)
+
+
+def _build_module_summary(module_dir: Path, include_topics: bool = True) -> ModuleSummary:
+    topics = _list_topic_files(module_dir)
+    topic_summaries = [_build_topic_summary(t) for t in topics] if include_topics else []
+    return ModuleSummary(
+        id=slugify(module_dir.name),
+        title=humanize(module_dir.name),
+        order=extract_order(module_dir.name),
+        topics=topic_summaries,
+    )
+
+
+def _course_description(course_dir: Path) -> str:
+    """Descripción opcional del curso: si existe un topic 00-intro con
+    frontmatter description, no se usa (eso es a nivel tópico). Por ahora
+    se infiere vacío desde filesystem salvo que se agregue metadata futura.
+    """
+    return ""
+
+
+def _build_course_summary(course_dir: Path) -> CourseSummary:
+    modules = _list_subdirs(course_dir)
+    topic_count = sum(len(_list_topic_files(m)) for m in modules)
+    return CourseSummary(
+        id=slugify(course_dir.name),
+        title=humanize(course_dir.name),
+        description=_course_description(course_dir),
+        order=extract_order(course_dir.name),
+        module_count=len(modules),
+        topic_count=topic_count,
+    )
+
+
+def list_courses(content_path: Path) -> list[CourseSummary]:
+    course_dirs = _list_subdirs(content_path)
+    return [_build_course_summary(c) for c in course_dirs]
+
+
+def _find_course_dir(content_path: Path, course_id: str) -> Path:
+    course_dirs = _list_subdirs(content_path)
+    match = _resolve_by_slug(course_dirs, course_id)
+    if match is None:
+        raise CourseNotFoundError(course_id)
+    return match
+
+
+def _find_module_dir(course_dir: Path, module_id: str) -> Path:
+    module_dirs = _list_subdirs(course_dir)
+    match = _resolve_by_slug(module_dirs, module_id)
+    if match is None:
+        raise ModuleNotFoundError(module_id)
+    return match
+
+
+def _find_topic_file(module_dir: Path, topic_id: str) -> Path:
+    topic_files = _list_topic_files(module_dir)
+    match = _resolve_by_slug(topic_files, topic_id)
+    if match is None:
+        raise TopicNotFoundError(topic_id)
+    return match
+
+
+def get_course_detail(content_path: Path, course_id: str) -> CourseDetail:
+    course_dir = _find_course_dir(content_path, course_id)
+    module_dirs = _list_subdirs(course_dir)
+    modules = [_build_module_summary(m) for m in module_dirs]
+    return CourseDetail(
+        id=slugify(course_dir.name),
+        title=humanize(course_dir.name),
+        description=_course_description(course_dir),
+        order=extract_order(course_dir.name),
+        modules=modules,
+    )
+
+
+def get_topic(
+    content_path: Path, course_id: str, module_id: str, topic_id: str
+) -> TopicResponse:
+    course_dir = _find_course_dir(content_path, course_id)
+    module_dir = _find_module_dir(course_dir, module_id)
+    topic_file = _find_topic_file(module_dir, topic_id)
+
+    metadata_raw, raw_markdown = _read_topic_frontmatter(topic_file)
+    post = frontmatter.loads(raw_markdown)
+
+    title = metadata_raw.get("title") or humanize(topic_file.stem)
+    order = metadata_raw.get("order")
+    if not isinstance(order, int):
+        order = extract_order(topic_file.name)
+    description = metadata_raw.get("description") or ""
+
+    course_summary = _build_course_summary(course_dir)
+    module_summary = _build_module_summary(module_dir)
+    topic_summary = TopicSummary(id=slugify(topic_file.stem), title=str(title), order=order)
+    topic_metadata = TopicMetadata(title=str(title), order=order, description=str(description))
+
+    return TopicResponse(
+        course=course_summary,
+        module=module_summary,
+        topic=topic_summary,
+        metadata=topic_metadata,
+        content_markdown=post.content,
+    )

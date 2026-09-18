@@ -1,0 +1,35 @@
+# Entorno / secretos
+.env
+.env.local
+*.env
+!.env.example
+
+# Python / backend
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+backend/.venv/
+backend/venv/
+htmlcov/
+.coverage
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/build/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docker
+*.pid

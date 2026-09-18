@@ -1,0 +1,55 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pwc-tutor-backend
+    ports:
+      - "8000:8000"
+    environment:
+      CONTENT_DIR: /content
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
+      LLM_PROVIDER: ${LLM_PROVIDER:-pwc}
+      PWC_GENAI_BASE_URL: ${PWC_GENAI_BASE_URL:-https://genai-sharedservice-americas.pwcinternal.com}
+      PWC_GENAI_API_KEY: ${PWC_GENAI_API_KEY:-}
+      PWC_GENAI_MODEL: ${PWC_GENAI_MODEL:-openai.gpt-4o-2024-11-20}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      VOICE_PROVIDER: ${VOICE_PROVIDER:-browser}
+    volumes:
+      # Bind mount long-form: evita problemas de interpretación de rutas de
+      # Windows que ocurren con la sintaxis corta "host:container".
+      - type: bind
+        source: ${COURSES_HOST_PATH:-./courses}
+        target: /content
+        read_only: true
+      # Hot-reload del código del backend en desarrollo.
+      - type: bind
+        source: ./backend/app
+        target: /app/app
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pwc-tutor-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    volumes:
+      # Hot-reload del código del frontend en desarrollo.
+      - type: bind
+        source: ./frontend/src
+        target: /app/src
+      - type: bind
+        source: ./frontend/index.html
+        target: /app/index.html
+    depends_on:
+      - backend
