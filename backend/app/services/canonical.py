@@ -213,6 +213,16 @@ def parse_source_blocks(markdown_text: str) -> list[SourceBlock]:
 
         if block_type == "code":
             plain_text = _code_block_plain_text(block_markdown)
+        elif block_type == "heading":
+            # No reusar block_markdown: para headings Setext (título +
+            # línea de "===="/"----" subrayado), open_token.map abarca
+            # AMBAS líneas (correcto para preservar el markdown literal),
+            # pero el texto del título vive únicamente en el token inline
+            # hijo (.content), que markdown-it-py ya resuelve sin la línea
+            # de subrayado ni el prefijo "#" de un heading ATX.
+            inline = _inline_child(block_tokens)
+            heading_text = inline.content if inline is not None else block_markdown
+            plain_text = _strip_markdown_syntax(heading_text)
         else:
             plain_text = _strip_markdown_syntax(block_markdown)
 

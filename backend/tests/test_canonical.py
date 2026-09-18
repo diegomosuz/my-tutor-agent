@@ -75,6 +75,47 @@ def test_heading_hierarchy_tracks_nested_levels():
     assert p_otro.heading_path == ["Arquitectura", "Otro Componente"]
 
 
+def test_setext_headings_are_detected_with_correct_title_and_lines():
+    """Cierre de deuda de Fase 2: los headings estilo Setext (subrayados con
+    '=' o '-') deben detectarse como heading, con el título correcto (sin
+    la línea de subrayado) y heading_path coherente. El rango de líneas
+    preserva ambas líneas del heading Setext (título + subrayado), ya que
+    ese es el markdown literal de ese bloque."""
+    md = (
+        "Título nivel 1\n"
+        "==============\n"
+        "\n"
+        "Subtítulo nivel 2\n"
+        "-----------------\n"
+        "\n"
+        "Un párrafo bajo el subtítulo.\n"
+    )
+    blocks = parse_source_blocks(md)
+    assert len(blocks) == 3
+
+    h1, h2, paragraph = blocks
+
+    assert h1.block_type == "heading"
+    assert h1.plain_text == "Título nivel 1"
+    assert h1.start_line == 1
+    assert h1.end_line == 2
+    assert h1.heading_path == ["Título nivel 1"]
+    # El markdown literal conserva ambas líneas (título + subrayado).
+    assert h1.markdown == "Título nivel 1\n=============="
+
+    assert h2.block_type == "heading"
+    assert h2.plain_text == "Subtítulo nivel 2"
+    assert h2.start_line == 4
+    assert h2.end_line == 5
+    assert h2.heading_path == ["Título nivel 1", "Subtítulo nivel 2"]
+
+    assert paragraph.block_type == "paragraph"
+    assert paragraph.heading_path == ["Título nivel 1", "Subtítulo nivel 2"]
+
+    # Determinismo: un segundo parseo produce exactamente el mismo modelo.
+    assert parse_source_blocks(md) == blocks
+
+
 # --------------------------------------------------------------------------
 # 4. Párrafos multilínea
 # --------------------------------------------------------------------------

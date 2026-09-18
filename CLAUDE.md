@@ -180,33 +180,137 @@ bloques); `GET .../topics/{topic_id}/grounding` es un endpoint de
 inspección/desarrollo que devuelve el Grounding Packet completo (sin
 secretos).
 
-## 7. Proveedores LLM (preparado, no implementado en Fase 1)
+## 7. Proveedores LLM (Fase 3: integración real)
 
-El backend está preparado para soportar múltiples proveedores mediante una
-interfaz común (`backend/app/services/llm_provider.py`):
+El backend soporta dos proveedores intercambiables mediante una interfaz
+común (`backend/app/services/llm_provider.py`):
 
 ```
 LLMProvider (ABC)
-  PwCGenAIProvider
-  OpenAIProvider
+  .is_configured() -> bool
+  .model -> str
+  .generate_structured(*, messages, response_model) -> BaseModel
+
+  PwCGenAIProvider   # POST {PWC_GENAI_BASE_URL}/chat/completions (httpx)
+  OpenAIProvider     # SDK oficial openai, client.chat.completions.parse(...)
 ```
+
+`LessonGenerator` (`backend/app/services/lesson_generator.py`) solo conoce
+esta interfaz: no sabe nada de HTTP, headers ni SDKs específicos de cada
+proveedor. La selección de proveedor es **siempre configuración del
+backend** (`LLM_PROVIDER`); nunca se acepta un provider enviado desde un
+request HTTP. Cualquier valor de `LLM_PROVIDER` distinto de `pwc` u
+`openai` produce un `LLMConfigurationError` claro (nunca un fallback
+silencioso).
 
 Variables de entorno relevantes (ver `.env.example`):
 
 ```
-LLM_PROVIDER=pwc
+LLM_PROVIDER=pwc                 # "pwc" | "openai"
 PWC_GENAI_BASE_URL=...
 PWC_GENAI_API_KEY=
 PWC_GENAI_MODEL=...
+GEN_AI_API_KEY=                  # fallback de compatibilidad de PWC_GENAI_API_KEY
 OPENAI_API_KEY=
 OPENAI_MODEL=
+LESSON_CACHE_DIR=/app/data/lesson-cache
+LESSON_PROMPT_VERSION=lesson-v1
 VOICE_PROVIDER=browser
 ```
 
 **Regla dura**: las API keys nunca deben llegar al navegador. Todo llamado
-a un proveedor LLM ocurre exclusivamente desde el backend.
+a un proveedor LLM ocurre exclusivamente desde el backend. La aplicación
+completa (catálogo, cursos, tópicos, Markdown) debe seguir funcionando sin
+ninguna credencial configurada; en ese caso `GET /api/ai/status` devuelve
+`configured: false` y `POST .../lesson` devuelve `503` (nunca rompe el
+arranque de los containers).
 
-## 8. Convenciones
+## 8. Generación de LessonPlan con LLM (Fase 3)
+
+Pipeline completo:
+
+```
+CanonicalTopicContent (Fase 2)
+    ↓
+Grounding Packet (Fase 2)
+    ↓
+Prompt Builder (app/prompts/lesson.py) — system prompt + user prompt
+    ↓
+LLMProvider.generate_structured(...)  — PwCGenAIProvider | OpenAIProvider
+    ↓
+GeneratedLessonBody  (validación Pydantic automática)
+    ↓
+validate_lesson_body(...)  (app/services/lesson_validation.py — grounding)
+    ↓
+LessonPlan  (ensamblada por el BACKEND: ids, content_sha256, provider,
+             model, cached — el LLM NUNCA produce estos campos)
+    ↓
+Cache en filesystem (JSON, LESSON_CACHE_DIR)
+    ↓
+React (ClassroomPage — vertical slice: título, escena actual, key_points,
+       narration, navegación Previo/Siguiente entre escenas)
+```
+
+Modelos clave (`backend/app/models/lesson.py`):
+
+- **`GroundedText`**: `{ text, source_refs }`. `source_refs` demuestra
+  **trazabilidad estructural** (las referencias citadas existen realmente
+  en el `CanonicalTopicContent`) — **no** es una prueba semántica de que el
+  texto se infiere correctamente de esos bloques. Ver la distinción exacta
+  en `docs/ARCHITECTURE.md` sección "Grounding: qué garantiza y qué no".
+- **`VisualPlan`**: especificación **declarativa** (`visual_type` de un
+  enum cerrado, `layout_hint`, `source_refs`, `description`). El LLM
+  **nunca** puede producir HTML/JS/React/SVG/scripts ejecutables como
+  visual — estructuralmente imposible dado el contrato Pydantic (enum
+  cerrado + texto libre nunca interpretado como markup).
+- **`InteractionPlan`**: `comprehension_check` | `reflection`, sin scoring,
+  sin dificultad, sin banco de preguntas, sin persistencia (eso es de una
+  fase futura, no de Fase 3).
+- **`LessonScene`**: `scene_id` (`SCENE-001`, `SCENE-002`, ... secuencial),
+  `scene_type` (enum cerrado), `title`/`key_points`/`narration`
+  (`GroundedText`), `visual`, `interaction` opcional.
+- **`GeneratedLessonBody`**: lo ÚNICO que el LLM produce
+  (`lesson_title`, `learning_objectives`, `scenes`, `recap`). Nunca
+  `course_id`/`module_id`/`topic_id`/`content_sha256`/`provider`/`model`/
+  cache keys: esos los agrega el backend en `_assemble_lesson_plan`.
+- **`LessonPlan`**: `GeneratedLessonBody` + metadata determinística +
+  `cached: bool`.
+
+**Validación de grounding** (`app/services/lesson_validation.py`):
+recorre TODAS las instancias de `GroundedText` (lesson_title,
+learning_objectives, cada scene.title/key_points/narration/interaction,
+recap) y cada `VisualPlan.source_refs`, y valida cada referencia con
+`validate_source_refs` (la misma utilidad de Fase 2). Además valida las
+invariantes de secuencia de escenas (`SCENE-001`, `SCENE-002`, ... únicas y
+en orden). Si algo falla, la lección se rechaza (o se reintenta con un
+mensaje de corrección, ver retries abajo).
+
+**Cache** (filesystem, sin base de datos): la key depende de
+`content_sha256 + provider + model + prompt_version` (SHA-256 de esos
+cuatro valores concatenados). Cambiar cualquiera de los cuatro produce
+cache miss por diseño. Escritura atómica (archivo temporal + `replace`).
+Nunca se cachea un error ni una respuesta inválida.
+
+**Reintentos** (`app/services/lesson_generator.py`, acotados: 1 intento
+inicial + hasta 2 correcciones, `MAX_GENERATION_ATTEMPTS = 3`):
+- `LLMAuthError` / `LLMConfigurationError`: **nunca** se reintenta.
+- `LLMUpstreamError` (timeout/5xx/conexión): reintento reenviando
+  exactamente los mismos mensajes.
+- JSON/contrato inválido o grounding inválido: reintento agregando un
+  mensaje de corrección con los problemas encontrados, **sin** reemplazar
+  el `AUTHORIZED SOURCE` ya enviado.
+
+**Seguridad ante contenido no confiable (prompt injection)**: el Markdown
+de un tópico se trata siempre como DATOS, nunca como instrucciones. El
+system prompt (`app/prompts/lesson.py:SYSTEM_PROMPT`) establece
+explícitamente que las instrucciones de sistema prevalecen y que cualquier
+texto dentro de `AUTHORIZED SOURCE` que parezca un comando debe tratarse
+como contenido de curso citable, nunca ejecutado. Ver
+`backend/tests/test_prompt_injection.py` para la demostración
+determinística de esta separación (qué demuestra y qué NO demuestra ese
+test está documentado en el docstring del archivo).
+
+## 9. Convenciones
 
 - Backend en español para nombres de dominio de negocio cuando aporte
   claridad (cursos, módulos, tópicos), pero código, nombres de funciones y
@@ -229,9 +333,20 @@ a un proveedor LLM ocurre exclusivamente desde el backend.
   existente antes de parsear.
 - Tests de backend con `pytest`, usando `TestClient` de FastAPI y
   `app.dependency_overrides` para inyectar un `content_dir` de prueba
-  (ver `backend/tests/conftest.py`).
+  (ver `backend/tests/conftest.py`). El fixture `client` también aísla
+  `LESSON_CACHE_DIR` en un `tmp_path` por test: ningún test toca el
+  volumen real `./data/lesson-cache`.
+- Los tests de proveedores LLM y del `LessonGenerator` nunca hacen llamadas
+  de red: mockean HTTP (`unittest.mock` sobre `httpx.post`) o el SDK de
+  OpenAI, o inyectan un `FakeLLMProvider` (`backend/tests/fakes.py`,
+  exclusivo para tests) vía el parámetro `provider=` de
+  `lesson_generator.generate_lesson`.
+- El prompt de generación de lecciones vive en un módulo dedicado
+  (`backend/app/prompts/lesson.py`), nunca escondido en un router.
+  `LESSON_PROMPT_VERSION` cambia cada vez que el prompt cambia de forma
+  que pueda alterar la salida del modelo (forma parte de la cache key).
 
-## 9. Comandos principales
+## 10. Comandos principales
 
 Todo el entorno corre encapsulado en Docker. No se requiere Python ni Node
 instalados en el host.
@@ -250,8 +365,17 @@ docker compose run --rm backend pytest
 # Solo los tests del modelo canónico / grounding (Fase 2)
 docker compose run --rm backend pytest tests/test_canonical.py tests/test_grounding.py
 
+# Solo los tests de Fase 3 (providers LLM + LessonGenerator + prompt injection)
+docker compose run --rm backend pytest tests/test_llm_provider_pwc.py tests/test_llm_provider_openai.py tests/test_lesson_generator.py tests/test_prompt_injection.py tests/test_ai_endpoints.py
+
 # Build de producción del frontend (verificación de tipos + bundle)
 docker compose run --rm frontend npm run build
+
+# Estado del proveedor LLM configurado (nunca expone la API key)
+curl http://localhost:8000/api/ai/status
+
+# Generar (o recuperar de cache) la LessonPlan de un tópico
+curl -X POST http://localhost:8000/api/courses/demo-curso-ia/modules/fundamentos/topics/introduccion/lesson
 
 # Bajar el entorno
 docker compose down
@@ -263,7 +387,7 @@ URLs en desarrollo:
 - Docs interactivas (Swagger): http://localhost:8000/docs
 - Frontend: http://localhost:5173
 
-## 10. Estado de fases
+## 11. Estado de fases
 
 Ver `docs/ROADMAP.md` para el detalle de fases futuras.
 
@@ -274,6 +398,17 @@ Ver `docs/ROADMAP.md` para el detalle de fases futuras.
   (`SourceBlock`, `CanonicalTopicContent`), Grounding Packet, validación de
   referencias `SRC-XXX`, endpoint de inspección `/grounding`. Sigue sin
   existir ninguna llamada real a un LLM.
+- **Fase 3** (completa): primera integración REAL con un LLM.
+  `PwCGenAIProvider` / `OpenAIProvider` reales, generación de `LessonPlan`
+  grounded (`GeneratedLessonBody` → validación Pydantic → validación de
+  grounding → `LessonPlan`), cache en filesystem, reintentos acotados,
+  endpoints `GET /api/ai/status` y
+  `POST .../topics/{topic_id}/lesson`, e integración vertical mínima en el
+  frontend (estado del agente IA, botón "Preparar clase con IA", navegación
+  de escenas). Validado con un smoke test real (ver
+  `docs/ARCHITECTURE.md`). Sin TTS, sin reconocimiento de voz, sin
+  simulador de certificación, sin RAG/embeddings/vector DB, sin agentes
+  autónomos.
 
 Cualquier trabajo futuro debe respetar este documento y actualizar la
 sección correspondiente del roadmap al avanzar de fase.

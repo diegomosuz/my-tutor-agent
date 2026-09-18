@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import { api, ApiError } from "../api/client";
 import { Breadcrumb } from "../components/Breadcrumb";
 import { GroundingPanel } from "../components/GroundingPanel";
-import type { CourseDetail, TopicResponse } from "../types/api";
+import type { AiStatusResponse, CourseDetail, LessonPlan, LessonScene, TopicResponse } from "../types/api";
 
 const SUGGESTIONS = [
   "Resumime este tema en 3 puntos",
@@ -13,6 +13,22 @@ const SUGGESTIONS = [
   "Dame un ejemplo del contenido",
   "¿Qué relación tiene con el módulo anterior?",
 ];
+
+/** Todas las source_refs citadas por una escena (título, key_points,
+ * narration, visual e interacción), sin duplicados. Se usa para el panel
+ * de grounding en modo desarrollo (ver components/GroundingPanel.tsx). */
+function collectSceneRefs(scene: LessonScene): string[] {
+  const refs = new Set<string>();
+  scene.title.source_refs.forEach((r) => refs.add(r));
+  scene.key_points.forEach((kp) => kp.source_refs.forEach((r) => refs.add(r)));
+  scene.narration.forEach((n) => n.source_refs.forEach((r) => refs.add(r)));
+  scene.visual.source_refs.forEach((r) => refs.add(r));
+  if (scene.interaction) {
+    scene.interaction.question.source_refs.forEach((r) => refs.add(r));
+    scene.interaction.expected_answer?.source_refs.forEach((r) => refs.add(r));
+  }
+  return Array.from(refs);
+}
 
 export function ClassroomPage() {
   const { courseId, moduleId, topicId } = useParams<{
@@ -28,6 +44,29 @@ export function ClassroomPage() {
   const [question, setQuestion] = useState("");
   const [isPaused, setIsPaused] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
+
+  // Fase 3: estado del agente IA y de la LessonPlan generada.
+  const [aiStatus, setAiStatus] = useState<AiStatusResponse | null>(null);
+  const [lesson, setLesson] = useState<LessonPlan | null>(null);
+  const [lessonLoading, setLessonLoading] = useState(false);
+  const [lessonError, setLessonError] = useState<string | null>(null);
+  const [sceneIndex, setSceneIndex] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getAiStatus()
+      .then((status) => {
+        if (!cancelled) setAiStatus(status);
+      })
+      .catch(() => {
+        // El estado de IA es informativo: si falla, simplemente no se
+        // muestra nada — nunca debe romper el resto del aula.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!courseId) return;
@@ -50,6 +89,12 @@ export function ClassroomPage() {
     let cancelled = false;
     setTopic(null);
     setError(null);
+    // Nunca arrastramos la LessonPlan de un tópico anterior: cada tópico
+    // tiene la suya (o ninguna todavía). No se genera automáticamente acá
+    // para no consumir IA solo por entrar al tópico.
+    setLesson(null);
+    setLessonError(null);
+    setSceneIndex(0);
     api
       .getTopic(courseId, moduleId, topicId)
       .then((data) => {
@@ -90,6 +135,46 @@ export function ClassroomPage() {
   function goTo(target: { moduleId: string; topicId: string } | null) {
     if (!target || !courseId) return;
     navigate(`/aula/${courseId}/${target.moduleId}/${target.topicId}`);
+  }
+
+  const currentScene = lesson ? lesson.scenes[sceneIndex] ?? null : null;
+
+  // Con una LessonPlan activa, Previo/Siguiente navegan escenas de la
+  // clase generada; sin ella, siguen navegando entre tópicos del curso
+  // (comportamiento de Fase 1).
+  function goPrev() {
+    if (lesson) {
+      setSceneIndex((i) => Math.max(0, i - 1));
+      return;
+    }
+    goTo(prevTopic);
+  }
+
+  function goNext() {
+    if (lesson) {
+      setSceneIndex((i) => Math.min(lesson.scenes.length - 1, i + 1));
+      return;
+    }
+    goTo(nextTopic);
+  }
+
+  async function handleGenerateLesson(forceRegenerate: boolean) {
+    if (!courseId || !moduleId || !topicId) return;
+    setLessonLoading(true);
+    setLessonError(null);
+    try {
+      const plan = await api.generateLesson(courseId, moduleId, topicId, forceRegenerate);
+      setLesson(plan);
+      setSceneIndex(0);
+    } catch (err) {
+      setLessonError(
+        err instanceof ApiError
+          ? err.message
+          : "No se pudo conectar con el servidor para generar la clase."
+      );
+    } finally {
+      setLessonLoading(false);
+    }
   }
 
   function handleModuleChange(newModuleId: string) {
@@ -163,15 +248,80 @@ export function ClassroomPage() {
         <div className="classroom-grid">
           <div>
             <div className="slide-panel">
-              <div className="slide-panel__content">
-                <span className="slide-panel__badge">Clase en vivo</span>
-                <h2>{topic ? topic.topic.title : "Cargando…"}</h2>
-                <p>
-                  Este panel mostrará la slide o clase generada dinámicamente en
-                  una fase futura. Por ahora es un espacio reservado 16:9.
-                </p>
-              </div>
+              {import.meta.env.DEV && lesson && (
+                <span className="slide-panel__dev-cache">
+                  lesson cache: {lesson.cached ? "HIT" : "MISS"}
+                </span>
+              )}
+
+              {!lesson && (
+                <div className="slide-panel__content">
+                  <span className="slide-panel__badge">Clase en vivo</span>
+                  <h2>{topic ? topic.topic.title : "Cargando…"}</h2>
+                  {!lessonLoading && !lessonError && (
+                    <>
+                      <p>
+                        Generá una clase estructurada con IA a partir exclusivamente del
+                        contenido Markdown de este tópico.
+                      </p>
+                      <button
+                        type="button"
+                        className="slide-panel__cta"
+                        disabled={!topic}
+                        onClick={() => handleGenerateLesson(false)}
+                      >
+                        ✨ Preparar clase con IA
+                      </button>
+                    </>
+                  )}
+                  {lessonLoading && <p>Generando clase con IA…</p>}
+                  {lessonError && (
+                    <div className="slide-panel__error">
+                      <p>{lessonError}</p>
+                      <button type="button" onClick={() => handleGenerateLesson(false)}>
+                        Reintentar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {lesson && currentScene && (
+                <div className="slide-panel__content slide-panel__content--lesson">
+                  <span className="slide-panel__badge">{currentScene.scene_type}</span>
+                  <div className="slide-panel__lesson-title">{lesson.lesson_title.text}</div>
+                  <h2>{currentScene.title.text}</h2>
+                  {currentScene.key_points.length > 0 && (
+                    <ul className="slide-panel__key-points">
+                      {currentScene.key_points.map((kp, i) => (
+                        <li key={i}>{kp.text}</li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="slide-panel__scene-indicator">
+                    Escena {sceneIndex + 1} de {lesson.scenes.length}
+                    {" · "}
+                    <button
+                      type="button"
+                      className="slide-panel__regenerate"
+                      onClick={() => handleGenerateLesson(true)}
+                      disabled={lessonLoading}
+                    >
+                      {lessonLoading ? "Regenerando…" : "↻ Regenerar clase con IA"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
+
+            {lesson && currentScene && (
+              <div className="narration-panel">
+                <h4>Narración</h4>
+                {currentScene.narration.map((n, i) => (
+                  <p key={i}>{n.text}</p>
+                ))}
+              </div>
+            )}
 
             {course && course.modules.length > 0 && (
               <div className="module-topic-nav">
@@ -206,12 +356,30 @@ export function ClassroomPage() {
           </div>
         </div>
 
-        {topic && <GroundingPanel canonical={topic.canonical} />}
+        {topic && (
+          <GroundingPanel
+            canonical={topic.canonical}
+            activeSceneId={currentScene?.scene_id}
+            activeSceneRefs={currentScene ? collectSceneRefs(currentScene) : undefined}
+          />
+        )}
 
         <div className="assistant-panel">
           <div className="assistant-panel__header">
             <span className="assistant-panel__icon" aria-hidden="true" />
             <h3>Pregunta al asistente IA</h3>
+            {aiStatus && (
+              <span
+                className={
+                  "assistant-panel__ai-status " +
+                  (aiStatus.configured
+                    ? "assistant-panel__ai-status--on"
+                    : "assistant-panel__ai-status--off")
+                }
+              >
+                {aiStatus.configured ? "● Agente IA activo" : "○ IA no configurada"}
+              </span>
+            )}
           </div>
           <form className="assistant-panel__form" onSubmit={handleAskSubmit}>
             <input
@@ -242,10 +410,18 @@ export function ClassroomPage() {
         </div>
 
         <div className="controls-bar">
-          <button type="button" onClick={() => goTo(prevTopic)} disabled={!prevTopic}>
+          <button
+            type="button"
+            onClick={goPrev}
+            disabled={lesson ? sceneIndex === 0 : !prevTopic}
+          >
             ← Previo
           </button>
-          <button type="button" onClick={() => goTo(nextTopic)} disabled={!nextTopic}>
+          <button
+            type="button"
+            onClick={goNext}
+            disabled={lesson ? sceneIndex === lesson.scenes.length - 1 : !nextTopic}
+          >
             Siguiente →
           </button>
           <span className="controls-bar__divider" aria-hidden="true" />

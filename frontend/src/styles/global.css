@@ -478,6 +478,134 @@ p {
   margin: 0 auto;
 }
 
+.slide-panel__cta {
+  margin-top: 16px;
+  padding: 10px 20px;
+  border-radius: 999px;
+  border: none;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-accent-yellow));
+  color: #1a1712;
+  font-weight: 700;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.slide-panel__cta:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.slide-panel__error {
+  margin-top: 12px;
+}
+
+.slide-panel__error button {
+  margin-top: 8px;
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 182, 0, 0.4);
+  background: transparent;
+  color: var(--color-accent-yellow);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.slide-panel__content--lesson {
+  text-align: left;
+  max-width: 480px;
+}
+
+.slide-panel__lesson-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: #cfc7ba;
+  margin-bottom: 4px;
+}
+
+.slide-panel__key-points {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  text-align: left;
+  font-size: 13px;
+  color: #ece5d8;
+  line-height: 1.6;
+}
+
+.slide-panel__key-points li {
+  margin-bottom: 4px;
+}
+
+.slide-panel__scene-indicator {
+  margin-top: 16px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--color-accent-yellow);
+  letter-spacing: 0.3px;
+}
+
+.slide-panel__regenerate {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #cfc7ba;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.slide-panel__regenerate:hover:not(:disabled) {
+  color: var(--color-accent-yellow);
+}
+
+.slide-panel__regenerate:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.slide-panel__dev-cache {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.4);
+  color: var(--color-accent-yellow);
+  z-index: 2;
+}
+
+.narration-panel {
+  margin-top: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+}
+
+.narration-panel h4 {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-faint);
+  margin-bottom: 8px;
+}
+
+.narration-panel p {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--color-text);
+  margin-bottom: 8px;
+}
+
+.narration-panel p:last-child {
+  margin-bottom: 0;
+}
+
 .content-panel {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -581,6 +709,25 @@ p {
 .assistant-panel__header h3 {
   font-size: 14.5px;
   font-weight: 700;
+}
+
+.assistant-panel__ai-status {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  letter-spacing: 0.2px;
+}
+
+.assistant-panel__ai-status--on {
+  color: #1a7a3a;
+  background: #e6f6ea;
+}
+
+.assistant-panel__ai-status--off {
+  color: var(--color-text-faint);
+  background: var(--color-bg-muted);
 }
 
 .assistant-panel__form {
@@ -746,6 +893,59 @@ p {
 .grounding-panel__block-path {
   color: var(--color-text-muted);
   font-style: italic;
+}
+
+.grounding-panel__block-row--active {
+  border-color: var(--color-primary) !important;
+  background: var(--color-primary-subtle);
+}
+
+.grounding-panel__scene-refs {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px dashed var(--color-border);
+}
+
+.grounding-panel__chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.grounding-panel__ref-chip {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-strong);
+  background: #fff;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.grounding-panel__ref-chip.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.grounding-panel__block-preview {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--color-text);
+}
+
+.grounding-panel__block-preview p {
+  margin-top: 6px;
+  color: var(--color-text-muted);
+}
+
+.grounding-panel__block-preview--missing {
+  color: var(--color-accent-red);
 }
 
 /* ---------- Barra de controles ---------- */

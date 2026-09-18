@@ -66,3 +66,88 @@ export interface GroundingResponse {
   source_block_count: number;
   grounding_packet: string;
 }
+
+// ---------------------------------------------------------------------
+// Fase 3 — LessonPlan generada por IA
+// ---------------------------------------------------------------------
+
+export interface GroundedText {
+  text: string;
+  source_refs: string[];
+}
+
+export type VisualType =
+  | "none"
+  | "hero"
+  | "bullets"
+  | "process"
+  | "comparison"
+  | "hierarchy"
+  | "architecture"
+  | "concept_map"
+  | "table"
+  | "code"
+  | "quote";
+
+export type LayoutHint =
+  | "default"
+  | "left_to_right"
+  | "top_down"
+  | "two_column"
+  | "centered";
+
+export interface VisualPlan {
+  visual_type: VisualType;
+  layout_hint: LayoutHint;
+  source_refs: string[];
+  description: string;
+}
+
+export type InteractionType = "comprehension_check" | "reflection";
+
+export interface InteractionPlan {
+  interaction_type: InteractionType;
+  question: GroundedText;
+  expected_answer: GroundedText | null;
+}
+
+export type SceneType =
+  | "introduction"
+  | "explanation"
+  | "visual_explanation"
+  | "checkpoint"
+  | "recap";
+
+export interface LessonScene {
+  scene_id: string;
+  scene_type: SceneType;
+  title: GroundedText;
+  key_points: GroundedText[];
+  narration: GroundedText[];
+  visual: VisualPlan;
+  interaction: InteractionPlan | null;
+}
+
+export interface LessonPlan {
+  lesson_id: string;
+  course_id: string;
+  module_id: string;
+  topic_id: string;
+  content_sha256: string;
+  prompt_version: string;
+  provider: string;
+  model: string;
+  lesson_title: GroundedText;
+  learning_objectives: GroundedText[];
+  scenes: LessonScene[];
+  recap: GroundedText[];
+  cached: boolean;
+  generated_at: string;
+}
+
+export interface AiStatusResponse {
+  provider: string;
+  model: string;
+  configured: boolean;
+  prompt_version: string;
+}

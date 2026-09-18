@@ -33,3 +33,8 @@ Thumbs.db
 
 # Docker
 *.pid
+
+# Cache local de LessonPlans generadas por IA (Fase 3). Contenido
+# regenerable, nunca se versiona; se conserva solo la carpeta vía .gitkeep.
+data/lesson-cache/*
+!data/lesson-cache/.gitkeep

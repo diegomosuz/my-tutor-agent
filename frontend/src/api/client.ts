@@ -1,7 +1,9 @@
 import type {
+  AiStatusResponse,
   CourseDetail,
   CourseSummary,
   GroundingResponse,
+  LessonPlan,
   TopicResponse,
 } from "../types/api";
 
@@ -15,8 +17,15 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`);
+async function request<T>(
+  path: string,
+  options?: { method?: "GET" | "POST"; body?: unknown }
+): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: options?.method ?? "GET",
+    headers: options?.body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+  });
   if (!response.ok) {
     let detail = response.statusText;
     try {
@@ -42,5 +51,20 @@ export const api = {
   getTopicGrounding: (courseId: string, moduleId: string, topicId: string) =>
     request<GroundingResponse>(
       `/api/courses/${courseId}/modules/${moduleId}/topics/${topicId}/grounding`
+    ),
+  // Fase 3: estado no sensible del proveedor LLM configurado en el backend.
+  getAiStatus: () => request<AiStatusResponse>("/api/ai/status"),
+  // Fase 3: genera (o recupera de cache) la LessonPlan de un tópico. Nunca
+  // se envía desde acá ninguna credencial, prompt ni ruta de filesystem:
+  // solo course/module/topic (ya en la URL) y force_regenerate.
+  generateLesson: (
+    courseId: string,
+    moduleId: string,
+    topicId: string,
+    forceRegenerate = false
+  ) =>
+    request<LessonPlan>(
+      `/api/courses/${courseId}/modules/${moduleId}/topics/${topicId}/lesson`,
+      { method: "POST", body: { force_regenerate: forceRegenerate } }
     ),
 };

@@ -5,15 +5,29 @@ import type { CanonicalInfo } from "../types/api";
  * Panel de inspección visible SOLO en modo desarrollo (import.meta.env.DEV,
  * provisto por Vite: true en `npm run dev`, false en un build de
  * producción). Permite verificar el modelo canónico determinístico de
- * Fase 2 (SourceBlocks, hash de contenido) sin exponer el Grounding
- * Packet completo de forma permanente en la UI.
+ * Fase 2 (SourceBlocks, hash de contenido) y, desde Fase 3, las
+ * source_refs realmente usadas por la escena activa de una LessonPlan.
+ * Nunca muestra el Grounding Packet completo de forma permanente.
  */
-export function GroundingPanel({ canonical }: { canonical: CanonicalInfo }) {
+export function GroundingPanel({
+  canonical,
+  activeSceneId,
+  activeSceneRefs,
+}: {
+  canonical: CanonicalInfo;
+  activeSceneId?: string | null;
+  activeSceneRefs?: string[];
+}) {
   const [showBlocks, setShowBlocks] = useState(false);
+  const [selectedRef, setSelectedRef] = useState<string | null>(null);
 
   if (!import.meta.env.DEV) {
     return null;
   }
+
+  const selectedBlock = selectedRef
+    ? canonical.source_blocks.find((b) => b.source_ref === selectedRef) ?? null
+    : null;
 
   return (
     <details className="grounding-panel">
@@ -27,13 +41,57 @@ export function GroundingPanel({ canonical }: { canonical: CanonicalInfo }) {
           Modelo canónico determinístico derivado del Markdown de este tópico
           (Fase 2). No proviene de ningún LLM.
         </p>
+
+        {activeSceneRefs && activeSceneRefs.length > 0 && (
+          <div className="grounding-panel__scene-refs">
+            <p className="grounding-panel__hint">
+              Referencias usadas por la escena activa
+              {activeSceneId ? ` (${activeSceneId})` : ""}: hacé click para inspeccionar.
+            </p>
+            <div className="grounding-panel__chip-row">
+              {activeSceneRefs.map((ref) => (
+                <button
+                  key={ref}
+                  type="button"
+                  className={
+                    "grounding-panel__ref-chip" + (selectedRef === ref ? " active" : "")
+                  }
+                  onClick={() => setSelectedRef((current) => (current === ref ? null : ref))}
+                >
+                  {ref}
+                </button>
+              ))}
+            </div>
+            {selectedBlock && (
+              <div className="grounding-panel__block-preview">
+                <strong>
+                  {selectedBlock.source_ref} · {selectedBlock.block_type}
+                </strong>
+                <p>{selectedBlock.plain_text}</p>
+              </div>
+            )}
+            {selectedRef && !selectedBlock && (
+              <p className="grounding-panel__block-preview grounding-panel__block-preview--missing">
+                {selectedRef} no existe en los SourceBlocks del tópico.
+              </p>
+            )}
+          </div>
+        )}
+
         <button type="button" onClick={() => setShowBlocks((v) => !v)}>
           {showBlocks ? "Ocultar SourceBlocks" : "Ver SourceBlocks (SRC-XXX)"}
         </button>
         {showBlocks && (
           <ul className="grounding-panel__blocks">
             {canonical.source_blocks.map((block) => (
-              <li key={block.source_ref}>
+              <li
+                key={block.source_ref}
+                className={
+                  activeSceneRefs?.includes(block.source_ref)
+                    ? "grounding-panel__block-row--active"
+                    : undefined
+                }
+              >
                 <code>{block.source_ref}</code>
                 <span className="grounding-panel__block-type">{block.block_type}</span>
                 <span className="grounding-panel__block-lines">

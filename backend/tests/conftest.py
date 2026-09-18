@@ -43,9 +43,15 @@ def content_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def client(content_dir: Path) -> TestClient:
+def client(content_dir: Path, tmp_path: Path) -> TestClient:
     def _override_settings() -> Settings:
-        return Settings(content_dir=str(content_dir))
+        return Settings(
+            content_dir=str(content_dir),
+            # Aísla la cache de LessonPlans (Fase 3) del volumen real
+            # ./data/lesson-cache: cada test usa su propio tmp_path, nunca
+            # toca el filesystem del host ni deja estado entre tests.
+            lesson_cache_dir=str(tmp_path / "lesson-cache"),
+        )
 
     app.dependency_overrides[get_settings] = _override_settings
     with TestClient(app) as test_client:
