@@ -7,9 +7,11 @@ no esté en ese contenido. Ver [`CLAUDE.md`](./CLAUDE.md) para el contrato
 completo del proyecto y [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **Fase actual: Fase 1** — catálogo de cursos, detalle de curso y aula
-> virtual básica, sobre una API REST de solo lectura. Sin integración de
-> LLM, TTS, generación de slides ni exámenes todavía.
+> **Fase actual: Fase 2** — catálogo de cursos, detalle de curso, aula
+> virtual básica, y un modelo canónico de contenido 100% determinístico
+> (SourceBlocks + Grounding Packet) listo para una futura integración de
+> LLM. Sin llamadas reales a LLM, TTS, generación de slides ni exámenes
+> todavía.
 
 ## Requisitos
 
@@ -62,6 +64,9 @@ docker compose run --rm backend pytest
 
 # Build de producción del frontend (type-check + bundle)
 docker compose run --rm frontend npm run build
+
+# Inspeccionar el Grounding Packet determinístico de un tópico (Fase 2)
+curl http://localhost:8000/api/courses/demo-curso-ia/modules/arquitecturas/topics/patrones-tecnicos/grounding
 
 # Logs en vivo
 docker compose logs -f backend

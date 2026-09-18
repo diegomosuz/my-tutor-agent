@@ -47,6 +47,20 @@ Cualquier funcionalidad que implique generación de contenido (resúmenes,
 diagramas, slides, narración, preguntas, exámenes) debe poder justificarse
 citando o derivando directamente del Markdown de origen.
 
+**Regla de trazabilidad (Fase 2 en adelante):**
+
+> Every LLM-generated pedagogical assertion must ultimately be traceable to
+> one or more valid SourceBlock references.
+
+En la práctica: toda afirmación pedagógica generada por el LLM debe poder
+señalar la(s) referencia(s) `SRC-XXX` del `CanonicalTopicContent` de las
+que se deriva, y esas referencias deben validarse contra los
+`source_blocks` reales del tópico con `validate_source_refs` /
+`assert_valid_source_refs` (ver `backend/app/services/canonical.py`) antes
+de aceptar la respuesta como válida. Una respuesta que cite una referencia
+inexistente, o que no cite ninguna referencia, no debe considerarse
+confiable. Esta validación es puramente determinística (no usa un LLM).
+
 ## 3. Stack tecnológico
 
 - **Frontend**: React + TypeScript + Vite
@@ -117,7 +131,56 @@ Reglas de interpretación:
 - El contenido Markdown se devuelve **sin modificar** (no se convierte a
   HTML ni se resume en el backend).
 
-## 6. Proveedores LLM (preparado, no implementado en Fase 1)
+## 6. Modelo canónico y Grounding Packet (Fase 2)
+
+El Markdown de un tópico se transforma, de forma **100% determinística**
+(sin ningún LLM involucrado), en un modelo canónico usado para preparar el
+contexto que en una fase futura recibirá un LLM:
+
+```
+Markdown (sin frontmatter)
+    ↓  app/services/canonical.py (markdown-it-py, determinístico)
+SourceBlocks (SRC-001, SRC-002, ...)
+    ↓
+CanonicalTopicContent (+ content_sha256)
+    ↓  build_grounding_packet(...)
+Grounding Packet (texto plano)
+    ↓  (fase futura)
+LLM
+```
+
+Piezas clave (`backend/app/services/canonical.py`,
+`backend/app/models/schemas.py`):
+
+- **`SourceBlock`**: unidad canónica de contenido (heading, paragraph,
+  list, code, table, blockquote, image, horizontal_rule, other), con
+  `source_ref` estable (`SRC-001`, `SRC-002`, ...) asignado según el orden
+  real del documento, `markdown` (texto fuente literal, nunca reformulado),
+  `plain_text` (representación auxiliar sin sintaxis Markdown),
+  `heading_path` (jerarquía de headings vigente) y `start_line`/`end_line`
+  (numeración humana, 1-indexada, sobre el Markdown sin frontmatter).
+- **`CanonicalTopicContent`**: agrupa todos los `SourceBlock` de un tópico
+  junto con `raw_markdown` y `content_sha256` (SHA-256 del Markdown
+  pedagógico exacto en UTF-8; cambia si y solo si cambia el contenido, sin
+  usar timestamps).
+- **`build_grounding_packet(...)`**: genera el texto determinístico
+  `=== AUTHORIZED SOURCE: TOPIC === ... === END AUTHORIZED SOURCE ===` que
+  será el único contexto pedagógico entregado a un LLM. Cada sección
+  `[SRC-XXX]` contiene exclusivamente Markdown fuente; la aplicación nunca
+  inyecta explicaciones ni instrucciones de prompting dentro de esas
+  secciones.
+- **`validate_source_refs` / `assert_valid_source_refs`**: utilidades para
+  detectar referencias `SRC-XXX` inexistentes (ver regla de trazabilidad en
+  la sección 2). Se usarán en la fase de integración real del LLM para
+  rechazar respuestas que citen fuentes que no existen.
+
+Expuesto en la API (ver sección 9 / `docs/ARCHITECTURE.md`):
+`GET .../topics/{topic_id}` incluye un campo `canonical` (resumen: hash +
+bloques); `GET .../topics/{topic_id}/grounding` es un endpoint de
+inspección/desarrollo que devuelve el Grounding Packet completo (sin
+secretos).
+
+## 7. Proveedores LLM (preparado, no implementado en Fase 1)
 
 El backend está preparado para soportar múltiples proveedores mediante una
 interfaz común (`backend/app/services/llm_provider.py`):
@@ -143,7 +206,7 @@ VOICE_PROVIDER=browser
 **Regla dura**: las API keys nunca deben llegar al navegador. Todo llamado
 a un proveedor LLM ocurre exclusivamente desde el backend.
 
-## 7. Convenciones
+## 8. Convenciones
 
 - Backend en español para nombres de dominio de negocio cuando aporte
   claridad (cursos, módulos, tópicos), pero código, nombres de funciones y
@@ -153,16 +216,22 @@ a un proveedor LLM ocurre exclusivamente desde el backend.
   contrato de la API. Los tipos TypeScript en
   `frontend/src/types/api.ts` deben mantenerse como espejo manual de esos
   modelos.
-- No convertir ni transformar el Markdown en el backend; el frontend es
-  responsable del renderizado (actualmente con `react-markdown` +
-  `remark-gfm`).
+- El backend no reformula, resume ni corrige el contenido pedagógico. El
+  parseo canónico (`app/services/canonical.py`) es una transformación
+  puramente sintáctica y determinística (segmentación en bloques), no una
+  reescritura de contenido; el `content_markdown` que consume el frontend
+  para renderizar (con `react-markdown` + `remark-gfm`) sigue siendo el
+  Markdown original sin ninguna alteración.
 - Toda ruta de filesystem se resuelve enumerando directorios reales, nunca
-  concatenando input de usuario directamente (ver sección 5).
+  concatenando input de usuario directamente (ver sección 5). Lo mismo
+  aplica al modelo canónico: nunca acepta una ruta de archivo desde HTTP,
+  siempre resuelve curso/módulo/tópico a través del repositorio seguro
+  existente antes de parsear.
 - Tests de backend con `pytest`, usando `TestClient` de FastAPI y
   `app.dependency_overrides` para inyectar un `content_dir` de prueba
   (ver `backend/tests/conftest.py`).
 
-## 8. Comandos principales
+## 9. Comandos principales
 
 Todo el entorno corre encapsulado en Docker. No se requiere Python ni Node
 instalados en el host.
@@ -178,6 +247,9 @@ docker compose logs -f frontend
 # Correr los tests del backend dentro del container
 docker compose run --rm backend pytest
 
+# Solo los tests del modelo canónico / grounding (Fase 2)
+docker compose run --rm backend pytest tests/test_canonical.py tests/test_grounding.py
+
 # Build de producción del frontend (verificación de tipos + bundle)
 docker compose run --rm frontend npm run build
 
@@ -191,11 +263,17 @@ URLs en desarrollo:
 - Docs interactivas (Swagger): http://localhost:8000/docs
 - Frontend: http://localhost:5173
 
-## 9. Estado de fases
+## 10. Estado de fases
 
-Ver `docs/ROADMAP.md` para el detalle de fases futuras. **Fase 1** (esta
-entrega) implementa únicamente: catálogo de cursos, detalle de curso, aula
-virtual básica (sin LLM, sin TTS, sin generación de slides/preguntas/
-exámenes) y la API REST de lectura de contenido. Cualquier trabajo futuro
-debe respetar este documento y actualizar la sección correspondiente del
-roadmap al avanzar de fase.
+Ver `docs/ROADMAP.md` para el detalle de fases futuras.
+
+- **Fase 1** (completa): catálogo de cursos, detalle de curso, aula virtual
+  básica (sin LLM, sin TTS, sin generación de slides/preguntas/exámenes) y
+  la API REST de lectura de contenido.
+- **Fase 2** (completa): modelo canónico de contenido 100% determinístico
+  (`SourceBlock`, `CanonicalTopicContent`), Grounding Packet, validación de
+  referencias `SRC-XXX`, endpoint de inspección `/grounding`. Sigue sin
+  existir ninguna llamada real a un LLM.
+
+Cualquier trabajo futuro debe respetar este documento y actualizar la
+sección correspondiente del roadmap al avanzar de fase.

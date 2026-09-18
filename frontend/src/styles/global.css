@@ -647,6 +647,107 @@ p {
   color: var(--color-text-faint);
 }
 
+/* ---------- Panel de grounding (solo modo desarrollo) ---------- */
+
+.grounding-panel {
+  margin-top: 20px;
+  background: #fbfaf8;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  padding: 4px 16px;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+}
+
+.grounding-panel summary {
+  cursor: pointer;
+  padding: 10px 0;
+  font-weight: 600;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.grounding-panel__badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  color: #fff;
+  background: var(--color-primary);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.grounding-panel__body {
+  padding: 4px 0 14px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.grounding-panel__hint {
+  margin: 10px 0;
+}
+
+.grounding-panel__body button {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.grounding-panel__body button:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.grounding-panel__blocks {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.grounding-panel__blocks li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.grounding-panel__blocks code {
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.grounding-panel__block-type {
+  text-transform: uppercase;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--color-text-faint);
+}
+
+.grounding-panel__block-lines {
+  color: var(--color-text-faint);
+}
+
+.grounding-panel__block-path {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
 /* ---------- Barra de controles ---------- */
 
 .controls-bar {

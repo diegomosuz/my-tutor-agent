@@ -12,6 +12,8 @@ from pathlib import Path
 import frontmatter
 
 from app.models.schemas import (
+    CanonicalInfo,
+    CanonicalTopicContent,
     CourseDetail,
     CourseSummary,
     ModuleSummary,
@@ -19,6 +21,7 @@ from app.models.schemas import (
     TopicResponse,
     TopicSummary,
 )
+from app.services import canonical as canonical_service
 from app.services.naming import extract_order, humanize, slugify
 
 
@@ -155,15 +158,22 @@ def get_course_detail(content_path: Path, course_id: str) -> CourseDetail:
     )
 
 
-def get_topic(
+def _resolve_topic(
     content_path: Path, course_id: str, module_id: str, topic_id: str
-) -> TopicResponse:
+) -> tuple[Path, Path, Path]:
     course_dir = _find_course_dir(content_path, course_id)
     module_dir = _find_module_dir(course_dir, module_id)
     topic_file = _find_topic_file(module_dir, topic_id)
+    return course_dir, module_dir, topic_file
 
-    metadata_raw, raw_markdown = _read_topic_frontmatter(topic_file)
-    post = frontmatter.loads(raw_markdown)
+
+def _topic_metadata_and_content(topic_file: Path) -> tuple[TopicMetadata, str]:
+    """Lee el archivo del tópico y separa frontmatter (metadata) de
+    contenido pedagógico (Markdown sin frontmatter). Tolerante a la
+    ausencia de frontmatter.
+    """
+    metadata_raw, raw_full = _read_topic_frontmatter(topic_file)
+    post = frontmatter.loads(raw_full)
 
     title = metadata_raw.get("title") or humanize(topic_file.stem)
     order = metadata_raw.get("order")
@@ -171,15 +181,86 @@ def get_topic(
         order = extract_order(topic_file.name)
     description = metadata_raw.get("description") or ""
 
+    topic_metadata = TopicMetadata(title=str(title), order=order, description=str(description))
+    return topic_metadata, post.content
+
+
+def get_topic(
+    content_path: Path, course_id: str, module_id: str, topic_id: str
+) -> TopicResponse:
+    course_dir, module_dir, topic_file = _resolve_topic(
+        content_path, course_id, module_id, topic_id
+    )
+    topic_metadata, content_markdown = _topic_metadata_and_content(topic_file)
+
     course_summary = _build_course_summary(course_dir)
     module_summary = _build_module_summary(module_dir)
-    topic_summary = TopicSummary(id=slugify(topic_file.stem), title=str(title), order=order)
-    topic_metadata = TopicMetadata(title=str(title), order=order, description=str(description))
+    topic_summary = TopicSummary(
+        id=slugify(topic_file.stem), title=topic_metadata.title, order=topic_metadata.order
+    )
+
+    canonical = canonical_service.build_canonical_topic(
+        course_id=course_summary.id,
+        module_id=module_summary.id,
+        topic_id=topic_summary.id,
+        metadata=topic_metadata,
+        raw_markdown=content_markdown,
+    )
 
     return TopicResponse(
         course=course_summary,
         module=module_summary,
         topic=topic_summary,
         metadata=topic_metadata,
-        content_markdown=post.content,
+        content_markdown=content_markdown,
+        canonical=CanonicalInfo(
+            content_sha256=canonical.content_sha256,
+            source_block_count=canonical.source_block_count,
+            source_blocks=canonical.source_blocks,
+        ),
     )
+
+
+def get_canonical_topic(
+    content_path: Path, course_id: str, module_id: str, topic_id: str
+) -> CanonicalTopicContent:
+    """Construye el `CanonicalTopicContent` completo (incluyendo
+    raw_markdown) de un tópico. Usado por el endpoint de inspección
+    /grounding y disponible para uso interno en fases futuras (validación
+    de respuestas LLM, etc.)."""
+    course_dir, module_dir, topic_file = _resolve_topic(
+        content_path, course_id, module_id, topic_id
+    )
+    topic_metadata, content_markdown = _topic_metadata_and_content(topic_file)
+    return canonical_service.build_canonical_topic(
+        course_id=slugify(course_dir.name),
+        module_id=slugify(module_dir.name),
+        topic_id=slugify(topic_file.stem),
+        metadata=topic_metadata,
+        raw_markdown=content_markdown,
+    )
+
+
+def get_grounding_packet(
+    content_path: Path, course_id: str, module_id: str, topic_id: str
+) -> tuple[CanonicalTopicContent, str]:
+    """Devuelve el `CanonicalTopicContent` de un tópico junto con su
+    Grounding Packet ya renderizado como texto determinístico."""
+    course_dir, module_dir, topic_file = _resolve_topic(
+        content_path, course_id, module_id, topic_id
+    )
+    topic_metadata, content_markdown = _topic_metadata_and_content(topic_file)
+    canonical = canonical_service.build_canonical_topic(
+        course_id=slugify(course_dir.name),
+        module_id=slugify(module_dir.name),
+        topic_id=slugify(topic_file.stem),
+        metadata=topic_metadata,
+        raw_markdown=content_markdown,
+    )
+    packet = canonical_service.build_grounding_packet(
+        canonical,
+        course_title=humanize(course_dir.name),
+        module_title=humanize(module_dir.name),
+        topic_title=topic_metadata.title,
+    )
+    return canonical, packet

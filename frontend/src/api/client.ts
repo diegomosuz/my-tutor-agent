@@ -1,4 +1,9 @@
-import type { CourseDetail, CourseSummary, TopicResponse } from "../types/api";
+import type {
+  CourseDetail,
+  CourseSummary,
+  GroundingResponse,
+  TopicResponse,
+} from "../types/api";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
@@ -31,5 +36,11 @@ export const api = {
   getTopic: (courseId: string, moduleId: string, topicId: string) =>
     request<TopicResponse>(
       `/api/courses/${courseId}/modules/${moduleId}/topics/${topicId}`
+    ),
+  // Herramienta de inspección/desarrollo (ver panel "Información de
+  // grounding" en ClassroomPage, visible solo en modo desarrollo).
+  getTopicGrounding: (courseId: string, moduleId: string, topicId: string) =>
+    request<GroundingResponse>(
+      `/api/courses/${courseId}/modules/${moduleId}/topics/${topicId}/grounding`
     ),
 };

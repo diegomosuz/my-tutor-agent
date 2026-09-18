@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, ApiError } from "../api/client";
 import { Breadcrumb } from "../components/Breadcrumb";
+import { GroundingPanel } from "../components/GroundingPanel";
 import type { CourseDetail, TopicResponse } from "../types/api";
 
 const SUGGESTIONS = [
@@ -204,6 +205,8 @@ export function ClassroomPage() {
             </div>
           </div>
         </div>
+
+        {topic && <GroundingPanel canonical={topic.canonical} />}
 
         <div className="assistant-panel">
           <div className="assistant-panel__header">

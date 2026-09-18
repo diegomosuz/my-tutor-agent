@@ -36,10 +36,33 @@ export interface TopicMetadata {
   description: string;
 }
 
+export interface SourceBlock {
+  source_ref: string;
+  block_type: string;
+  markdown: string;
+  plain_text: string;
+  heading_path: string[];
+  start_line: number;
+  end_line: number;
+}
+
+export interface CanonicalInfo {
+  content_sha256: string;
+  source_block_count: number;
+  source_blocks: SourceBlock[];
+}
+
 export interface TopicResponse {
   course: CourseSummary;
   module: ModuleSummary;
   topic: TopicSummary;
   metadata: TopicMetadata;
   content_markdown: string;
+  canonical: CanonicalInfo;
+}
+
+export interface GroundingResponse {
+  content_sha256: string;
+  source_block_count: number;
+  grounding_packet: string;
 }
