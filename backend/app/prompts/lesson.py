@@ -56,7 +56,51 @@ from app.models.lesson import GeneratedLessonBody
 # VisualPlan ya generado, nunca interpretan el Markdown fuente). Invalida
 # por diseño la cache de lesson-v3.1 (que se conserva intacta en el
 # filesystem, igual que la de lesson-v3).
-LESSON_PROMPT_VERSION = "lesson-v3.2"
+# v3.2 -> v3.2.1 (v1.2.0, mismo bloque "Visual Selection Reliability" —
+# corrección de un hallazgo real post-QA, no un bloque nuevo): la matriz
+# semántica de REGLA 14 solo desambiguaba "hierarchy" contra "process"
+# (orden temporal), nunca contra "comparison" — una lista de entidades
+# PARES que comparten una categoría o familia común (p.ej. "estos son los
+# niveles de X"), pero se diferencian por atributos comparables, caía
+# sistemáticamente en "hierarchy" por descarte, aunque nunca hubiera una
+# relación real de contención. Confirmado con un caso real de QA
+# (`modulo-1-modelos`): 3/3 generaciones lesson-v3.2 eligieron "hierarchy"
+# con 0 edges o edges "depends_on" (ninguna "contains"/"part_of"), pese a
+# que el Markdown fuente presenta 3 entidades hermanas contrastadas por
+# velocidad/calidad/costo — la generación baseline "lesson-v3" ya elegía
+# correctamente "comparison" con una tabla real. Se agrega una exclusión
+# explícita en la definición de "hierarchy" (compartir categoría no es lo
+# mismo que contención) y se amplía "comparison" para cubrir explícitamente
+# 3 o más entidades pares, no solo contrastes de 2 lados. Se agrega una
+# segunda validación determinística en lesson_validation.py (además de la
+# de "flows_to" ya existente): una "hierarchy" con edges declaradas pero
+# NINGUNA "contains"/"part_of" (p.ej. solo "depends_on"/"relates_to") se
+# rechaza con reason_code "visual_semantic_mismatch_hierarchy_relation".
+# Deliberadamente NO se valida el caso más común (nodes sin ninguna edge):
+# eso es indistinguible, a nivel de VisualPlan, de una jerarquía legítima
+# sin relaciones expresadas (HierarchyVisual ya la renderiza correctamente
+# como lista plana) — corregirlo depende exclusivamente del prompt.
+#
+# QA real post-corrección (misma versión, antes de commitear): la primera
+# redacción de la exclusión (agregada al FINAL del bullet de "hierarchy")
+# NO cambió el resultado en 2/2 generaciones frescas reales — seguían
+# eligiendo "hierarchy" con nodes sin edges. Causa identificada: el bullet
+# todavía abría con el ejemplo "estos son los componentes de X" como señal
+# válida de "hierarchy" (sin exigir contención real), y el modelo llegaba
+# a esa conclusión ANTES de leer la exclusión, agregada después. Se
+# reescribió el bullet para que la pregunta distintiva ("¿contención real
+# o simplemente categoría compartida?") sea LO PRIMERO que el modelo lee,
+# con un ejemplo genérico resuelto en el momento ("Nivel 1/2/3 de una
+# familia, contrastados por velocidad y costo" -> "comparison"), y se quitó
+# "estos son los componentes de X" como disparador aislado de "hierarchy".
+# Resultado no revalidado con una tercera corrida limpia por alta tasa de
+# fallas `invalid_contract` del proveedor en esta sesión de QA (ver
+# docs/VISUAL_SELECTION.md sección de este hallazgo para el detalle
+# completo, incluida la limitación de no haber podido confirmar el fix con
+# más muestras). Ningún visual_type nuevo, ningún cambio de contrato
+# Pydantic. Invalida por diseño la cache de lesson-v3.2 (que se conserva
+# intacta, igual que lesson-v3.1/lesson-v3 entre sí).
+LESSON_PROMPT_VERSION = "lesson-v3.2.1"
 
 
 SYSTEM_PROMPT = """Sos un tutor experto y diseñador instruccional (instructional designer) que transforma material de un curso técnico en una clase estructurada para un aula virtual.
@@ -121,18 +165,18 @@ Las escenas de tipo "reflection" (sin expected_answer obligatorio) siguen siendo
 REGLA 14 — ELEGIR visual_type POR ESTRUCTURA, NUNCA POR VARIAR
 Matriz semántica de referencia rápida (no son categorías nuevas — resume el criterio detallado que sigue abajo; usala para decidir rápido, y el detalle de cada tipo para resolver casos límite):
   - secuencia temporal / pasos ordenados / "primero...luego...finalmente" / dependencia causal entre pasos -> "process"
-  - composición sin orden temporal ("contiene", "se compone de", categoría/subcategoría) -> "hierarchy"
+  - composición REAL sin orden temporal: un elemento CONTIENE o se COMPONE DE otros, relación padre→hijo genuina (no solo una categoría o familia compartida) -> "hierarchy"
   - componentes técnicos con conexiones reales entre ellos (sistema) -> "architecture"
   - relaciones conceptuales (no técnicas) entre ideas -> "concept_map"
-  - dos o más alternativas/situaciones CONTRASTADAS explícitamente (ambos lados presentes en la fuente) -> "comparison"
+  - dos o más alternativas/situaciones/entidades PARES (ninguna contiene a la otra) CONTRASTADAS explícitamente por atributos compartidos — pueden ser 2 lados o 3 o más entidades hermanas, incluso si comparten una misma categoría o familia -> "comparison"
   - datos tabulares reales cuyo propósito central es CONSULTAR filas/columnas -> "table"
   - esos mismos datos tabulares, cuando su propósito central es CONTRASTAR alternativas -> "comparison" en modo tabla (mismo dato, mejor herramienta)
   - código real citable -> "code"; imagen real citable -> "image"; definición/cita textual -> "quote"
   - explicación declarativa simple, sin ninguna de las estructuras anteriores -> "bullets"/"hero"/"none"
 Elegí visual_type según lo que el material realmente expresa en esa parte, nunca para "dar variedad visual" a la clase:
 - "process": el criterio PRIORITARIO es la presencia de orden/dependencia TEMPORAL explícita en la fuente — "Paso 1", "Paso 2"...; "primero"/"luego"/"después"/"finalmente"; "A ocurre antes que B"; una relación tipo "sigue a" o "flows_to"; un flujo secuencial donde el resultado de un paso alimenta al siguiente. Si encontrás esta señal, usá "process" AUNQUE el mismo contenido también pueda leerse como una descomposición o clasificación — el orden temporal manda sobre la composición. Completá "process_steps" (2 a 8 pasos, cada uno con "label" breve y "detail" opcional) — nunca inventes un paso que la fuente no describe.
-- "hierarchy": para relación padre/hijos SIN orden temporal — "contiene", "se compone de", "categorías y subcategorías", "estos son los componentes de X". Si dudás entre "process" y "hierarchy" para el mismo contenido, preguntate: ¿hay una secuencia en la que el orden importa (esto tiene que pasar antes que aquello)? Si sí, es "process". Si es simplemente "estas son las partes de X, sin que unas ocurran antes que otras", es "hierarchy". Completá "nodes" (2 a 8, con "id" corto y estable, "label", "description" opcional, "role" opcional) para representar cada hijo — el renderer usa "nodes" como fuente primaria cuando vienen poblados, no solo "key_points". Si además hay una relación padre/hijo clara entre un nodo raíz y el resto, expresala con "edges" (relation_type "contains" o "part_of") — NUNCA uses "flows_to" en una escena "hierarchy": si la relación real entre los nodos es "flows_to", eso significa que la escena es "process", no "hierarchy" (se valida automáticamente: una "hierarchy" cuyas edges son todas "flows_to" se rechaza). Si no hay una raíz clara, dejá "edges" vacío y usá solamente "nodes" como lista de hijos.
-- "comparison": usalo cuando la fuente presente dos o más elementos, enfoques o situaciones CONTRASTADAS explícitamente — no hace falta que aparezca literalmente la palabra "vs"/"versus"/"comparación": contrastes como antes/después, incorrecto/correcto, actual/propuesto, actual/futuro, opción A/opción B, alternativa 1/alternativa 2, modelo A/modelo B, o ventajas/desventajas de algo también son "comparison" si la fuente realmente desarrolla AMBOS lados. Nunca inventes el lado que falta: si la fuente solo describe un enfoque sin contraponerlo a otro, no es "comparison". Cuando ambos lados de un contraste estén respaldados por source_refs, preferí UNA sola escena "comparison" en vez de partir cada lado en su propia escena — ver REGLA 20. Completá "comparison": "column_labels" (2 a 4 etiquetas cortas, una por lado contrastado) y elegí UNA de estas dos formas de dar contenido real (nunca dejes las dos vacías):
+- "hierarchy": ANTES de elegir "hierarchy" para cualquier contenido, respondé primero esta pregunta — ¿uno de estos elementos CONTIENE genuinamente a los demás (relación real padre→hijo, X contiene a Y / Y es parte de X), o son entidades PARES/HERMANAS que simplemente comparten una categoría o familia común? Si son PARES/HERMANAS — aunque la fuente los agrupe bajo un mismo nombre de familia, los llame "niveles"/"variantes"/"tipos"/"categorías" de X, o describa a cada uno con su propia lista de características (una especie de "estos son los componentes/atributos de cada uno") — y se diferencian entre sí por atributos comparables (velocidad, costo, calidad, alcance, capacidad, etc.), la elección correcta es "comparison", NUNCA "hierarchy", sin importar cuántas entidades sean (aplica igual con 3 o más, no solo 2 — ver la definición de "comparison" más abajo). Ejemplo genérico: "Nivel 1, Nivel 2 y Nivel 3 de una misma familia de productos, cada uno descrito por su propia velocidad y costo" son entidades PARES contrastadas por atributos -> "comparison", NO "hierarchy", aun cuando la fuente los presente juntos como "los niveles de la familia X". Recién cuando la respuesta a la pregunta inicial es "sí, hay una contención real" seguís acá: "hierarchy" es para relación padre/hijos SIN orden temporal — "contiene", "se compone de", "categorías y subcategorías". Si dudás entre "process" y "hierarchy" para el mismo contenido, preguntate: ¿hay una secuencia en la que el orden importa (esto tiene que pasar antes que aquello)? Si sí, es "process". Si es simplemente "estas son las partes de X, sin que unas ocurran antes que otras", y ya confirmaste que hay contención real (no solo categoría compartida), es "hierarchy". Completá "nodes" (2 a 8, con "id" corto y estable, "label", "description" opcional, "role" opcional) para representar cada hijo — el renderer usa "nodes" como fuente primaria cuando vienen poblados, no solo "key_points". Si además hay una relación padre/hijo clara entre un nodo raíz y el resto, expresala con "edges" (relation_type "contains" o "part_of", las ÚNICAS que expresan contención real en "hierarchy") — NUNCA uses "flows_to" en una escena "hierarchy": si la relación real entre los nodos es "flows_to", eso significa que la escena es "process", no "hierarchy" (se valida automáticamente: una "hierarchy" cuyas edges son todas "flows_to" se rechaza, igual que una "hierarchy" con edges pero ninguna "contains"/"part_of"). Si no hay una raíz clara, dejá "edges" vacío y usá solamente "nodes" como lista de hijos.
+- "comparison": usalo cuando la fuente presente dos o más elementos, enfoques, situaciones o entidades PARES CONTRASTADAS explícitamente — no hace falta que aparezca literalmente la palabra "vs"/"versus"/"comparación": contrastes como antes/después, incorrecto/correcto, actual/propuesto, actual/futuro, opción A/opción B, alternativa 1/alternativa 2, modelo A/modelo B, o ventajas/desventajas de algo también son "comparison" si la fuente realmente desarrolla AMBOS lados. También aplica cuando la fuente presenta 3 O MÁS entidades PARES (mismo nivel — ninguna es una subcategoría o parte de otra) diferenciadas por atributos compartidos, incluso si todas pertenecen a una misma categoría o familia común (p.ej. "Nivel 1/Nivel 2/Nivel 3" o "Opción A/Opción B/Opción C", cada una descrita por velocidad/costo/calidad u otro atributo compartido) — el contraste no tiene que ser exactamente entre 2 lados. Nunca inventes el lado que falta: si la fuente solo describe un enfoque sin contraponerlo a otro, no es "comparison". Cuando ambos lados de un contraste estén respaldados por source_refs, preferí UNA sola escena "comparison" en vez de partir cada lado en su propia escena — ver REGLA 20. Completá "comparison": "column_labels" (2 a 4 etiquetas cortas, una por lado/entidad contrastada) y elegí UNA de estas dos formas de dar contenido real (nunca dejes las dos vacías):
   (a) si la fuente da suficiente detalle fila por fila (p.ej. una tabla, incluso si es una tabla Markdown real — ver la nota de "table" más abajo), completá "rows" (cada fila con la misma cantidad de valores que columnas);
   (b) si es más una comparación conceptual sin filas claras (p.ej. "antes: X, Y" vs "después: Z, W"), completá "columns" — un objeto por columna con "title" (igual a la etiqueta de esa columna) y "points" (los puntos que corresponden EXCLUSIVAMENTE a esa columna, nunca repitiendo entre columnas los mismos puntos).
 - "architecture": SOLO para sistemas/componentes técnicos con relaciones reales entre ellos en la fuente. Completá "nodes" (2 a 8, con "id" corto y estable, "label", "description" opcional, "role" opcional) y "edges" (from_id/to_id apuntando a ids de "nodes" ya declarados, "relation_type" del enum cerrado, "label" opcional). NUNCA inventes una conexión entre dos componentes que la fuente no establece explícitamente — si no hay relaciones claras, usá "hierarchy" o "bullets" en su lugar.

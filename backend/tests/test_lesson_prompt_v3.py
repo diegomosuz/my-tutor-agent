@@ -5,17 +5,20 @@ de imágenes/código + ajuste quirúrgico v1.2.0 bloque "Visual Fidelity"
 (lesson-v3.1): desambiguación process/hierarchy, detección de comparison,
 densidad más estricta + bloque "Visual Selection Reliability"
 (lesson-v3.2): matriz semántica explícita, consolidación de fragmentos
-comparativos en una escena, distinción table-vs-comparison.
-LESSON_PROMPT_VERSION avanzó a "lesson-v3.2" (invalida la cache de
-"lesson-v3.1", que sigue existiendo intacta en el filesystem, igual que
-"lesson-v3")."""
+comparativos en una escena, distinción table-vs-comparison + corrección
+post-QA del mismo bloque (lesson-v3.2.1): "hierarchy" ya no se confunde con
+"comparison" ante entidades pares/hermanas que comparten una categoría
+común (ver docs/VISUAL_SELECTION.md, hallazgo real de `modulo-1-modelos`).
+LESSON_PROMPT_VERSION avanzó a "lesson-v3.2.1" (invalida la cache de
+"lesson-v3.2", que sigue existiendo intacta en el filesystem, igual que
+"lesson-v3.1"/"lesson-v3")."""
 from __future__ import annotations
 
 from app.prompts.lesson import LESSON_PROMPT_VERSION, SYSTEM_PROMPT
 
 
-def test_lesson_prompt_version_is_v3_2():
-    assert LESSON_PROMPT_VERSION == "lesson-v3.2"
+def test_lesson_prompt_version_is_v3_2_1():
+    assert LESSON_PROMPT_VERSION == "lesson-v3.2.1"
 
 
 def test_system_prompt_mentions_comprehension_check_guidance():
@@ -195,3 +198,43 @@ def test_correction_message_strips_reason_code_marker_before_reaching_llm():
     message = build_correction_message(problems)
     assert "[visual_semantic_mismatch_process]" not in message["content"]
     assert "TODAS sus edges son 'flows_to'" in message["content"]
+
+
+# --------------------------------------------------------------------------
+# v1.2.0.1 -- corrección post-QA del bloque "Visual Selection Reliability":
+# "hierarchy" no debe elegirse solo porque varias entidades comparten una
+# categoría o familia común (PARTE 2/3/4 de la especificación de corrección;
+# hallazgo real: `modulo-1-modelos`, 3/3 generaciones eligieron "hierarchy"
+# para 3 entidades pares contrastadas por velocidad/calidad/costo).
+# --------------------------------------------------------------------------
+
+
+def test_hierarchy_guidance_excludes_peer_entities_sharing_a_category():
+    assert "la elección correcta es \"comparison\", NUNCA \"hierarchy\"" in SYSTEM_PROMPT
+    assert "PARES/HERMANAS" in SYSTEM_PROMPT
+    assert "¿uno de estos elementos CONTIENE genuinamente a los demás" in SYSTEM_PROMPT
+    # Ejemplo concreto (genérico, sin nombres de modelos/curso reales) que
+    # el modelo debe poder aplicar por analogía a cualquier familia de
+    # entidades pares presentada como "niveles"/"variantes" de X.
+    assert "Nivel 1, Nivel 2 y Nivel 3" in SYSTEM_PROMPT
+    assert "aun cuando la fuente los presente juntos como" in SYSTEM_PROMPT
+
+
+def test_comparison_guidance_explicitly_covers_three_or_more_peer_entities():
+    assert "3 O MÁS entidades PARES" in SYSTEM_PROMPT
+    assert "el contraste no tiene que ser exactamente entre 2 lados" in SYSTEM_PROMPT
+
+
+def test_hierarchy_guidance_restricts_containment_relation_types():
+    assert (
+        "las ÚNICAS que expresan contención real en \"hierarchy\"" in SYSTEM_PROMPT
+    )
+    assert "hierarchy\" con edges pero ninguna \"contains\"/\"part_of\"" in SYSTEM_PROMPT
+
+
+def test_lesson_prompt_v3_2_1_is_effective_cache_version():
+    # D: la versión efectiva es la nueva -- ya cubierto arriba por
+    # test_lesson_prompt_version_is_v3_2_1, repetido acá con nombre
+    # explícito para PARTE 10.D de la especificación de corrección.
+    assert LESSON_PROMPT_VERSION == "lesson-v3.2.1"
+    assert LESSON_PROMPT_VERSION != "lesson-v3.2"

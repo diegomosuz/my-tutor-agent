@@ -465,3 +465,125 @@ def test_F_valid_comparison_is_accepted():
     }
     body = GeneratedLessonBody.model_validate(body_dict)
     validate_lesson_body(body, CANONICAL)  # no debe lanzar
+
+
+# --------------------------------------------------------------------------
+# v1.2.0.1 (mismo bloque "Visual Selection Reliability", corrección post-QA
+# real): "hierarchy" con edges declaradas pero NINGUNA "contains"/"part_of"
+# es una contradicción interna -- las entidades son pares/hermanas
+# (comparadas por atributos, p.ej. "depends_on" usado como sustituto de un
+# contraste ordinal), no una composición real. Fixtures genéricas, sin
+# nombres de modelos/curso reales (PARTE 13 de la especificación original
+# sigue aplicando).
+# --------------------------------------------------------------------------
+
+
+def test_A_hierarchy_with_only_non_containment_edges_is_rejected():
+    body_dict = valid_lesson_body_dict()
+    body_dict["scenes"][0]["visual"] = {
+        "visual_type": "hierarchy",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "nodes": [
+            {"id": "nivel-1", "label": "Nivel 1"},
+            {"id": "nivel-2", "label": "Nivel 2"},
+            {"id": "nivel-3", "label": "Nivel 3"},
+        ],
+        "edges": [
+            {"from_id": "nivel-1", "to_id": "nivel-2", "relation_type": "depends_on"},
+            {"from_id": "nivel-2", "to_id": "nivel-3", "relation_type": "depends_on"},
+        ],
+    }
+    body = GeneratedLessonBody.model_validate(body_dict)
+    with pytest.raises(
+        LessonValidationError, match=r"\[visual_semantic_mismatch_hierarchy_relation\]"
+    ):
+        validate_lesson_body(body, CANONICAL)
+
+
+def test_hierarchy_with_one_containment_edge_among_others_is_not_rejected():
+    # Una sola edge "contains"/"part_of" ya alcanza -- evita falsos
+    # positivos, mismo criterio que _is_purely_sequential.
+    body_dict = valid_lesson_body_dict()
+    body_dict["scenes"][0]["visual"] = {
+        "visual_type": "hierarchy",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "nodes": [
+            {"id": "raiz", "label": "Categoría"},
+            {"id": "hijo-1", "label": "Subcategoría 1"},
+            {"id": "hijo-2", "label": "Subcategoría 2"},
+        ],
+        "edges": [
+            {"from_id": "raiz", "to_id": "hijo-1", "relation_type": "contains"},
+            {"from_id": "hijo-1", "to_id": "hijo-2", "relation_type": "relates_to"},
+        ],
+    }
+    body = GeneratedLessonBody.model_validate(body_dict)
+    validate_lesson_body(body, CANONICAL)  # no debe lanzar
+
+
+def test_hierarchy_without_any_edges_is_still_accepted():
+    # Ambigüedad (sin edges) nunca es tratada como inconsistencia -- ver
+    # docstring de _lacks_containment_edges. Jerarquía plana legítima.
+    body_dict = valid_lesson_body_dict()
+    body_dict["scenes"][0]["visual"] = {
+        "visual_type": "hierarchy",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "nodes": [
+            {"id": "nivel-1", "label": "Nivel 1"},
+            {"id": "nivel-2", "label": "Nivel 2"},
+            {"id": "nivel-3", "label": "Nivel 3"},
+        ],
+        "edges": [],
+    }
+    body = GeneratedLessonBody.model_validate(body_dict)
+    validate_lesson_body(body, CANONICAL)  # no debe lanzar
+
+
+def test_concept_map_with_non_containment_edges_is_not_affected():
+    # La nueva validación es EXCLUSIVA de "hierarchy" -- concept_map no
+    # tiene el mismo contrato de "solo contains/part_of" (sus edges son
+    # relaciones conceptuales generales, relates_to es legítimo ahí).
+    body_dict = valid_lesson_body_dict()
+    body_dict["scenes"][0]["visual"] = {
+        "visual_type": "concept_map",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "nodes": [
+            {"id": "concepto-a", "label": "Concepto A"},
+            {"id": "concepto-b", "label": "Concepto B"},
+        ],
+        "edges": [{"from_id": "concepto-a", "to_id": "concepto-b", "relation_type": "depends_on"}],
+    }
+    body = GeneratedLessonBody.model_validate(body_dict)
+    validate_lesson_body(body, CANONICAL)  # no debe lanzar
+
+
+def test_C_valid_parent_child_hierarchy_with_containment_edges_still_accepted():
+    # Regresión: la jerarquía padre/hijo genuina (ya cubierta por
+    # test_C_valid_parent_child_hierarchy_is_accepted más arriba) sigue
+    # aceptándose sin cambios tras esta corrección.
+    body_dict = valid_lesson_body_dict()
+    body_dict["scenes"][0]["visual"] = {
+        "visual_type": "hierarchy",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "nodes": [
+            {"id": "raiz", "label": "Categoría"},
+            {"id": "hijo-1", "label": "Subcategoría 1"},
+            {"id": "hijo-2", "label": "Subcategoría 2"},
+        ],
+        "edges": [
+            {"from_id": "raiz", "to_id": "hijo-1", "relation_type": "contains"},
+            {"from_id": "raiz", "to_id": "hijo-2", "relation_type": "part_of"},
+        ],
+    }
+    body = GeneratedLessonBody.model_validate(body_dict)
+    validate_lesson_body(body, CANONICAL)  # no debe lanzar

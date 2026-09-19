@@ -218,15 +218,21 @@ parte de la cache key (`content_sha256+provider+model+prompt_version`),
 así que invalida por diseño la cache de `lesson-v3.1` **sin borrarla**
 (sigue existiendo en el filesystem, igual que `lesson-v3` entre sí).
 Actualizado en los 4 puntos de sincronización de siempre (mismo patrón ya
-corregido dos veces antes, ver `VISUAL_FIDELITY.md` sección 6 y el
+corregido tres veces antes, ver `VISUAL_FIDELITY.md` sección 6 y el
 hardening de v1.1.0): `.env`, `.env.example`, `docker-compose.yml`
-(`LESSON_PROMPT_VERSION: ${LESSON_PROMPT_VERSION:-lesson-v3.2}`) y
-`docs/CONFIGURATION.md`. Confirmado en runtime tras un rebuild limpio:
+(`LESSON_PROMPT_VERSION: ${LESSON_PROMPT_VERSION:-lesson-v3.2}` en la
+versión original de este bloque) y `docs/CONFIGURATION.md`. Confirmado en
+runtime tras un rebuild limpio:
 
 ```
 $ curl -s http://localhost:8000/api/ai/status
 {"provider":"openai","model":"gpt-4o-mini","configured":true,"prompt_version":"lesson-v3.2"}
 ```
+
+**Nota**: `lesson-v3.2` se corrigió a `lesson-v3.2.1` en la misma rama,
+antes de aprobar este bloque — ver sección 15. Los 4 puntos de
+sincronización y la verificación de runtime se repitieron para
+`lesson-v3.2.1`.
 
 ## 10. QA dirigido (regeneración real, `claude-foundations-certification`)
 
@@ -240,13 +246,24 @@ curso.
 |---|---|---|---|---|
 | `modulo-2-descomposicion` | `process` | `process` ✅ | `process` ✅ | `process` ✅ |
 | `modulo-1-comparacion` | `comparison` consolidado en 1 escena | `comparison`, 1 escena ✅ | `comparison`, 1 escena ✅ | `comparison` con contenido real, pero además 2 escenas previas que narran cada lado por separado ⚠️ |
-| `modulo-1-modelos` | `hierarchy` (menor variabilidad) | *(intento 1: `invalid_contract`, no relacionado con este bloque — ver abajo)* | `hierarchy` ✅ | `hierarchy` ✅ (+ `hierarchy` ✅ en un run adicional) |
+| `modulo-1-modelos` | `hierarchy` (menor variabilidad) | *(intento 1: `invalid_contract`, no relacionado con este bloque — ver abajo)* | `hierarchy` ⚠️ | `hierarchy` ⚠️ (+ `hierarchy` ⚠️ en un run adicional) |
 | `modulo-2-anatomia` | `hierarchy` | `hierarchy` ✅ | `hierarchy` ✅ | `hierarchy` ✅ |
+
+> **Corrección (sección 15)**: la familia esperada de `modulo-1-modelos`
+> en esta tabla original era **incorrecta** — se validó estabilidad
+> (`hierarchy` repetido) como si fuera corrección semántica, sin releer la
+> fuente real. `modulo-1-modelos` presenta 3 entidades PARES (Haiku/
+> Sonnet/Opus) contrastadas por atributos, no una composición real — la
+> familia correcta es `comparison`, tal como ya elegía la generación
+> baseline `lesson-v3`. Ver sección 15 para el hallazgo completo, la
+> corrección aplicada y sus resultados reales (parciales).
 
 `semantic_selection_accuracy` sobre las generaciones que sí completaron
 (12/12, excluyendo los 2 intentos que fallaron por `invalid_contract`
-antes de llegar a proponer un `visual_type`): **12/12 en la familia
-semántica esperada**. Repetimos: esto es una cifra de QA dirigido sobre 4
+antes de llegar a proponer un `visual_type`): ~~**12/12 en la familia
+semántica esperada**~~ **9/12** una vez corregida la familia esperada de
+`modulo-1-modelos` a `comparison` (los 3 runs de ese tópico en esta tabla
+eran `hierarchy`, los 3 incorrectos). Repetimos: esto es una cifra de QA dirigido sobre 4
 tópicos conocidos, no una tasa de éxito general del sistema.
 
 **`modulo-1-modelos`, nota aparte**: 2 de los 5 intentos totales
@@ -357,3 +374,227 @@ verdes, mismos archivos que antes de este bloque.
   proveedor, no de este mecanismo de validación.
 - El QA de este bloque es dirigido (4 tópicos, hasta 3 corridas), no una
   medición estadística representativa de las 57 tópicos del curso.
+
+## 15. Corrección post-QA: `hierarchy` falso positivo ante entidades pares (`lesson-v3.2.1`)
+
+Hallazgo cerrado sobre la misma rama, antes de aprobar el bloque: el
+reporte final original de este bloque marcó `modulo-1-modelos` como
+"3/3 `hierarchy`, mejora de estabilidad" — un error de análisis, no solo
+de redacción. Se validó *estabilidad* (la misma elección repetida) sin
+volver a leer la fuente real ni compararla contra la semántica que
+`hierarchy` realmente exige. Este bloque queda cerrado sin esa
+confusión.
+
+### 15.1 Semántica real de `modulo-1-modelos`
+
+El Markdown fuente (`08_Modulo_1_modelos.md`) presenta Haiku, Sonnet y
+Opus como **tres entidades pares** ("los distintos NIVELES de modelos de
+la familia Claude, desde... hasta..."), cada una descrita con la MISMA
+estructura de atributos (qué tan rápida es, qué tan capaz, para qué tipo
+de tarea sirve), con referencias cruzadas explícitas entre ellas ("si la
+calidad resulta insuficiente para una tarea compleja, pasa a Opus"; "si
+los requisitos principales son velocidad..., considera Haiku") y una
+tabla real "Perfil de la tarea → Modelo". En ningún punto la fuente
+establece que un modelo CONTIENE, se COMPONE DE o es una subcategoría de
+otro. Es exactamente el patrón que la matriz semántica de este mismo
+bloque (sección 3) define como `comparison`: "dos o más
+alternativas/entidades PARES CONTRASTADAS por atributos compartidos",
+nunca `hierarchy`.
+
+### 15.2 Por qué `hierarchy` era incorrecto (con evidencia real, no solo lectura)
+
+- La generación baseline real `lesson-v3` (cache aún en el filesystem,
+  `data/lesson-cache/0ec6f56e...json`) ya elegía `comparison` para este
+  tópico, con una tabla real de 3 filas (Haiku/Sonnet/Opus) x 2 columnas
+  (Modelo/Características) — evidencia de que el material SÍ se presta a
+  una clasificación correcta.
+- Las generaciones `lesson-v3.2` (antes de esta corrección) producían
+  `hierarchy` con **0 edges** (3 `nodes` pares sin ninguna relación
+  padre/hijo expresada) o, en un run, edges `relation_type="depends_on"`
+  con label `"es menos complejo que"` — una relación ORDINAL/comparativa
+  disfrazada de "dependencia", nunca una relación de contención real.
+  Ninguna de las dos formas satisface la propia definición de
+  `hierarchy` del prompt.
+
+### 15.3 Causa raíz
+
+REGLA 14 (`lesson-v3.2`) desambiguaba `hierarchy` explícitamente contra
+`process` (orden temporal vs. no), pero **nunca contra `comparison`**. El
+único criterio ofrecido para `hierarchy` era la ausencia de orden
+temporal — por descarte, cualquier conjunto de entidades sin secuencia
+temporal explícita (incluyendo entidades pares comparadas por atributos)
+caía en `hierarchy`. Además, el ejemplo "estos son los componentes de X"
+es igual de válido para describir una jerarquía real que para describir
+un conjunto de alternativas comparadas ("estos son los componentes/
+características de cada modelo") — un disparador demasiado permisivo.
+
+### 15.4 Cambio realizado (prompt, genérico — sin nombrar modelos reales)
+
+Dos iteraciones, ambas sobre la definición de `hierarchy`/`comparison` en
+REGLA 14 (`backend/app/prompts/lesson.py`), verificadas con QA real entre
+una y otra:
+
+1. **Primer intento** (agregó una cláusula de exclusión al final del
+   bullet de `hierarchy`, con la pregunta distintiva y una advertencia
+   sobre "niveles/variantes de X"): **no cambió el resultado** en 2/2
+   generaciones frescas reales post-cambio (`hierarchy`, 0 edges, en
+   ambas). Causa: el modelo llegaba a la conclusión "hierarchy" leyendo
+   el ejemplo "estos son los componentes de X" ANTES de leer la
+   exclusión, agregada después en el mismo bullet.
+2. **Segundo intento** (el que queda vigente): se reescribió el bullet
+   para que la pregunta distintiva sea LO PRIMERO que el modelo lee
+   ("¿contención real o simplemente categoría compartida?"), con un
+   ejemplo genérico resuelto en el momento ("Nivel 1, Nivel 2 y Nivel 3
+   de una misma familia de productos, cada uno descrito por su propia
+   velocidad y costo" → `comparison`, no `hierarchy`, "aun cuando la
+   fuente los presente juntos como 'los niveles de la familia X'"), y se
+   quitó "estos son los componentes de X" como disparador aislado de
+   `hierarchy`. También se amplió `comparison` para cubrir
+   explícitamente 3 o más entidades pares (antes los ejemplos eran todos
+   contrastes de 2 lados).
+
+Ningún nombre de modelo real (Claude, Haiku, Sonnet, Opus) ni de curso se
+hardcodeó en el prompt — el ejemplo usa "Nivel 1/2/3 de una familia de
+productos", genérico por diseño.
+
+### 15.5 Validación determinística nueva (parcial, deliberadamente acotada)
+
+`lesson_validation.py` gana una segunda validación de mismatch semántico,
+además de la de `flows_to` ya existente:
+
+```python
+_HIERARCHY_CONTAINMENT_RELATIONS = frozenset({RelationType.contains, RelationType.part_of})
+
+def _lacks_containment_edges(edges: list) -> bool:
+    if not edges:
+        return False
+    return not any(edge.relation_type in _HIERARCHY_CONTAINMENT_RELATIONS for edge in edges)
+```
+
+Si `visual_type == hierarchy` y hay `edges` declaradas pero **ninguna**
+es `contains`/`part_of` (p.ej. solo `depends_on`/`relates_to`/
+`connects_to`), se rechaza con `reason_code`
+`visual_semantic_mismatch_hierarchy_relation`. Mutuamente excluyente con
+el chequeo de `flows_to` existente (vía `elif`, para no reportar dos
+problemas sobre la misma escena).
+
+**Por qué esta validación es parcial, a propósito**: cubre únicamente el
+caso "hay edges, pero ninguna expresa contención" (observado una vez en
+este mismo QA, con `depends_on`). **No cubre el caso más común observado
+en este hallazgo** — `hierarchy` con `nodes` pares y CERO `edges` — porque
+ese estado del `VisualPlan` es estructuralmente idéntico al de una
+jerarquía plana legítima sin relaciones expresadas (confirmado con
+`modulo-2-anatomia` en este mismo QA: 5 `nodes` reales — Rol/Contexto/
+Tarea/Restricciones/Formato de salida — sin ninguna `edge`, un
+`hierarchy` genuinamente correcto). No existe una señal en el propio
+`VisualPlan` que distinga ambos casos sin juzgar el CONTENIDO (los
+`label`/`description` de los nodos) — exactamente el tipo de
+interpretación semántica que este proyecto evita en validaciones de
+código (CLAUDE.md sección 2/6). Se resuelve, para este caso, solo por
+prompt — tal como pedía explícitamente la corrección solicitada.
+
+### 15.6 Prompt version
+
+`lesson-v3.2 → lesson-v3.2.1`. Sincronizado en `.env`, `.env.example`,
+`docker-compose.yml`, `docs/CONFIGURATION.md`; confirmado en runtime:
+
+```
+$ curl -s http://localhost:8000/api/ai/status
+{"provider":"openai","model":"gpt-4o-mini","configured":true,"prompt_version":"lesson-v3.2.1"}
+```
+
+### 15.7 Resultados reales (`run1`/`run2`/`run3`) — estabilidad vs. corrección semántica
+
+**Alta tasa de fallas `invalid_contract` del proveedor durante este QA**
+(9 de 13 intentos totales sobre `modulo-1-modelos` en esta sesión,
+siempre `reason=invalid_contract`, nunca `reason=grounding_invalid` —
+nunca relacionado con la validación nueva). Esto limitó la cantidad de
+muestras reales obtenidas bajo el prompt final a 2, no 3 — se documenta
+en vez de forzar una tercera corrida artificialmente.
+
+| Tópico | Familia esperada (corregida) | Run 1 | Run 2 | ¿Semánticamente correcto? |
+|---|---|---|---|---|
+| `modulo-1-modelos` | `comparison` | `hierarchy`, 3 nodes, 0 edges | `comparison`, tabla real de 3 filas | **1/2 correcto (50%)** |
+| `modulo-2-anatomia` | `hierarchy` (contención real: Rol/Contexto/Tarea/Restricciones/Formato son partes genuinas de un prompt) | `hierarchy`, 5 nodes reales, 0 edges | — (1 sola corrida de revalidación) | **1/1 correcto** |
+| `modulo-2-descomposicion` | `process` | `process`, 4 pasos reales | — | **1/1 correcto** |
+| `modulo-1-comparacion` | `comparison` consolidado en 1 escena | `comparison`, 1 escena, tabla real | — | **1/1 correcto** |
+
+**Estabilidad vs. corrección semántica (PARTE 9 de la corrección
+solicitada)**: antes de este fix, `modulo-1-modelos` era **estable**
+(`hierarchy` en 3/3 generaciones observadas en el QA original de este
+bloque) pero **0% semánticamente correcto**. Después del fix, es **menos
+estable** (1 `hierarchy`, 1 `comparison` en 2 muestras) pero **50%
+semánticamente correcto** — una mejora real en la métrica que importa,
+aunque no una solución completa. Repetir una selección incorrecta nunca
+se cuenta como éxito en esta tabla, tal como pide la corrección: la fila
+de `modulo-1-modelos` muestra explícitamente 1 de 2 corridas como
+incorrecta, no se promedia hacia un "aprobado" implícito.
+
+`modulo-2-anatomia`/`modulo-2-descomposicion`/`modulo-1-comparacion` se
+revalidaron con una corrida cada uno (no 3, para acotar costo dado el
+alcance ya extendido de este QA) y confirman **sin regresión**: mismas
+familias correctas que en el bloque original, incluida la consolidación
+completa en una sola escena para `modulo-1-comparacion` (mejor que 2 de
+las 3 corridas del bloque original).
+
+### 15.8 Métrica corregida
+
+- `semantic_selection_accuracy` original del bloque (sección 10): **12/12
+  (100%)** — cifra INCORRECTA, contaminada por contar `hierarchy`
+  repetido como "correcto" en `modulo-1-modelos` sin verificar contra la
+  fuente.
+- `semantic_selection_accuracy` recalculada con la familia esperada
+  corregida: **9/12 (75%)** sobre el QA original completo (los 3 runs de
+  `modulo-1-modelos` en ese QA eran `hierarchy`, los 3 incorrectos).
+- Sobre el QA de esta corrección (5 muestras nuevas: 2 de
+  `modulo-1-modelos` + 1 de cada uno de los otros 3): **4/5 (80%)**.
+- Ninguna de estas cifras es una métrica estadística representativa del
+  curso completo (57 tópicos) — sigue siendo QA dirigido sobre casos
+  conocidos, tal como aclaran las secciones 10 y 14.
+
+### 15.9 Tests backend nuevos
+
+`backend/tests/test_lesson_visual_content.py`: `hierarchy` con edges
+declaradas pero ninguna `contains`/`part_of` se rechaza
+(`test_A_hierarchy_with_only_non_containment_edges_is_rejected`); una
+sola edge de contención entre varias ya alcanza para no rechazar
+(`test_hierarchy_with_one_containment_edge_among_others_is_not_rejected`);
+`hierarchy` sin ninguna edge sigue aceptándose sin cambios
+(`test_hierarchy_without_any_edges_is_still_accepted`); `concept_map` no
+se ve afectado por esta validación, exclusiva de `hierarchy`
+(`test_concept_map_with_non_containment_edges_is_not_affected`); una
+jerarquía padre/hijo genuina con `contains`/`part_of` sigue aceptándose
+(`test_C_valid_parent_child_hierarchy_with_containment_edges_still_accepted`).
+`backend/tests/test_lesson_prompt_v3.py`: presencia de la guía de
+exclusión de entidades pares
+(`test_hierarchy_guidance_excludes_peer_entities_sharing_a_category`,
+incluido el ejemplo genérico "Nivel 1, Nivel 2 y Nivel 3"); `comparison`
+cubre explícitamente 3+ entidades pares
+(`test_comparison_guidance_explicitly_covers_three_or_more_peer_entities`);
+restricción de relation_type de contención documentada en el prompt
+(`test_hierarchy_guidance_restricts_containment_relation_types`); versión
+efectiva `lesson-v3.2.1`
+(`test_lesson_prompt_v3_2_1_is_effective_cache_version`). 430 tests de
+backend pasando (+9 sobre el cierre original de este bloque).
+
+### 15.10 Frontend
+
+Sin cambios (0 tests de frontend modificados, 348 sin tocar) — smoke
+mínimo real de Classroom sobre `modulo-1-modelos` (4 escenas, incluida la
+escena corregida en modo `comparison`) sin errores de consola.
+
+### 15.11 Deuda abierta, documentada explícitamente
+
+El patrón "`hierarchy` con `nodes` pares y 0 `edges`" para entidades
+comparadas sigue siendo posible (confirmado: persistió incluso tras la
+segunda iteración del prompt, en 1 de 2 muestras finales). No se agregó
+una validación de código para este caso porque no existe una señal
+inequívoca en el `VisualPlan` que lo distinga de una jerarquía plana
+legítima (ver 15.5) — intentar distinguirlos igual requeriría juzgar el
+CONTENIDO de los nodos (p.ej. "¿estos labels describen atributos
+comparables o partes estructurales?"), exactamente el tipo de
+interpretación semántica en código que este proyecto evita. Cualquier
+mejora adicional de este caso específico solo puede venir de seguir
+iterando el prompt (o, en un bloque futuro y fuera de alcance acá, de un
+mecanismo de evaluación semántica explícitamente aceptado como tal — no
+disfrazado de "validación determinística").

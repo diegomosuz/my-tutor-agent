@@ -211,6 +211,11 @@ def _grounding_reason_codes(problems: list[str]) -> str:
             # menciona "process_steps" como sugerencia de corrección, no
             # como un problema de cantidad insuficiente.
             code = "visual_semantic_mismatch_process"
+        elif "[visual_semantic_mismatch_hierarchy_relation]" in problem:
+            # v1.2.0.1: debe ir ANTES que la rama genérica de "comparison"
+            # — el mensaje sugiere "comparison" como corrección posible,
+            # no reporta un problema de contenido faltante en comparison.
+            code = "visual_semantic_mismatch_hierarchy_relation"
         elif "process_steps" in problem:
             code = "process_steps_insufficient"
         elif "comparison" in problem:

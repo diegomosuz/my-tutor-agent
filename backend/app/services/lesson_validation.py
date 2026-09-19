@@ -149,6 +149,31 @@ def _is_purely_sequential(edges: list) -> bool:
     return all(edge.relation_type == RelationType.flows_to for edge in edges)
 
 
+# v1.2.0.1 (mismo bloque "Visual Selection Reliability", corrección post-QA):
+# las ÚNICAS relation_type que el prompt sanciona para expresar una relación
+# padre/hijo real en "hierarchy" son "contains"/"part_of" (ver REGLA 14). Si
+# una escena "hierarchy" declara edges pero NINGUNA es "contains"/"part_of"
+# (p.ej. solo "depends_on"/"relates_to"/"connects_to"), es una contradicción
+# interna: el propio VisualPlan afirma una composición pero no expresa
+# ninguna relación de contención. Deliberadamente NO se aplica a
+# "concept_map" (sus edges son relaciones conceptuales generales, no tienen
+# el mismo contrato de "solo contains/part_of"). Deliberadamente NO se
+# aplica cuando no hay edges en absoluto: eso es ambigüedad (jerarquía
+# legítima sin relaciones expresadas, ver HierarchyVisual caso 2 en
+# VISUAL_FIDELITY.md), no una contradicción — no hay una validación
+# inequívoca posible para ese caso, se resuelve solo por prompt.
+_HIERARCHY_CONTAINMENT_RELATIONS = frozenset({RelationType.contains, RelationType.part_of})
+
+
+def _lacks_containment_edges(edges: list) -> bool:
+    """True únicamente si HAY edges y NINGUNA es `contains`/`part_of`. Una
+    sola edge de contención ya alcanza para no marcarlo (mismo criterio de
+    "ALL/NINGUNA", nunca una mayoría, que `_is_purely_sequential`)."""
+    if not edges:
+        return False
+    return not any(edge.relation_type in _HIERARCHY_CONTAINMENT_RELATIONS for edge in edges)
+
+
 def _validate_visual_content(
     scene_id: str, visual: VisualPlan, block_type_by_ref: dict[str, str]
 ) -> list[str]:
@@ -219,6 +244,22 @@ def _validate_visual_content(
             "composición real sin orden temporal, cambiá el relation_type de esas "
             "edges a 'contains' o 'part_of' — nunca inventes una relación que la "
             "fuente no sostenga."
+        )
+    elif visual.visual_type == VisualType.hierarchy and _lacks_containment_edges(visual.edges):
+        # v1.2.0.1: caso distinto del flows_to (mutuamente excluyente vía
+        # elif, para no reportar dos problemas sobre la misma escena) —
+        # acá hay edges, pero ninguna expresa contención real.
+        problems.append(
+            f"{scene_id}.visual: declarado como 'hierarchy' pero ninguna de sus edges es "
+            "'contains'/'part_of' — las únicas relaciones que expresan una composición "
+            "padre/hijo real en 'hierarchy'. [visual_semantic_mismatch_hierarchy_relation] "
+            "Si estos nodos son entidades PARES/HERMANAS que comparten una categoría o "
+            "familia común pero se diferencian por atributos comparables (velocidad, "
+            "costo, calidad, alcance, etc.), usá visual_type='comparison' en su lugar — "
+            "compartir una categoría no es lo mismo que una relación de contención. Si en "
+            "cambio sí hay una relación padre/hijo real, cambiá el relation_type de esas "
+            "edges a 'contains' o 'part_of', o quitá las edges y dejá solo 'nodes' si no "
+            "hay una raíz clara."
         )
 
     return problems
