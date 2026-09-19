@@ -7,17 +7,23 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **v1.1.0** — release candidate. Sobre la base de v1.0.1 (catálogo,
-> aula virtual grounded, tutor conversacional y checkpoints, voz del
-> navegador + voz neural opcional, práctica de certificación grounded),
-> v1.1.0 agrega "Mi aprendizaje" (progreso local + historial de
-> prácticas/simulacros), generación de certificación con concurrencia
-> acotada y cache-first, una UX de operaciones de IA con mensajes de
-> espera honestos, escenas de lección con visuales estructurados
-> (`lesson-v3`) y una capa de recomendaciones de estudio 100%
-> determinística y local (sin LLM, sin backend nuevo). Ver
-> [`docs/RELEASE_NOTES_v1.1.0.md`](./docs/RELEASE_NOTES_v1.1.0.md) (y, para
-> el historial previo, [`docs/RELEASE_NOTES_v1.0.1.md`](./docs/RELEASE_NOTES_v1.0.1.md) /
+> **v1.1.1** publicado (`master`/`origin/master`). **v1.2.0** está
+> preparado como release candidate local (`release/v1.2.0-rc`, sin push/
+> tag/merge todavía — release gate pendiente, decisión separada). Sobre
+> la base de v1.1.1 (catálogo, aula virtual grounded, tutor conversacional
+> y checkpoints, voz del navegador + voz neural opcional, práctica de
+> certificación grounded, "Mi aprendizaje" con recomendaciones
+> deterministas), v1.2.0 agrega fidelidad visual real de diagramas/
+> jerarquías (`DiagramCanvas`, conectores SVG geométricos reales),
+> selección de `visual_type` más confiable (`lesson-v3.2.1`) y animación
+> pedagógica determinística 100% frontend (progresión real de
+> pasos/nodos/comparaciones, derivada del `VisualPlan` ya validado, nunca
+> generada por IA). Ver
+> [`docs/RELEASE_NOTES_v1.2.0.md`](./docs/RELEASE_NOTES_v1.2.0.md) (y,
+> para el historial previo,
+> [`docs/RELEASE_NOTES_v1.1.1.md`](./docs/RELEASE_NOTES_v1.1.1.md) /
+> [`docs/RELEASE_NOTES_v1.1.0.md`](./docs/RELEASE_NOTES_v1.1.0.md) /
+> [`docs/RELEASE_NOTES_v1.0.1.md`](./docs/RELEASE_NOTES_v1.0.1.md) /
 > [`docs/RELEASE_NOTES_v1.0.0.md`](./docs/RELEASE_NOTES_v1.0.0.md) /
 > [`docs/PRODUCT_AUDIT.md`](./docs/PRODUCT_AUDIT.md)).
 

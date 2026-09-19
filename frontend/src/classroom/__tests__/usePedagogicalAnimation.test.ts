@@ -1,6 +1,7 @@
 // Tests del controller usePedagogicalAnimation (PARTE 31/33): fake timers
 // siempre (nunca sleeps reales -- suite rápida), play/pause/resume/reset/
 // complete, reset por remount (simulado), cleanup de timers al unmount.
+import React from "react";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { usePedagogicalAnimation } from "../usePedagogicalAnimation";
@@ -129,7 +130,12 @@ describe("usePedagogicalAnimation", () => {
     expect(result.current.isPlaying).toBe(false);
 
     rerender({ isPaused: false });
-    act(() => vi.advanceTimersByTime(ANIMATION_TIMING.stepIntervalMs));
+    // Resume desde currentStepIndex=-1 (nada revelado todavía) debe usar
+    // initialDelayMs, NO stepIntervalMs -- se verifica con el delay más
+    // corto exacto, no con un margen que enmascare cuál de los dos se usó
+    // realmente (ver el test de StrictMode, más abajo, para el bug real
+    // que esta distinción destapó).
+    act(() => vi.advanceTimersByTime(ANIMATION_TIMING.initialDelayMs));
     expect(result.current.elementStatus("step-0")).toBe("active");
   });
 
@@ -199,5 +205,23 @@ describe("usePedagogicalAnimation", () => {
     };
     const { result: second } = renderHook(() => usePedagogicalAnimation(other, false));
     expect(second.current.elementStatus("step-0")).toBe("hidden");
+  });
+
+  it("React.StrictMode (doble-invoke de efectos en desarrollo): nunca más de un timer activo, y el primer reveal sigue respetando initialDelayMs (no stepIntervalMs)", () => {
+    // Bug real encontrado en hardening: el guard basado en un ref
+    // (startedRef) sobrevive el "fake unmount" sintético de StrictMode
+    // (los refs no se reinician, solo los efectos se re-ejecutan), así
+    // que la segunda invocación tomaba la rama "ya arrancado" -- que
+    // antes de este fix reprogramaba siempre con stepIntervalMs, incluso
+    // partiendo de currentStepIndex=-1. Corregido con delayFor().
+    const { result } = renderHook(() => usePedagogicalAnimation(THREE_STEP_SEQUENCE, false), {
+      wrapper: ({ children }) => React.createElement(React.StrictMode, null, children),
+    });
+
+    expect(vi.getTimerCount()).toBe(1); // nunca dos timers compitiendo
+
+    act(() => vi.advanceTimersByTime(ANIMATION_TIMING.initialDelayMs));
+    expect(result.current.elementStatus("step-0")).toBe("active");
+    expect(vi.getTimerCount()).toBe(1);
   });
 });

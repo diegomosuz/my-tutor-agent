@@ -364,7 +364,7 @@ ninguna respuesta de error):
 `GET /api/ai/status` (no sensible, nunca incluye la credencial):
 
 ```json
-{ "provider": "pwc", "model": "openai.gpt-4o-2024-11-20", "configured": false, "prompt_version": "lesson-v3" }
+{ "provider": "pwc", "model": "openai.gpt-4o-2024-11-20", "configured": false, "prompt_version": "lesson-v3.2.1" }
 ```
 
 Funciona siempre, incluso sin ninguna credencial configurada — la app
@@ -390,7 +390,7 @@ SceneRenderer (frontend/src/classroom/SceneRenderer.tsx)
     ↓  tabla de despacho por scene.visual.visual_type
 Visual Components (frontend/src/classroom/visuals/*.tsx)
     ↓
-React + animaciones CSS
+React + transición CSS + Pedagogical Animation (v1.2.0, determinística)
 ```
 
 ### 7.1 Classroom Engine
@@ -448,29 +448,52 @@ documentado en `src/classroom/visuals/types.ts` y verificado en
 visible en ningún renderer").
 
 **Cero alucinación introducida por el renderer**: como `GroundedText` es
-una lista plana (sin relaciones codificadas entre sus elementos),
-`ProcessVisual` (etapas conectadas por una línea puramente visual, sin
-afirmar causalidad), `HierarchyVisual` (raíz + un único nivel de hijos,
-sin inventar sub-niveles), `ArchitectureVisual` (nodos dentro de un marco,
-sin flechas semánticas) y `ConceptMapVisual` (concepto central + conceptos
-relacionados, sin relaciones entre sí) nunca dibujan una conexión que los
-datos no establezcan explícitamente. `ComparisonVisual` arma dos columnas
-únicamente cuando hay exactamente 2 `key_points` (lo único que permite
-identificar "dos lados" sin inventar una clasificación); en cualquier otro
-caso usa cards paralelas neutrales, sin etiquetas de grupo inventadas.
+una lista plana (sin relaciones codificadas entre sus elementos), ningún
+visual dibuja una conexión que los datos no establezcan explícitamente.
+Desde v1.2.0 (bloque "Visual Fidelity"), `HierarchyVisual` usa
+`nodes`/`edges` como fuente primaria cuando vienen poblados (raíz real +
+un único nivel de hijos, detectado vía `hierarchyTree.ts`; degrada a
+lista plana bajo `scene.title` si las edges son ambiguas — nunca inventa
+una jerarquía), y `ArchitectureVisual`/`ConceptMapVisual` dibujan
+conectores SVG geométricos reales (`DiagramCanvas`, posiciones medidas
+del DOM, nunca coordenadas del LLM) en vez de una lista de texto "A → B".
+`ComparisonVisual` arma columnas desde `comparison.columns`/`.rows`
+cuando vienen poblados (contenido real y distinto por columna); sin
+contenido estructurado, cae al comportamiento legacy (dos columnas solo
+con exactamente 2 `key_points`, cards neutrales en cualquier otro caso).
+Detalle completo, incluida la matriz semántica que decide qué
+`visual_type` elegir el LLM, en `docs/VISUAL_FIDELITY.md` y
+`docs/VISUAL_SELECTION.md`.
 
 ### 7.3 Animaciones
 
-CSS puro (`@keyframes` + `animation-delay` escalonado por índice), sin
-Framer Motion ni ninguna librería de animación: no hizo falta para el
-alcance de Fase 4. `.classroom-paused` (aplicada cuando
-`engine.isPaused`) fija `animation-play-state: paused` sobre las clases de
-animación propias (`classroom-stagger-item`, `classroom-scene-enter`,
-`visual-process__connector`) — no intenta congelar cualquier transition
-del browser, alcanza con cubrir las que la app dispara. `@media
-(prefers-reduced-motion: reduce)` neutraliza esas mismas animaciones
-(`animation: none`, contenido siempre visible sin depender de que la
-animación corra).
+Dos capas distintas, deliberadamente no confundidas entre sí (ver
+`docs/PEDAGOGICAL_ANIMATIONS.md` sección 2):
+
+1. **Transición visual** (sin cambios desde Fase 4): CSS puro
+   (`@keyframes` + `animation-delay` escalonado por índice,
+   `classroom-stagger-item`/`classroom-scene-enter`), para el resto de
+   los visuals (`bullets`/`hero`/`code`/`quote`/`image`/`table`/`none`).
+   `.classroom-paused` (aplicada cuando `engine.isPaused`) fija
+   `animation-play-state: paused` sobre esas clases.
+2. **Pedagogical Animation** (v1.2.0, bloque "Pedagogical Animations"):
+   progresión real controlada por JS para los 5 visuals estructurados
+   (`process`/`hierarchy`/`architecture`/`concept_map`/`comparison`).
+   `frontend/src/classroom/pedagogicalAnimation.ts` deriva
+   determinísticamente una `AnimationSequence` del `VisualPlan` ya
+   validado (sin LLM, sin efectos secundarios); `usePedagogicalAnimation.ts`
+   la reproduce con un único `setTimeout` encadenado por escena, integrado
+   con el mismo `engine.isPaused` de siempre (nunca un segundo control de
+   pausa). `DiagramCanvas` gana predicados de visibilidad opcionales que
+   solo cambian opacidad/outline, nunca la geometría ya calculada.
+
+Ambas capas respetan `@media (prefers-reduced-motion: reduce)`; la
+Pedagogical Animation además consulta `matchMedia` en JS (primera vez en
+el proyecto — un `setTimeout` encadenado no se puede pausar solo con
+CSS) para saltar directo al estado final sin programar ningún timer.
+Contenido siempre visible en el DOM sin depender de que la animación
+corra (nunca `display:none`). Cero dependencia nueva (sin Framer
+Motion). Detalle completo en `docs/PEDAGOGICAL_ANIMATIONS.md`.
 
 ### 7.4 Voz (Web Speech API)
 

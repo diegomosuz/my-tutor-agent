@@ -923,5 +923,67 @@ Ver `docs/ROADMAP.md` para el detalle de fases futuras.
      `docs/RELEASE_NOTES_v1.1.0.md`. Sin push, sin tag `v1.1.0`, sin
      merge a `master` — release gate pendiente, decisión separada.
 
+- **v1.2.0** (release candidate, sobre v1.1.1, rama de desarrollo
+  `feat/v1.2.0-*` → `release/v1.2.0-rc`): tres bloques funcionales más un
+  hardening final, sin cambios de arquitectura, sin dependencias nuevas.
+  1. **Visual Fidelity** (`lesson-v3` → `lesson-v3.1`): el renderer del
+     aula dejó de perder contenido estructurado ya generado por el LLM
+     — `HierarchyVisual`/`ArchitectureVisual`/`ConceptMapVisual` pasan a
+     usar `nodes`/`edges` como fuente primaria (antes ignorados),
+     conectores geométricos SVG reales calculados por React
+     (`DiagramCanvas`, nunca coordenadas del LLM), `ComparisonPlan` gana
+     `columns` (contenido real y distinto por columna en modo cards,
+     backward-compatible). Bug real de `LESSON_PROMPT_VERSION` vía
+     `.env`/`docker-compose.yml` corregido (mismo patrón ya visto en
+     v1.1.0). Ver `docs/VISUAL_FIDELITY.md`.
+  2. **Visual Selection Reliability** (`lesson-v3.1` → `lesson-v3.2` →
+     `lesson-v3.2.1`): matriz semántica explícita en el prompt para
+     elegir `visual_type` por estructura (nunca por variar), validación
+     determinística de mismatch semántico interno sobre el propio
+     `VisualPlan` ya generado (`hierarchy`/`concept_map` con edges 100%
+     `flows_to` se rechaza; `hierarchy` con edges pero ninguna
+     `contains`/`part_of` también). Corrección post-QA real (`lesson-v3.2.1`):
+     una lista de entidades PARES que comparten categoría (p.ej. "niveles
+     de una familia") no es `hierarchy` solo por eso — es `comparison`,
+     aunque sean 3 o más entidades. QA real confirmó mejora medible
+     (no 100%, documentado con honestidad: variabilidad de LLM sigue
+     existiendo). Ver `docs/VISUAL_SELECTION.md`.
+  3. **Pedagogical Animations v1** (100% frontend, sin cambios de
+     backend/prompt/cache): visuales estructurados estáticos pasan a
+     revelarse progresivamente (`process`: step→connector→step;
+     `hierarchy`: root→children-grupo; `architecture`: BFS determinístico
+     con fallback neutro seguro; `concept_map`: centro→nodos→relaciones;
+     `comparison`: simultaneidad real, nunca un lado mucho antes que el
+     otro) — derivado determinísticamente de un `VisualPlan` ya validado
+     (`buildAnimationSequence`, puro, sin LLM), nunca generado por IA.
+     Integrado con el único control de playback existente (Pausar/
+     Reanudar/Repetir/Previo/Siguiente, sin sistema nuevo), independiente
+     de la voz, con `prefers-reduced-motion` detectado en JS por primera
+     vez en el proyecto (justificado: un timer no se pausa solo con CSS).
+     Toda `LessonPlan` cacheada adquiere animación automáticamente al
+     renderizarse. Ver `docs/PEDAGOGICAL_ANIMATIONS.md`.
+  4. **Hardening / release candidate** (rama `release/v1.2.0-rc`, sin
+     features nuevas): auditoría del diff acumulado `v1.1.1..HEAD` (3
+     bloques completos, no solo el último commit). Bug real encontrado y
+     corregido: bajo `React.StrictMode` (activo en desarrollo, ver
+     `main.tsx`), el guard basado en `useRef` de
+     `usePedagogicalAnimation` sobrevive el doble-montaje sintético de
+     React (los refs no se reinician, solo los efectos se re-ejecutan),
+     lo que hacía que el primer reveal de cada animación se programara
+     con `stepIntervalMs` en vez de `initialDelayMs` — nunca visible en
+     producción (StrictMode se descarta en el build de producción), pero
+     sí en todo desarrollo local (`docker compose up`, el modo primario
+     de trabajo de este proyecto). Corregido centralizando el criterio en
+     `delayFor(fromStepIndex)`; test de regresión agregado montando el
+     hook dentro de `React.StrictMode` explícitamente. `APP_VERSION`
+     1.1.1 → 1.2.0. Resto de la auditoría (seguridad de SVG/diagramas,
+     grounding de `AnimationSequence`, accesibilidad, layout stability,
+     compatibilidad hacia atrás con `lesson-v3`/`v3.1`/`v3.2` cacheadas,
+     cache sin cambios, regresión de Classroom/Learning Progress/
+     Certification) sin hallazgos nuevos — ya cerrada correctamente por
+     los bloques anteriores. Ver `docs/RELEASE_NOTES_v1.2.0.md`. Sin
+     push, sin tag `v1.2.0`, sin merge a `master` — release gate
+     pendiente, decisión separada.
+
 Cualquier trabajo futuro debe respetar este documento y actualizar la
 sección correspondiente del roadmap al avanzar de fase.

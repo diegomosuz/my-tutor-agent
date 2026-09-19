@@ -73,6 +73,19 @@ export function usePedagogicalAnimation(
     }
   }
 
+  // Bug real encontrado en hardening (StrictMode double-invoke, ver
+  // docs/PEDAGOGICAL_ANIMATIONS.md sección 22): CUALQUIER programación
+  // que parte de fromStepIndex=-1 (nada revelado todavía) debe usar
+  // initialDelayMs, nunca stepIntervalMs -- sin importar si llega ahí por
+  // el arranque inicial, por un resume() antes del primer reveal, o por
+  // el segundo montaje sintético de React.StrictMode en desarrollo (los
+  // refs, a diferencia del estado, sobreviven ese doble-montaje, así que
+  // la rama "ya arrancado" de abajo podía terminar reprogramando con el
+  // delay equivocado).
+  function delayFor(fromStepIndex: number): number {
+    return fromStepIndex < 0 ? ANIMATION_TIMING.initialDelayMs : ANIMATION_TIMING.stepIntervalMs;
+  }
+
   function scheduleFrom(delayMs: number, fromStepIndex: number) {
     clearTimer();
     timerRef.current = setTimeout(() => {
@@ -110,7 +123,7 @@ export function usePedagogicalAnimation(
     setCurrentStepIndex(-1);
     setIsComplete(false);
     setIsPlaying(true);
-    scheduleFrom(ANIMATION_TIMING.initialDelayMs, -1);
+    scheduleFrom(delayFor(-1), -1);
   }
 
   function pause() {
@@ -123,8 +136,9 @@ export function usePedagogicalAnimation(
     setIsPlaying(true);
     // "Continúa desde el mismo punto, no reinicia" (PARTE 15/36): se
     // reprograma el intervalo completo desde el paso actual, nunca vuelve
-    // a currentStepIndex=-1.
-    scheduleFrom(ANIMATION_TIMING.stepIntervalMs, stepRef.current);
+    // a currentStepIndex=-1. Si el paso actual TODAVÍA es -1 (se pausó
+    // antes del primer reveal), usa initialDelayMs, no stepIntervalMs.
+    scheduleFrom(delayFor(stepRef.current), stepRef.current);
   }
 
   function reset() {
@@ -152,7 +166,7 @@ export function usePedagogicalAnimation(
       }
       if (!isPaused) {
         setIsPlaying(true);
-        scheduleFrom(ANIMATION_TIMING.initialDelayMs, -1);
+        scheduleFrom(delayFor(-1), -1);
       }
       // Si isPaused ya es true al montar: queda en reposo (-1, sin
       // timer) hasta que este mismo efecto vuelva a correr con
@@ -165,7 +179,7 @@ export function usePedagogicalAnimation(
       setIsPlaying(false);
     } else {
       setIsPlaying(true);
-      scheduleFrom(ANIMATION_TIMING.stepIntervalMs, stepRef.current);
+      scheduleFrom(delayFor(stepRef.current), stepRef.current);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPaused]);
