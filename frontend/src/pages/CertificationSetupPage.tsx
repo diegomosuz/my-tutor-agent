@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { AiOperationStatus } from "../components/AiOperationStatus";
 import { Breadcrumb } from "../components/Breadcrumb";
@@ -16,6 +16,7 @@ const QUESTION_COUNT_OPTIONS = [5, 10, 15, 20, 30];
 export function CertificationSetupPage() {
   const { courseId } = useParams<{ courseId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [course, setCourse] = useState<CourseDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -48,6 +49,31 @@ export function CertificationSetupPage() {
       cancelled = true;
     };
   }, [courseId]);
+
+  // v1.1.0 (adaptación pedagógica, PARTE 11): preselección desde una
+  // recomendación de "Mi aprendizaje" vía query params — SOLO se aplica
+  // una vez que el curso REAL cargó, y SOLO con ids que existen realmente
+  // en ese curso (nunca se confía ciegamente en el query param: un id
+  // inventado/de otro curso se ignora en silencio, nunca rompe la
+  // pantalla). No cambia el backend: la selección resultante pasa por el
+  // mismo flujo de siempre (botón "Preparar práctica").
+  useEffect(() => {
+    if (!course) return;
+    const modeParam = searchParams.get("mode");
+    if (modeParam === "practice" || modeParam === "simulation") {
+      setMode(modeParam);
+    }
+
+    const topicsParam = searchParams.get("topics");
+    if (!topicsParam) return;
+    const requestedIds = topicsParam.split(",").map((id) => id.trim()).filter(Boolean);
+    const realTopicIds = new Set(course.modules.flatMap((m) => m.topics.map((t) => t.id)));
+    const validIds = requestedIds.filter((id) => realTopicIds.has(id));
+    if (validIds.length > 0) {
+      setScopeKind("topics");
+      setSelectedTopicIds(validIds);
+    }
+  }, [course, searchParams]);
 
   function toggleModule(moduleId: string) {
     setSelectedModuleIds((prev) =>

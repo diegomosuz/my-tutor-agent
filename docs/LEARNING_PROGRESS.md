@@ -6,6 +6,14 @@ prácticas/simulacros de certificación. No agrega base de datos, backend
 persistence, usuarios/auth ni ningún servicio externo — es una capa
 puramente de frontend sobre `localStorage`.
 
+Sobre este progreso se calcula, siempre en el navegador y sin persistir
+nada nuevo, una capa de recomendaciones determinísticas ("Recomendado
+para vos") — ver `docs/ADAPTIVE_LEARNING.md` para el algoritmo completo.
+Las recomendaciones se calculan localmente en el navegador a partir del
+progreso y de los resultados de práctica guardados localmente: nunca se
+envía el Learning Progress completo al backend, y el LLM nunca ve el
+historial de progreso/certificación del alumno.
+
 ## Qué se persiste, y dónde
 
 Una única key de `localStorage`: **`pwc-tutor:learning-progress:v1`**,

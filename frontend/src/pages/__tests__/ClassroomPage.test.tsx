@@ -52,9 +52,9 @@ const TOPIC_RESPONSE = {
   canonical: CANONICAL_INFO,
 };
 
-function renderPage() {
+function renderPage(entry = "/aula/curso-demo/modulo-demo/topico-demo") {
   return render(
-    <MemoryRouter initialEntries={["/aula/curso-demo/modulo-demo/topico-demo"]}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route path="/aula/:courseId/:moduleId/:topicId" element={<ClassroomPage />} />
       </Routes>
@@ -131,5 +131,29 @@ describe("ClassroomPage — v1.1.0 UX de doble submit y mensajes de espera", () 
     await waitFor(() => expect(screen.getByText("Reintentar")).toBeInTheDocument());
     fireEvent.click(screen.getByText("Reintentar"));
     expect(mockGenerateLesson).toHaveBeenCalledTimes(2);
+  });
+
+  // v1.1.0 (adaptación pedagógica, PARTE 15): modo repaso puramente visual.
+  it("con ?review=true muestra el badge 'Repaso' sin generar una LessonPlan distinta", async () => {
+    mockGenerateLesson.mockResolvedValue(SAMPLE_LESSON);
+    renderPage("/aula/curso-demo/modulo-demo/topico-demo?review=true");
+
+    const button = await screen.findByRole("button", { name: /Preparar clase con IA/ });
+    fireEvent.click(button);
+
+    await waitFor(() => expect(screen.getByText("Introducción a Kubernetes")).toBeInTheDocument());
+    expect(screen.getByText("Repaso")).toBeInTheDocument();
+    expect(mockGenerateLesson).toHaveBeenCalledWith("curso-demo", "modulo-demo", "topico-demo", false);
+  });
+
+  it("sin ?review=true nunca muestra el badge 'Repaso'", async () => {
+    mockGenerateLesson.mockResolvedValue(SAMPLE_LESSON);
+    renderPage();
+
+    const button = await screen.findByRole("button", { name: /Preparar clase con IA/ });
+    fireEvent.click(button);
+
+    await waitFor(() => expect(screen.getByText("Introducción a Kubernetes")).toBeInTheDocument());
+    expect(screen.queryByText("Repaso")).not.toBeInTheDocument();
   });
 });

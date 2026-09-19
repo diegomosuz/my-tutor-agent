@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { AiOperationStatus } from "../components/AiOperationStatus";
 import { Breadcrumb } from "../components/Breadcrumb";
@@ -63,6 +63,14 @@ export function ClassroomPage() {
     topicId: string;
   }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // v1.1.0 (adaptación pedagógica, PARTE 15): "modo repaso", puramente
+  // visual — llegar acá desde una recomendación de refuerzo de "Mi
+  // aprendizaje" (?review=true) nunca genera una LessonPlan distinta, ni
+  // crea un segundo sistema de playback, ni cambia qué se persiste en
+  // Learning Progress (sigue siendo el mismo evento markTopicStarted/
+  // markTopicCompleted de siempre). Solo muestra un badge "Repaso".
+  const isReviewMode = searchParams.get("review") === "true";
 
   const [course, setCourse] = useState<CourseDetail | null>(null);
   const [topic, setTopic] = useState<TopicResponse | null>(null);
@@ -446,7 +454,10 @@ export function ClassroomPage() {
 
               {lesson && !engine.isCompleted && engine.currentScene && (
                 <div className="slide-panel__content slide-panel__content--lesson">
-                  <div className="slide-panel__lesson-title">{lesson.lesson_title.text}</div>
+                  <div className="slide-panel__lesson-title">
+                    {isReviewMode && <span className="slide-panel__review-badge">Repaso</span>}
+                    {lesson.lesson_title.text}
+                  </div>
                   <SceneRenderer
                     scene={engine.currentScene}
                     canonical={topic?.canonical}

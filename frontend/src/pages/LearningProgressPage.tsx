@@ -7,6 +7,11 @@ import {
   type CertificationModeOverview,
 } from "../learning/certificationSummary";
 import { buildCourseLearningSummary, type CourseLearningSummary } from "../learning/courseSummary";
+import {
+  getLearningRecommendations,
+  type LearningRecommendation,
+  type RecommendationType,
+} from "../learning/learningRecommendationEngine";
 import { getCourseLearningProgress } from "../learning/learningProgressStore";
 import type { CertificationAttemptSummary } from "../learning/types";
 import type { CourseDetail, CourseSummary } from "../types/api";
@@ -103,6 +108,125 @@ function ReinforceAreas({ attempts }: { attempts: CertificationAttemptSummary[] 
   );
 }
 
+// v1.1.0 (adaptación pedagógica): "Recomendado para vos". Cada tarjeta
+// viene de learningRecommendationEngine.ts (100% determinístico, sin LLM,
+// sin backend) — nunca inventa nada acá, solo renderiza lo que el motor ya
+// calculó. Textos sobrios a propósito (PARTE 29): sin estrellas, niveles,
+// streaks, puntos ni ranking — esto es formación profesional.
+const RECOMMENDATION_TITLE: Record<RecommendationType, string> = {
+  continue_topic: "Continuar",
+  start_next_topic: "Continuar",
+  review_topic: "Reforzar",
+  practice_topics: "Practicar",
+  retry_simulation: "Simulacro",
+  course_completed: "Curso completado",
+};
+
+const RECOMMENDATION_BUTTON_LABEL: Record<RecommendationType, string> = {
+  continue_topic: "Continuar",
+  start_next_topic: "Continuar",
+  review_topic: "Revisar tema",
+  practice_topics: "Iniciar práctica",
+  retry_simulation: "Preparar simulacro",
+  course_completed: "",
+};
+
+function RecommendationCard({
+  recommendation,
+  featured,
+}: {
+  recommendation: LearningRecommendation;
+  featured: boolean;
+}) {
+  const navigate = useNavigate();
+  const [showWhy, setShowWhy] = useState(false);
+  const buttonLabel = RECOMMENDATION_BUTTON_LABEL[recommendation.type];
+  const data = recommendation.observedData;
+
+  return (
+    <div className={featured ? "learning-recommendation learning-recommendation--featured" : "learning-recommendation"}>
+      <h3>{RECOMMENDATION_TITLE[recommendation.type]}</h3>
+      <p className="learning-recommendation__reason">{recommendation.reasonText}</p>
+
+      {data && (
+        <>
+          <button
+            type="button"
+            className="learning-recommendation__why-toggle"
+            onClick={() => setShowWhy((v) => !v)}
+            aria-expanded={showWhy}
+          >
+            {showWhy ? "Ocultar datos" : "¿Por qué?"}
+          </button>
+          {showWhy && (
+            <dl className="learning-recommendation__why-data">
+              {data.score !== undefined && (
+                <div>
+                  <dt>Último resultado</dt>
+                  <dd>{data.score}%</dd>
+                </div>
+              )}
+              {data.recentAverage !== undefined && (
+                <div>
+                  <dt>Promedio reciente</dt>
+                  <dd>{data.recentAverage}%</dd>
+                </div>
+              )}
+              {data.observations !== undefined && (
+                <div>
+                  <dt>Observaciones consideradas</dt>
+                  <dd>{data.observations}</dd>
+                </div>
+              )}
+              {data.lastAccessedAt && (
+                <div>
+                  <dt>Última actividad</dt>
+                  <dd>{formatDate(data.lastAccessedAt)}</dd>
+                </div>
+              )}
+            </dl>
+          )}
+        </>
+      )}
+
+      {buttonLabel && (
+        <button
+          type="button"
+          className="course-card__cta"
+          onClick={() => navigate(recommendation.action.to)}
+        >
+          {buttonLabel}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function RecommendedForYou({ recommendations }: { recommendations: LearningRecommendation[] }) {
+  // "course_completed" nunca se muestra como card propia acá: ya lo dice
+  // CourseProgressSection ("Curso completado") — mostrarlo de nuevo acá
+  // sería redundante. Esta sección solo muestra recomendaciones
+  // ACCIONABLES (con un botón real).
+  const actionable = recommendations.filter((r) => r.type !== "course_completed");
+  if (actionable.length === 0) return null;
+  const [primary, ...rest] = actionable;
+  // Máximo 2 tarjetas secundarias de tipos distintos al primario, para no
+  // saturar la sección (PARTE 8 muestra como mucho 2-3 tarjetas juntas).
+  const secondary = rest.filter((r) => r.type !== primary.type).slice(0, 2);
+
+  return (
+    <section className="learning-section learning-recommendations">
+      <h2>Recomendado para vos</h2>
+      <div className="learning-recommendations__grid">
+        <RecommendationCard recommendation={primary} featured />
+        {secondary.map((rec) => (
+          <RecommendationCard key={`${rec.type}-${rec.topicId ?? rec.topicIds?.join(",") ?? ""}`} recommendation={rec} featured={false} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function statusIcon(status: "not_started" | "in_progress" | "completed"): string {
   if (status === "completed") return "✓";
   if (status === "in_progress") return "▶";
@@ -116,7 +240,6 @@ function CourseProgressSection({
   summary: CourseLearningSummary;
   courseId: string;
 }) {
-  const navigate = useNavigate();
   const neverStarted = summary.lastActivity === null;
 
   return (
@@ -142,27 +265,11 @@ function CourseProgressSection({
           </>
         )}
 
-        <div className="learning-continue">
-          {summary.isCompleted ? (
+        {summary.isCompleted && (
+          <div className="learning-continue">
             <p className="learning-continue__done">Curso completado</p>
-          ) : summary.continueTarget ? (
-            <>
-              <h3>Continuar aprendiendo</h3>
-              <p>{summary.continueTarget.title}</p>
-              <button
-                type="button"
-                className="course-card__cta"
-                onClick={() =>
-                  navigate(
-                    `/aula/${courseId}/${summary.continueTarget!.moduleId}/${summary.continueTarget!.topicId}`
-                  )
-                }
-              >
-                Continuar
-              </button>
-            </>
-          ) : null}
-        </div>
+          </div>
+        )}
       </section>
 
       <section className="learning-section">
@@ -253,6 +360,12 @@ export function LearningProgressPage() {
     () => buildCertificationOverview(progress?.certificationAttempts ?? []),
     [progress]
   );
+  // v1.1.0: recalculada SIEMPRE a partir del estado actual (nunca se
+  // persiste una recomendación) — ver docs/ADAPTIVE_LEARNING.md.
+  const recommendations = useMemo(
+    () => (courseDetail && summary ? getLearningRecommendations(courseDetail, summary, progress) : []),
+    [courseDetail, summary, progress]
+  );
 
   return (
     <div className="page">
@@ -301,6 +414,8 @@ export function LearningProgressPage() {
       {!error && courses !== null && courses.length > 0 && summary && selectedCourseId && (
         <>
           <CourseProgressSection summary={summary} courseId={selectedCourseId} />
+
+          <RecommendedForYou recommendations={recommendations} />
 
           <section className="learning-section">
             <h2>Preparación de certificación</h2>

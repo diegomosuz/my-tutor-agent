@@ -65,6 +65,16 @@ function renderPage() {
   );
 }
 
+function renderPageAt(entry: string) {
+  return render(
+    <MemoryRouter initialEntries={[entry]}>
+      <Routes>
+        <Route path="/certificacion/:courseId" element={<CertificationSetupPage />} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
 beforeEach(() => {
   mockedGetCourse.mockReset();
   mockPrepare.mockReset();
@@ -204,5 +214,50 @@ describe("CertificationSetupPage", () => {
     renderPage();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Demo Curso IA" })).toBeInTheDocument());
     expect(mockPrepare).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------
+  // v1.1.0 — preselección desde una recomendación de "Mi aprendizaje"
+  // (PARTE 11/26): ?mode=&topics=, validado contra el curso real.
+  // -------------------------------------------------------------------
+
+  it("preselecciona tópicos y modo válidos desde query params", async () => {
+    mockedGetCourse.mockResolvedValue(COURSE);
+    renderPageAt("/certificacion/curso-demo?mode=practice&topics=topico-a1,topico-b1");
+    await waitFor(() => expect(screen.getByLabelText("Tópico A1")).toBeInTheDocument());
+    expect((screen.getByLabelText("Tópico A1") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Tópico B1") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Tópico A2") as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("preselecciona mode=simulation desde query params", async () => {
+    mockedGetCourse.mockResolvedValue(COURSE);
+    renderPageAt("/certificacion/curso-demo?mode=simulation&topics=topico-a1");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Demo Curso IA" })).toBeInTheDocument());
+    expect((screen.getByLabelText(/Simulacro/i) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("ignora IDs de tópico inválidos/inexistentes sin romper la pantalla", async () => {
+    mockedGetCourse.mockResolvedValue(COURSE);
+    renderPageAt("/certificacion/curso-demo?mode=practice&topics=topico-fantasma,topico-a1,otro-curso-topic");
+    await waitFor(() => expect(screen.getByLabelText("Tópico A1")).toBeInTheDocument());
+    expect((screen.getByLabelText("Tópico A1") as HTMLInputElement).checked).toBe(true);
+    // Ningún checkbox real corresponde a los ids inventados: la pantalla
+    // simplemente los ignora, nunca crashea ni los agrega a la selección.
+    expect(screen.queryByText("topico-fantasma")).not.toBeInTheDocument();
+  });
+
+  it("un mode inválido en query params se ignora, mantiene el default 'practice'", async () => {
+    mockedGetCourse.mockResolvedValue(COURSE);
+    renderPageAt("/certificacion/curso-demo?mode=algo-invalido");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Demo Curso IA" })).toBeInTheDocument());
+    expect((screen.getByLabelText(/Práctica guiada/i) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("sin query params, el comportamiento por defecto no cambia (curso completo)", async () => {
+    mockedGetCourse.mockResolvedValue(COURSE);
+    renderPage();
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Demo Curso IA" })).toBeInTheDocument());
+    expect((screen.getByLabelText("Curso completo") as HTMLInputElement).checked).toBe(true);
   });
 });
