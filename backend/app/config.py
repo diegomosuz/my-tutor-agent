@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     # tópico corto puede devolver menos). Acotado razonablemente en el
     # servicio a un rango 1-10 sin importar este valor.
     certification_items_per_topic: int = 6
+    # Cantidad máxima de QuestionBanks generados EN PARALELO cuando faltan
+    # varios (v1.1.0, bloque de performance — ver docs/PERFORMANCE.md).
+    # Acotado en el servicio a un rango sensato (1-4) sin importar este
+    # valor; 1 reproduce el comportamiento estrictamente secuencial de
+    # v1.0.1/v1.1.0-learning-progress.
+    certification_max_concurrency: int = 2
 
     @property
     def content_path(self) -> Path:

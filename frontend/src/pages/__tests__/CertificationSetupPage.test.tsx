@@ -159,6 +159,24 @@ describe("CertificationSetupPage", () => {
     expect(screen.getByRole("button", { name: "Preparando preguntas…" })).toBeDisabled();
   });
 
+  it("v1.1.0: mientras prepara muestra el mensaje inicial de espera, nunca un porcentaje inventado", async () => {
+    mockedGetCourse.mockResolvedValue(COURSE);
+    mockExamReturn = { session: null, loading: true, error: null, prepare: mockPrepare };
+    renderPage();
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Demo Curso IA" })).toBeInTheDocument());
+
+    const status = screen.getByRole("status");
+    expect(status.textContent).toContain("Preparando práctica…");
+    expect(status.textContent).not.toMatch(/%/);
+  });
+
+  it("v1.1.0: el mensaje de espera no aparece cuando no está cargando", async () => {
+    mockedGetCourse.mockResolvedValue(COURSE);
+    renderPage();
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Demo Curso IA" })).toBeInTheDocument());
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
   it("muestra un error controlado sin romper la página", async () => {
     mockedGetCourse.mockResolvedValue(COURSE);
     mockExamReturn = {

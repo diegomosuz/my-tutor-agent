@@ -1322,26 +1322,37 @@ p {
   font-size: 13.5px;
 }
 
-/* ---------- Loading steps (generación de LessonPlan) ---------- */
+/* ---------- AI operation status (generación de clase/certificación) ---------- */
 
-.loading-steps {
+.ai-operation-status {
   display: flex;
   align-items: center;
   gap: 10px;
   justify-content: center;
   margin-top: 10px;
-  color: #ece5d8;
+  color: var(--color-text-muted);
   font-size: 13.5px;
 }
 
-.loading-steps__spinner {
+/* Contexto oscuro (aula virtual, ver .slide-panel): mismo componente,
+   paleta clara sobre fondo oscuro en vez del texto muted por defecto. */
+.slide-panel .ai-operation-status {
+  color: #ece5d8;
+}
+
+.ai-operation-status__spinner {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.2);
+  border: 2px solid rgba(0, 0, 0, 0.15);
   border-top-color: var(--color-accent-yellow);
   animation: classroom-spin 0.8s linear infinite;
   flex-shrink: 0;
+}
+
+.slide-panel .ai-operation-status__spinner {
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--color-accent-yellow);
 }
 
 @keyframes classroom-spin {
@@ -1351,7 +1362,7 @@ p {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .loading-steps__spinner {
+  .ai-operation-status__spinner {
     animation-duration: 2.4s;
   }
 }

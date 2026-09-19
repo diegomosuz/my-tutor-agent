@@ -42,12 +42,20 @@ from app.services.llm_provider import (
 from app.services.cache_schema import CACHE_SCHEMA_VERSION
 from app.services.lesson_validation import LessonValidationError, validate_lesson_body
 from app.services.service_logging import log_event as shared_log_event
+from app.services.singleflight import SingleFlight
 
 logger = logging.getLogger("pwc_tutor.lesson")
 
 # 1 respuesta inicial + hasta 2 correcciones. Acotado a propósito: nunca un
 # loop infinito (ver Fase 3, sección "Retries").
 MAX_GENERATION_ATTEMPTS = 3
+
+# Deduplica generaciones concurrentes de la MISMA LessonPlan (mismo
+# content_sha256+provider+model+prompt_version) dentro de este proceso —
+# ver docs/PERFORMANCE.md. Instancia a nivel de módulo: debe deduplicar
+# entre requests HTTP distintos (p.ej. doble click en "Preparar clase con
+# IA" que llegara a alcanzar a superar el guard del frontend).
+_lesson_singleflight: SingleFlight = SingleFlight()
 
 
 class LessonGenerationError(Exception):
@@ -297,39 +305,57 @@ def generate_lesson(
             return cached_plan.model_copy(update={"cached": True})
 
     _log_event("lesson_cache_miss", **log_context)
-    _log_event("lesson_generation_started", **log_context)
-    started_at = time.monotonic()
 
-    messages = build_messages(grounding_packet)
+    def _generate_and_cache() -> LessonPlan:
+        # Re-check de cache tras adquirir el lock del single-flight: si
+        # otra generación concurrente para esta misma key ya escribió
+        # cache mientras esperábamos, la reutilizamos.
+        if not force_regenerate:
+            recached = _read_cache(cache_dir, key)
+            if recached is not None:
+                _log_event("lesson_cache_hit", **log_context)
+                return recached.model_copy(update={"cached": True})
 
-    try:
-        body = _generate_validated_body(llm_provider, messages, canonical)
-    except Exception as exc:
+        _log_event("lesson_generation_started", **log_context)
+        started_at = time.monotonic()
+        messages = build_messages(grounding_packet)
+        try:
+            body = _generate_validated_body(llm_provider, messages, canonical)
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            _log_event(
+                "lesson_generation_failed",
+                **log_context,
+                duration_ms=duration_ms,
+                error_type=type(exc).__name__,
+            )
+            raise
+
+        lesson_plan = _assemble_lesson_plan(
+            body=body,
+            canonical=canonical,
+            provider_name=llm_provider.name,
+            model=llm_provider.model,
+            prompt_version=prompt_version,
+            cache_key=key,
+        )
+        _write_cache(cache_dir, key, lesson_plan)
+
         duration_ms = int((time.monotonic() - started_at) * 1000)
         _log_event(
-            "lesson_generation_failed",
+            "lesson_generation_completed",
             **log_context,
             duration_ms=duration_ms,
-            error_type=type(exc).__name__,
+            cached=False,
+            scene_count=len(lesson_plan.scenes),
         )
-        raise
+        return lesson_plan
 
-    lesson_plan = _assemble_lesson_plan(
-        body=body,
-        canonical=canonical,
-        provider_name=llm_provider.name,
-        model=llm_provider.model,
-        prompt_version=prompt_version,
-        cache_key=key,
-    )
-    _write_cache(cache_dir, key, lesson_plan)
+    def _on_wait() -> None:
+        _log_event("lesson_singleflight_wait", **log_context)
 
-    duration_ms = int((time.monotonic() - started_at) * 1000)
-    _log_event(
-        "lesson_generation_completed",
-        **log_context,
-        duration_ms=duration_ms,
-        cached=False,
-        scene_count=len(lesson_plan.scenes),
-    )
-    return lesson_plan
+    # force_regenerate nunca se deduplica con una generación "normal" en
+    # curso para la misma key: son intenciones distintas del alumno (uno
+    # pide reusar cache si existe, el otro pide explícitamente descartarla).
+    singleflight_key = key if not force_regenerate else f"{key}:force"
+    return _lesson_singleflight.call(singleflight_key, _generate_and_cache, on_wait=_on_wait)

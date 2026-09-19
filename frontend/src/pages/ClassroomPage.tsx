@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
+import { AiOperationStatus } from "../components/AiOperationStatus";
 import { Breadcrumb } from "../components/Breadcrumb";
 import { GroundingPanel } from "../components/GroundingPanel";
 import { SafeMarkdown } from "../components/SafeMarkdown";
 import { CheckpointPanel } from "../classroom/CheckpointPanel";
 import { CompletionScreen } from "../classroom/CompletionScreen";
-import { LoadingSteps } from "../classroom/LoadingSteps";
 import { SceneRenderer } from "../classroom/SceneRenderer";
 import { TutorPanel } from "../classroom/TutorPanel";
 import { buildSourceBlockLookup } from "../classroom/sourceBlockLookup";
@@ -250,6 +250,10 @@ export function ClassroomPage() {
 
   async function handleGenerateLesson(forceRegenerate: boolean) {
     if (!courseId || !moduleId || !topicId) return;
+    // v1.1.0 (UX de doble submit): guard explícito además de ocultar/
+    // deshabilitar el botón mientras carga — nunca confiar solo en el
+    // re-render de React para evitar una segunda request por doble click.
+    if (lessonLoading) return;
     setLessonLoading(true);
     setLessonError(null);
     try {
@@ -412,7 +416,12 @@ export function ClassroomPage() {
                       </button>
                     </>
                   )}
-                  {lessonLoading && <LoadingSteps />}
+                  {lessonLoading && (
+                    <AiOperationStatus
+                      initialMessage="Preparando clase…"
+                      delayedMessage="Estamos generando la clase a partir del material de este tópico."
+                    />
+                  )}
                   {lessonError && (
                     <div className="slide-panel__error">
                       <p className="slide-panel__error-title">{lessonError.title}</p>

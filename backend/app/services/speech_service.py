@@ -23,8 +23,17 @@ from typing import Protocol
 from app.config import Settings
 from app.services.cache_schema import CACHE_SCHEMA_VERSION
 from app.services.service_logging import log_event
+from app.services.singleflight import SingleFlight
 
 logger = logging.getLogger("pwc_tutor.speech")
+
+# Deduplica generaciones concurrentes para la MISMA cache key dentro de
+# este proceso (v1.1.0, PARTE 8 de la especificación de performance): sin
+# esto, dos requests casi simultáneos para la misma narración veían ambos
+# un cache MISS y llamaban a OpenAI TTS por separado. Instancia a nivel de
+# módulo a propósito — debe deduplicar entre requests HTTP distintos, no
+# solo dentro de una misma llamada.
+_speech_singleflight: SingleFlight = SingleFlight()
 
 MAX_TEXT_LENGTH = 5000
 _OPENAI_TTS_TIMEOUT_SECONDS = 60.0
@@ -183,32 +192,47 @@ def synthesize_speech(
         return cached
 
     log_event(logger, "speech_cache_miss", **log_context)
-    log_event(logger, "speech_generation_started", **log_context)
-    started_at = time.monotonic()
 
-    speech_client = client or _OpenAISpeechClient(settings.openai_api_key)
-    try:
-        audio_bytes = speech_client.create_speech(
-            model=model, voice=voice, instructions=instructions, speed=speed, text=text
-        )
-    except Exception as exc:
+    def _generate_and_cache() -> bytes:
+        # Re-check de cache DESPUÉS de adquirir el lock del single-flight:
+        # si otra generación concurrente para esta misma key ya terminó y
+        # escribió cache justo entre el check de arriba y acá, la
+        # reutilizamos en vez de llamar a OpenAI de nuevo.
+        recached = _read_cache(cache_dir, key)
+        if recached is not None:
+            log_event(logger, "speech_cache_hit", **log_context, cached=True)
+            return recached
+
+        log_event(logger, "speech_generation_started", **log_context)
+        started_at = time.monotonic()
+        speech_client = client or _OpenAISpeechClient(settings.openai_api_key)
+        try:
+            audio_bytes = speech_client.create_speech(
+                model=model, voice=voice, instructions=instructions, speed=speed, text=text
+            )
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            log_event(
+                logger,
+                "speech_generation_failed",
+                **log_context,
+                duration_ms=duration_ms,
+                error_type=type(exc).__name__,
+            )
+            raise
+
+        _write_cache(cache_dir, key, audio_bytes)
         duration_ms = int((time.monotonic() - started_at) * 1000)
         log_event(
             logger,
-            "speech_generation_failed",
+            "speech_generation_completed",
             **log_context,
             duration_ms=duration_ms,
-            error_type=type(exc).__name__,
+            cached=False,
         )
-        raise
+        return audio_bytes
 
-    _write_cache(cache_dir, key, audio_bytes)
-    duration_ms = int((time.monotonic() - started_at) * 1000)
-    log_event(
-        logger,
-        "speech_generation_completed",
-        **log_context,
-        duration_ms=duration_ms,
-        cached=False,
-    )
-    return audio_bytes
+    def _on_wait() -> None:
+        log_event(logger, "speech_singleflight_wait", **log_context)
+
+    return _speech_singleflight.call(key, _generate_and_cache, on_wait=_on_wait)

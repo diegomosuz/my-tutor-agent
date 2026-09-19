@@ -17,7 +17,7 @@ from app.services import courses as course_service
 from app.services import lesson_generator
 from app.services.llm_provider import LLMAuthError, LLMResponseError, LLMUpstreamError
 
-from .fakes import FakeLLMProvider
+from .fakes import FakeConcurrentLLMProvider, FakeLLMProvider
 from .lesson_fixtures import SAMPLE_TOPIC_MARKDOWN, valid_lesson_body_dict
 
 
@@ -408,3 +408,40 @@ def test_empty_scenes_is_rejected_by_pydantic():
     bad_body["scenes"] = []
     with pytest.raises(ValidationError):
         GeneratedLessonBody.model_validate(bad_body)
+
+
+# --------------------------------------------------------------------------
+# Single-flight (v1.1.0, bloque de performance, PARTE 8/16): dos requests
+# casi simultáneos por la MISMA LessonPlan deben producir UNA sola llamada
+# real al proveedor — mismo invariante que certification/speech.
+# --------------------------------------------------------------------------
+
+
+def test_concurrent_requests_same_topic_call_provider_once(tmp_path):
+    import threading
+
+    marker = "marcador único de esta lección"
+    content_dir = _make_content_dir(tmp_path, SAMPLE_TOPIC_MARKDOWN + f"\n{marker}\n")
+    settings = _settings(tmp_path, content_dir)
+    provider = FakeConcurrentLLMProvider(
+        routes={marker: valid_lesson_body_dict()}, delays={marker: 0.15}
+    )
+
+    results = []
+    errors = []
+
+    def _call():
+        try:
+            results.append(_generate(settings, provider))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_call) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    assert not errors
+    assert len(provider.calls) == 1
+    assert len(results) == 4

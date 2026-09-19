@@ -59,6 +59,7 @@ function samplePrepareResponse(count = 2) {
 
 beforeEach(() => {
   window.sessionStorage.clear();
+  window.localStorage.clear();
   mockedPrepare.mockReset();
   mockedEvaluateQuestion.mockReset();
   mockedEvaluateSimulation.mockReset();
@@ -307,5 +308,104 @@ describe("useCertificationExam", () => {
 
     const second = renderHook(() => useCertificationExam(COURSE_ID));
     await waitFor(() => expect(second.result.current.session?.practiceId).toBe("practice-1"));
+  });
+
+  // --------------------------------------------------------------------
+  // v1.1.0 (bloque de performance, PARTE 9/17): guard de doble submit —
+  // un segundo prepare()/submitExam() mientras el primero sigue en curso
+  // (loading=true) nunca dispara una segunda request al backend.
+  // --------------------------------------------------------------------
+
+  it("un segundo prepare() mientras el primero sigue pendiente no llama de nuevo al backend", async () => {
+    let resolvePrepare: (value: ReturnType<typeof samplePrepareResponse>) => void = () => {};
+    mockedPrepare.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePrepare = resolve;
+      })
+    );
+    const { result } = renderHook(() => useCertificationExam(COURSE_ID));
+
+    // Primer "click": arranca la request, queda pendiente (loading=true).
+    act(() => {
+      void result.current.prepare({
+        mode: "practice",
+        scope: { module_ids: [], topic_ids: [] },
+        question_count: 2,
+      });
+    });
+    expect(result.current.loading).toBe(true);
+    expect(mockedPrepare).toHaveBeenCalledTimes(1);
+
+    // Segundo "click" mientras la primera sigue pendiente: el guard debe
+    // devolver false sin llamar de nuevo a api.prepareCertification().
+    let secondResult: boolean | undefined;
+    await act(async () => {
+      secondResult = await result.current.prepare({
+        mode: "practice",
+        scope: { module_ids: [], topic_ids: [] },
+        question_count: 2,
+      });
+    });
+    expect(secondResult).toBe(false);
+    expect(mockedPrepare).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolvePrepare(samplePrepareResponse());
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.session?.practiceId).toBe("practice-1");
+  });
+
+  it("un segundo submitExam() mientras el primero sigue pendiente registra el intento UNA sola vez en Mi aprendizaje", async () => {
+    mockedPrepare.mockResolvedValue(samplePrepareResponse());
+    let resolveEvaluate: (value: unknown) => void = () => {};
+    mockedEvaluateSimulation.mockReturnValue(
+      new Promise((resolve) => {
+        resolveEvaluate = resolve;
+      })
+    );
+    const { result } = renderHook(() => useCertificationExam(COURSE_ID));
+    await act(async () => {
+      await result.current.prepare({
+        mode: "simulation",
+        scope: { module_ids: [], topic_ids: [] },
+        question_count: 2,
+      });
+    });
+
+    act(() => {
+      void result.current.submitExam();
+    });
+    expect(result.current.loading).toBe(true);
+
+    let secondResult: unknown;
+    await act(async () => {
+      secondResult = await result.current.submitExam();
+    });
+    expect(secondResult).toBeNull();
+    expect(mockedEvaluateSimulation).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveEvaluate({
+        total_questions: 2,
+        correct: 2,
+        partially_correct: 0,
+        incorrect: 0,
+        unanswered: 0,
+        practice_score_percent: 100,
+        by_topic: [],
+        by_competency: [],
+        question_results: [],
+        topics_to_reinforce: [],
+      });
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // recordCertificationAttempt() corre dentro de submitExam() — con el
+    // guard funcionando, debe haberse llamado una sola vez (no cero, no
+    // dos veces). Se verifica indirectamente vía el store real (sin mock).
+    const { getCourseLearningProgress } = await import("../../learning/learningProgressStore");
+    const progress = getCourseLearningProgress(COURSE_ID);
+    expect(progress?.certificationAttempts).toHaveLength(1);
   });
 });

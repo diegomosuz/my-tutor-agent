@@ -57,6 +57,7 @@ variable y funciona siempre que el navegador la soporte.
 | `CERTIFICATION_PROMPT_VERSION` | `certification-v1` | Forma parte de la cache key de bancos de preguntas. |
 | `CERTIFICATION_ITEMS_PER_TOPIC` | `6` | Cantidad objetivo de preguntas por tópico (1-10). También forma parte de la cache key. |
 | `CERTIFICATION_CACHE_DIR` | `/app/data/certification-cache` | Cache de `QuestionBank` generados. |
+| `CERTIFICATION_MAX_CONCURRENCY` | `2` | Máximo de `QuestionBank` generados en paralelo cuando faltan varios (1-4). `1` = estrictamente secuencial. Ver `docs/PERFORMANCE.md`. |
 | `SPEECH_CACHE_DIR` | `/app/data/speech-cache` | Cache de audio TTS ya sintetizado. |
 
 Todas las caches son descartables: se pueden borrar manualmente en
@@ -76,6 +77,12 @@ solo informativo.
 | Variable | Default | Descripción |
 |---|---|---|
 | `APP_VERSION` | `1.0.1` | Versión mostrada en `GET /api/system/status` y en la pantalla de Configuración. Sin automatización de semver. |
+
+## Performance (v1.1.0)
+
+`CERTIFICATION_MAX_CONCURRENCY` es la única variable nueva de este bloque.
+Ver `docs/PERFORMANCE.md` para el detalle completo de cache-first global,
+generación en waves acotadas, determinismo y single-flight.
 
 ## Notas de seguridad
 

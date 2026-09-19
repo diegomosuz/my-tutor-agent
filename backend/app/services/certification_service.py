@@ -36,12 +36,15 @@ certificación externa.
 """
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import logging
 import random
 import re
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -82,8 +85,24 @@ from app.services.llm_provider import (
 )
 from app.services.llm_retry import GenerationFailedError, generate_with_retries
 from app.services.service_logging import log_event
+from app.services.singleflight import SingleFlight
 
 logger = logging.getLogger("pwc_tutor.certification")
+
+# Deduplica generaciones concurrentes del MISMO QuestionBank (misma cache
+# key) dentro de este proceso — ver docs/PERFORMANCE.md. Instancia a nivel
+# de módulo: debe deduplicar entre requests HTTP distintos (dos
+# preparaciones simultáneas que necesiten el mismo tópico), no solo dentro
+# de las waves de una misma preparación (dentro de una preparación, cada
+# tópico pendiente ya se genera una única vez — ver `_run_generation_waves`).
+_bank_singleflight: SingleFlight = SingleFlight()
+
+# Concurrencia de generación acotada (PARTE 3/4 de la especificación de
+# performance v1.1.0): nunca 0 (secuencial roto) ni desmedida (ráfagas
+# contra el proveedor LLM). 1 reproduce el comportamiento estrictamente
+# secuencial de versiones anteriores.
+_MIN_CONCURRENCY = 1
+_MAX_CONCURRENCY = 4
 
 __all__ = [
     "get_or_generate_question_bank",
@@ -239,6 +258,92 @@ def _assemble_question_bank(
     )
 
 
+@dataclass(frozen=True)
+class _BankCacheContext:
+    """Todo lo necesario para leer/escribir el QuestionBank de UN tópico,
+    resuelto una sola vez y compartido entre el barrido cache-only (PARTE 2
+    de la especificación de performance) y la generación real, para nunca
+    duplicar/desincronizar la lógica de cache key."""
+
+    canonical: CanonicalTopicContent
+    grounding_packet: str
+    cache_dir: Path
+    key: str
+    prompt_version: str
+    items_per_topic: int
+    log_context: dict[str, object]
+
+
+def _resolve_bank_cache_context(
+    *, settings: Settings, course_id: str, module_id: str, topic_id: str, llm_provider: LLMProvider
+) -> _BankCacheContext:
+    """Resuelve el tópico y calcula la cache key. Lanza
+    `course_service.CourseNotFoundError`/`ModuleNotFoundError`/
+    `TopicNotFoundError` si el tópico no existe, y `LLMConfigurationError`
+    si el provider no está configurado (idéntico a versiones anteriores:
+    incluso para un cache HIT se exige credencial configurada, ya que el
+    provider/model participan de la cache key — ver docs/PERFORMANCE.md
+    sección "Qué NO cambió")."""
+    canonical, grounding_packet = course_service.get_grounding_packet(
+        settings.content_path, course_id, module_id, topic_id
+    )
+
+    if not llm_provider.is_configured():
+        raise LLMConfigurationError(
+            f"El proveedor LLM configurado ('{llm_provider.name}') no tiene credencial disponible."
+        )
+
+    prompt_version = settings.certification_prompt_version
+    items_per_topic = max(
+        _MIN_ITEMS_PER_TOPIC, min(_MAX_ITEMS_PER_TOPIC, settings.certification_items_per_topic)
+    )
+    key = _cache_key(
+        course_id=canonical.course_id,
+        module_id=canonical.module_id,
+        topic_id=canonical.topic_id,
+        content_sha256=canonical.content_sha256,
+        provider_name=llm_provider.name,
+        model=llm_provider.model,
+        prompt_version=prompt_version,
+        items_per_topic=items_per_topic,
+    )
+    log_context = {
+        "course_id": course_id,
+        "module_id": module_id,
+        "topic_id": topic_id,
+        "provider": llm_provider.name,
+        "model": llm_provider.model,
+        "content_sha256": canonical.content_sha256[:12],
+    }
+    return _BankCacheContext(
+        canonical=canonical,
+        grounding_packet=grounding_packet,
+        cache_dir=settings.certification_cache_path,
+        key=key,
+        prompt_version=prompt_version,
+        items_per_topic=items_per_topic,
+        log_context=log_context,
+    )
+
+
+def _peek_cached_question_bank(
+    *, settings: Settings, course_id: str, module_id: str, topic_id: str, llm_provider: LLMProvider
+) -> QuestionBank | None:
+    """Lee (SIN generar) el QuestionBank cacheado de un tópico, si existe.
+    Nunca llama al LLM. Usado por el barrido cache-only de `prepare_exam`
+    (PARTE 2 de la especificación de performance v1.1.0): mirar TODOS los
+    candidatos del scope en orden curricular buscando cache útil, antes de
+    generar nada, incluso si el banco cacheado está más adelante en el
+    orden que un candidato sin cache."""
+    ctx = _resolve_bank_cache_context(
+        settings=settings, course_id=course_id, module_id=module_id, topic_id=topic_id, llm_provider=llm_provider
+    )
+    bank = _read_cache(ctx.cache_dir, ctx.key)
+    if bank is not None:
+        log_event(logger, "certification_bank_cache_hit", **ctx.log_context)
+    return bank
+
+
 def get_or_generate_question_bank(
     *,
     settings: Settings,
@@ -267,78 +372,28 @@ def get_or_generate_question_bank(
     return bank
 
 
-def _get_or_generate_question_bank_with_source(
-    *,
-    settings: Settings,
-    course_id: str,
-    module_id: str,
-    topic_id: str,
-    provider: LLMProvider | None = None,
-    force_regenerate: bool = False,
-) -> tuple[QuestionBank, bool]:
-    """Igual que `get_or_generate_question_bank`, pero además devuelve si
-    fue un cache hit — usado internamente por `prepare_exam` (v1.0.1) para
-    poder reportar `cache_hits`/`generated_banks` en el resumen de
-    observabilidad sin recalcular la cache key por su cuenta (evita
-    duplicar/desincronizar la lógica de cache)."""
-    llm_provider = provider or get_llm_provider(settings)
-
-    canonical, grounding_packet = course_service.get_grounding_packet(
-        settings.content_path, course_id, module_id, topic_id
-    )
-
-    if not llm_provider.is_configured():
-        raise LLMConfigurationError(
-            f"El proveedor LLM configurado ('{llm_provider.name}') no tiene credencial disponible."
-        )
-
-    cache_dir = settings.certification_cache_path
-    prompt_version = settings.certification_prompt_version
-    items_per_topic = max(
-        _MIN_ITEMS_PER_TOPIC, min(_MAX_ITEMS_PER_TOPIC, settings.certification_items_per_topic)
-    )
-    key = _cache_key(
-        course_id=canonical.course_id,
-        module_id=canonical.module_id,
-        topic_id=canonical.topic_id,
-        content_sha256=canonical.content_sha256,
-        provider_name=llm_provider.name,
-        model=llm_provider.model,
-        prompt_version=prompt_version,
-        items_per_topic=items_per_topic,
-    )
-
-    log_context = {
-        "course_id": course_id,
-        "module_id": module_id,
-        "topic_id": topic_id,
-        "provider": llm_provider.name,
-        "model": llm_provider.model,
-        "content_sha256": canonical.content_sha256[:12],
-    }
-
-    if not force_regenerate:
-        cached_bank = _read_cache(cache_dir, key)
-        if cached_bank is not None:
-            log_event(logger, "certification_bank_cache_hit", **log_context)
-            return cached_bank, True
-
-    log_event(logger, "certification_bank_cache_miss", **log_context)
-    log_event(logger, "certification_bank_generation_started", **log_context)
+def _generate_question_bank(
+    *, settings: Settings, llm_provider: LLMProvider, ctx: _BankCacheContext
+) -> QuestionBank:
+    """El cuerpo real de generación (prompt -> LLM -> validación ->
+    ensamblado -> cache). Nunca se llama directamente para un cache HIT."""
+    log_event(logger, "certification_bank_generation_started", **ctx.log_context)
     started_at = time.monotonic()
 
     messages = build_certification_messages(
-        grounding_packet=grounding_packet, items_per_topic=items_per_topic
+        grounding_packet=ctx.grounding_packet, items_per_topic=ctx.items_per_topic
     )
 
     def _validate(body: GeneratedQuestionBankBody) -> None:
-        validate_question_bank(body, canonical)
+        validate_question_bank(body, ctx.canonical)
 
     def _on_retry(attempt: int, reason: str) -> None:
         # `reason` ya viene sanitizado por llm_retry.py ("upstream_error"
         # | "invalid_contract" | "grounding_invalid"); nunca incluye texto
         # de la respuesta del LLM ni del prompt.
-        log_event(logger, "certification_bank_generation_retry", **log_context, attempt=attempt, reason=reason)
+        log_event(
+            logger, "certification_bank_generation_retry", **ctx.log_context, attempt=attempt, reason=reason
+        )
 
     try:
         body = generate_with_retries(
@@ -354,7 +409,7 @@ def _get_or_generate_question_bank_with_source(
         log_event(
             logger,
             "certification_bank_generation_failed",
-            **log_context,
+            **ctx.log_context,
             duration_ms=duration_ms,
             error_type=type(exc).__name__,
         )
@@ -362,25 +417,76 @@ def _get_or_generate_question_bank_with_source(
 
     bank = _assemble_question_bank(
         body=body,
-        canonical=canonical,
+        canonical=ctx.canonical,
         provider_name=llm_provider.name,
         model=llm_provider.model,
-        prompt_version=prompt_version,
-        cache_key=key,
+        prompt_version=ctx.prompt_version,
+        cache_key=ctx.key,
     )
     # Nunca cachear un banco vacío de forma persistente evitaría poder
     # servir tópicos genuinamente breves; sí evitamos cachear errores (ya
     # garantizado: solo llegamos acá tras una validación exitosa).
-    _write_cache(cache_dir, key, bank)
+    _write_cache(ctx.cache_dir, ctx.key, bank)
 
     duration_ms = int((time.monotonic() - started_at) * 1000)
     log_event(
         logger,
         "certification_bank_generation_completed",
-        **log_context,
+        **ctx.log_context,
         duration_ms=duration_ms,
         question_count=len(bank.questions),
     )
+    return bank
+
+
+def _get_or_generate_question_bank_with_source(
+    *,
+    settings: Settings,
+    course_id: str,
+    module_id: str,
+    topic_id: str,
+    provider: LLMProvider | None = None,
+    force_regenerate: bool = False,
+) -> tuple[QuestionBank, bool]:
+    """Igual que `get_or_generate_question_bank`, pero además devuelve si
+    fue un cache hit — usado internamente por `prepare_exam` para poder
+    reportar `cache_hits`/`generated_banks` en el resumen de observabilidad
+    sin recalcular la cache key por su cuenta (evita duplicar/desincronizar
+    la lógica de cache).
+
+    La generación real está deduplicada por single-flight (v1.1.0, PARTE 8
+    de la especificación de performance): si dos requests HTTP distintos
+    necesitan generar el MISMO QuestionBank al mismo tiempo, solo uno
+    llama al LLM; el otro espera y reutiliza el resultado."""
+    llm_provider = provider or get_llm_provider(settings)
+    ctx = _resolve_bank_cache_context(
+        settings=settings, course_id=course_id, module_id=module_id, topic_id=topic_id, llm_provider=llm_provider
+    )
+
+    if not force_regenerate:
+        cached_bank = _read_cache(ctx.cache_dir, ctx.key)
+        if cached_bank is not None:
+            log_event(logger, "certification_bank_cache_hit", **ctx.log_context)
+            return cached_bank, True
+
+    log_event(logger, "certification_bank_cache_miss", **ctx.log_context)
+
+    def _generate_and_cache() -> QuestionBank:
+        # Re-check de cache tras adquirir el lock del single-flight: si
+        # otra generación concurrente para esta misma key ya escribió
+        # cache mientras esperábamos, la reutilizamos.
+        if not force_regenerate:
+            recached = _read_cache(ctx.cache_dir, ctx.key)
+            if recached is not None:
+                log_event(logger, "certification_bank_cache_hit", **ctx.log_context)
+                return recached
+        return _generate_question_bank(settings=settings, llm_provider=llm_provider, ctx=ctx)
+
+    def _on_wait() -> None:
+        log_event(logger, "certification_bank_singleflight_wait", **ctx.log_context)
+
+    singleflight_key = ctx.key if not force_regenerate else f"{ctx.key}:force"
+    bank = _bank_singleflight.call(singleflight_key, _generate_and_cache, on_wait=_on_wait)
     return bank, False
 
 
@@ -514,6 +620,251 @@ def _order_candidates_for_generation(
     return ordered
 
 
+# --------------------------------------------------------------------------
+# Cache-first global + concurrencia acotada (v1.1.0, bloque de performance)
+# --------------------------------------------------------------------------
+
+
+class _PrepareState:
+    """Acumuladores compartidos entre la fase cache-only y la fase de
+    generación de `prepare_exam`. `banks`/`total_available` se actualizan
+    SIEMPRE en orden curricular (nunca en orden de finalización de una
+    wave concurrente) — ver `_run_generation_waves`."""
+
+    __slots__ = (
+        "target_topic_coverage",
+        "question_count",
+        "banks",
+        "total_available",
+        "cache_hits",
+        "cache_misses",
+        "generated_banks",
+        "failed_banks",
+        "waves_started",
+        "scanned_count",
+        "pending_attempted",
+        "systemic_error",
+        "last_upstream_error",
+        "had_contract_failure",
+    )
+
+    def __init__(self, *, target_topic_coverage: int, question_count: int) -> None:
+        self.target_topic_coverage = target_topic_coverage
+        self.question_count = question_count
+        self.banks: list[QuestionBank] = []
+        self.total_available = 0
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.generated_banks = 0
+        self.failed_banks = 0
+        self.waves_started = 0
+        # Candidatos efectivamente examinados: `scanned_count` cuenta el
+        # barrido cache-only (FASE 1), `pending_attempted` cuenta cuántos de
+        # los candidatos pendientes se intentaron generar (FASE 2). Un
+        # candidato pendiente ya fue contado una vez en `scanned_count`, así
+        # que la cuenta total de "nunca tocados" es la suma de lo que cada
+        # fase dejó sin examinar en su propio universo (ver `prepare_exam`).
+        self.scanned_count = 0
+        self.pending_attempted = 0
+        self.systemic_error: Exception | None = None
+        self.last_upstream_error: LLMUpstreamError | None = None
+        self.had_contract_failure = False
+
+    def is_satisfied(self) -> bool:
+        return (
+            len(self.banks) >= self.target_topic_coverage
+            and self.total_available >= self.question_count
+        )
+
+    def add_bank(self, bank: QuestionBank) -> None:
+        self.banks.append(bank)
+        self.total_available += len(bank.questions)
+
+
+def _scan_cached_banks(
+    *,
+    settings: Settings,
+    course_id: str,
+    llm_provider: LLMProvider,
+    candidates: list[tuple[str, str]],
+    base_log_context: dict[str, object],
+    state: _PrepareState,
+) -> list[tuple[str, str]]:
+    """FASE 1 (PARTE 2 de la especificación de performance): recorre TODOS
+    los candidatos en orden curricular mirando solo su cache (nunca llama
+    al LLM). Devuelve, en orden curricular, los candidatos que resultaron
+    cache MISS (pendientes de generación). Se detiene apenas el cache
+    acumulado alcanza para satisfacer el pedido — nunca sigue mirando cache
+    de más candidatos de los necesarios, pero SÍ mira más allá de un miss
+    puntual buscando un hit más adelante en el orden."""
+    pending: list[tuple[str, str]] = []
+    for module_id, topic_id in candidates:
+        if state.is_satisfied():
+            break
+        state.scanned_count += 1
+        cached = _peek_cached_question_bank(
+            settings=settings,
+            course_id=course_id,
+            module_id=module_id,
+            topic_id=topic_id,
+            llm_provider=llm_provider,
+        )
+        if cached is not None:
+            state.cache_hits += 1
+            state.add_bank(cached)
+            log_event(
+                logger,
+                "certification_questions_available",
+                **base_log_context,
+                module_id=module_id,
+                topic_id=topic_id,
+                questions_available=state.total_available,
+                source="cache",
+            )
+        else:
+            state.cache_misses += 1
+            pending.append((module_id, topic_id))
+    return pending
+
+
+def _generate_one_for_wave(
+    *, settings: Settings, course_id: str, module_id: str, topic_id: str, llm_provider: LLMProvider
+) -> QuestionBank:
+    """Wrapper delgado usado por `_run_generation_waves` dentro de un
+    thread del pool: genera (nunca lee cache-only, eso ya lo hizo la fase
+    1) el QuestionBank de un candidato pendiente. Las excepciones de
+    `_get_or_generate_question_bank_with_source` se propagan tal cual —
+    `_run_generation_waves` las clasifica al recoger `future.result()`."""
+    bank, _was_cache_hit = _get_or_generate_question_bank_with_source(
+        settings=settings, course_id=course_id, module_id=module_id, topic_id=topic_id, provider=llm_provider
+    )
+    return bank
+
+
+def _run_generation_waves(
+    *,
+    settings: Settings,
+    course_id: str,
+    llm_provider: LLMProvider,
+    pending: list[tuple[str, str]],
+    base_log_context: dict[str, object],
+    state: _PrepareState,
+    max_concurrency: int,
+) -> None:
+    """FASE 2 (PARTES 3/5/6/7 de la especificación de performance): genera
+    `pending` (candidatos que la fase cache-only no pudo resolver) en waves
+    de hasta `max_concurrency` candidatos concurrentes, nunca todos a la
+    vez. Tras cada wave se reevalúa `state.is_satisfied()`: si ya alcanza,
+    la siguiente wave nunca se inicia (los candidatos restantes de
+    `pending` nunca se tocan) — se acepta que la wave YA iniciada pueda
+    producir hasta `max_concurrency - 1` bancos "de más" en vez de
+    implementar cancelación de requests HTTP ya en curso.
+
+    Determinismo (PARTE 5): los resultados de cada wave se agregan a
+    `state.banks` SIEMPRE en el orden curricular de sumisión (iterando la
+    lista de futures en orden), nunca en el orden en que terminan los
+    threads — dos ejecuciones con los mismos QuestionBanks cacheados
+    producen siempre el mismo examen ensamblado, sin importar qué tan
+    rápido responda el proveedor para cada tópico.
+
+    Tolerancia a fallos: un candidato que falla por un motivo específico
+    de ESE tópico no bloquea al resto de su wave. Un error SISTÉMICO dejar
+    terminar la wave ya iniciada (sus futures ya están corriendo), pero
+    ninguna wave nueva arranca después."""
+    effective_concurrency = max(1, min(max_concurrency, len(pending)))
+    index = 0
+    with ThreadPoolExecutor(max_workers=effective_concurrency) as executor:
+        while index < len(pending) and not state.is_satisfied() and state.systemic_error is None:
+            wave = pending[index : index + max_concurrency]
+            state.waves_started += 1
+            # NOTA: `state.attempted_count` no se incrementa acá — cada
+            # candidato de `pending` ya fue contado una vez por el barrido
+            # cache-only (`_scan_cached_banks`), que es lo único que decide
+            # cuántos candidatos del scope se "tocaron" en total (para
+            # `remaining_candidate_count`/`early_stop`).
+            for module_id, topic_id in wave:
+                log_event(
+                    logger, "certification_topic_selected", **base_log_context, module_id=module_id, topic_id=topic_id
+                )
+
+            # contextvars.copy_context() propaga current_request_id (ver
+            # app/services/service_logging.py) a los threads del pool —
+            # ThreadPoolExecutor, a diferencia de asyncio, no lo hace solo.
+            # Un Context no puede entrarse dos veces en simultáneo, así que
+            # se captura una copia INDEPENDIENTE por cada tarea (nunca una
+            # sola copia compartida entre los threads de la wave).
+            futures = [
+                executor.submit(
+                    contextvars.copy_context().run,
+                    _generate_one_for_wave,
+                    settings=settings,
+                    course_id=course_id,
+                    module_id=module_id,
+                    topic_id=topic_id,
+                    llm_provider=llm_provider,
+                )
+                for module_id, topic_id in wave
+            ]
+
+            for (module_id, topic_id), future in zip(wave, futures):
+                try:
+                    bank = future.result()
+                except (LLMConfigurationError, LLMAuthError) as exc:
+                    state.systemic_error = exc
+                    state.failed_banks += 1
+                    log_event(
+                        logger,
+                        "certification_topic_skipped",
+                        **base_log_context,
+                        module_id=module_id,
+                        topic_id=topic_id,
+                        error_type=type(exc).__name__,
+                        reason="systemic",
+                    )
+                    continue  # dejar terminar el resto de ESTA wave igual
+                except LLMUpstreamError as exc:
+                    state.last_upstream_error = exc
+                    state.failed_banks += 1
+                    log_event(
+                        logger,
+                        "certification_topic_skipped",
+                        **base_log_context,
+                        module_id=module_id,
+                        topic_id=topic_id,
+                        error_type=type(exc).__name__,
+                        reason="upstream",
+                    )
+                    continue
+                except GenerationFailedError as exc:
+                    state.had_contract_failure = True
+                    state.failed_banks += 1
+                    log_event(
+                        logger,
+                        "certification_topic_skipped",
+                        **base_log_context,
+                        module_id=module_id,
+                        topic_id=topic_id,
+                        error_type=type(exc).__name__,
+                        reason="invalid_contract_or_grounding",
+                    )
+                    continue
+
+                state.generated_banks += 1
+                state.add_bank(bank)
+                log_event(
+                    logger,
+                    "certification_questions_available",
+                    **base_log_context,
+                    module_id=module_id,
+                    topic_id=topic_id,
+                    questions_available=state.total_available,
+                    source="generated",
+                )
+
+            state.pending_attempted += len(wave)
+            index += len(wave)
+
+
 def prepare_exam(
     *,
     settings: Settings,
@@ -525,37 +876,41 @@ def prepare_exam(
     seed: int | None = None,
     provider: LLMProvider | None = None,
 ) -> CertificationPrepareResponse:
-    """Resuelve el scope y genera/recupera QuestionBanks de forma
-    INCREMENTAL y demand-driven (v1.0.1: PARTES 1-5 de la especificación
-    de hardening) — nunca genera bancos para todo el scope antes de
-    ensamblar el examen. El ensamblaje final sigue siendo 100%
-    determinístico (round-robin por pregunta, `_round_robin_select`,
-    NUNCA con el LLM).
+    """Resuelve el scope y genera/recupera QuestionBanks en dos fases
+    (v1.1.0, bloque de performance — ver docs/PERFORMANCE.md; hereda el
+    espíritu incremental/demand-driven de v1.0.1). El ensamblaje final
+    sigue siendo 100% determinístico (round-robin por pregunta,
+    `_round_robin_select`, NUNCA con el LLM), y el orden de los bancos
+    usado para ese ensamblaje es siempre el orden curricular de los
+    candidatos — nunca el orden en que terminan las llamadas concurrentes.
 
     Algoritmo:
       1. Ordenar candidatos (module_id, topic_id) — round-robin por módulo
          para scope curso/módulos, orden pedido para scope de tópicos.
-      2. Recorrer candidatos EN ORDEN, cache-first (`get_or_generate_question_bank`
-         ya consulta cache antes de llamar al LLM). Si un candidato falla
-         por un motivo específico de ESE tópico (`LLMUpstreamError` tras
-         agotar sus reintentos, o `GenerationFailedError` — contrato/
-         grounding inválido tras reintentos), se registra y se continúa
-         con el siguiente candidato: UN tópico roto nunca aborta toda la
-         preparación. Un error SISTÉMICO (`LLMConfigurationError` /
-         `LLMAuthError` — nunca va a mejorar reintentando otro tópico)
-         aborta la búsqueda de más candidatos de inmediato.
-      3. Early stop (PARTE 2): en cuanto se cubrieron aproximadamente
-         `min(question_count, candidatos_disponibles)` tópicos DISTINTOS
-         Y ya hay `question_count` preguntas disponibles en total, se deja
-         de generar/consultar más candidatos (PARTE 5: nunca se corta tras
-         un solo tópico si todavía no se alcanzó esa cobertura mínima).
-      4. Si al terminar (por agotamiento o early stop) no se consiguió
-         NINGUNA pregunta válida: se decide el error más preciso posible
-         (proveedor realmente inaccesible vs. ningún tópico produjo
-         contenido válido) — nunca un 502 genérico si el proveedor sí
-         respondió. Si se consiguió AL MENOS una pregunta válida, nunca es
-         un error, aunque sea menos que `question_count` (un tópico/curso
-         corto puede legítimamente no alcanzar para completar el pedido)."""
+      2. FASE CACHE-ONLY (`_scan_cached_banks`): recorrer TODOS los
+         candidatos en ese orden mirando SOLO su cache (nunca llama al
+         LLM). Si el cache ya alcanza para cubrir `question_count` con
+         `target_topic_coverage` tópicos distintos, la preparación termina
+         acá con CERO llamadas al proveedor — incluso si los bancos útiles
+         están más adelante en el orden que un candidato sin cache (nunca
+         se corta el barrido en el primer miss).
+      3. FASE DE GENERACIÓN (`_run_generation_waves`), solo si la fase
+         anterior no alcanzó: los candidatos que resultaron cache MISS se
+         generan en "waves" de hasta `CERTIFICATION_MAX_CONCURRENCY`
+         candidatos en paralelo (bounded concurrency, nunca todos a la
+         vez). Tras cada wave se reevalúa la condición de early stop; si ya
+         alcanza, la siguiente wave nunca se inicia (los candidatos
+         restantes nunca se tocan). Un candidato que falla por un motivo
+         específico de ESE tópico (`LLMUpstreamError` tras agotar sus
+         reintentos, o `GenerationFailedError`) se registra y no bloquea al
+         resto de su wave ni a las siguientes. Un error SISTÉMICO
+         (`LLMConfigurationError`/`LLMAuthError`) dejar terminar la wave ya
+         iniciada, pero ninguna wave nueva arranca después.
+      4. Si al terminar no se consiguió NINGUNA pregunta válida: se decide
+         el error más preciso posible (proveedor realmente inaccesible vs.
+         ningún tópico produjo contenido válido) — nunca un 502 genérico si
+         el proveedor sí respondió. Si se consiguió AL MENOS una pregunta
+         válida, nunca es un error, aunque sea menos que `question_count`."""
     llm_provider = provider or get_llm_provider(settings)
 
     resolved_topics = resolve_scope(settings=settings, course_id=course_id, scope=scope)
@@ -563,6 +918,9 @@ def prepare_exam(
         resolved_topics, is_topic_specific_scope=bool(scope.topic_ids)
     )
     target_topic_coverage = min(question_count, len(candidates))
+    max_concurrency = max(
+        _MIN_CONCURRENCY, min(_MAX_CONCURRENCY, settings.certification_max_concurrency)
+    )
 
     base_log_context = {"course_id": course_id, "mode": mode.value}
     log_event(
@@ -571,138 +929,82 @@ def prepare_exam(
         **base_log_context,
         requested_count=question_count,
         candidate_count=len(candidates),
+        max_concurrency=max_concurrency,
     )
     started_at = time.monotonic()
 
-    banks: list[QuestionBank] = []
-    total_available = 0
-    cache_hits = 0
-    generated_banks = 0
-    failed_banks = 0
-    systemic_error: Exception | None = None
-    last_upstream_error: LLMUpstreamError | None = None
-    had_contract_failure = False
-    early_stop = False
-    attempted_count = 0
+    state = _PrepareState(target_topic_coverage=target_topic_coverage, question_count=question_count)
 
-    for module_id, topic_id in candidates:
-        if len(banks) >= target_topic_coverage and total_available >= question_count:
-            early_stop = True
-            remaining = len(candidates) - attempted_count
-            log_event(
-                logger,
-                "certification_early_stop",
-                **base_log_context,
-                topics_covered=len(banks),
-                questions_available=total_available,
-                remaining_candidate_count=remaining,
-            )
-            if remaining > 0:
-                log_event(
-                    logger,
-                    "certification_bank_generation_skipped",
-                    **base_log_context,
-                    skipped_count=remaining,
-                    reason="early_stop",
-                )
-            break
+    pending = _scan_cached_banks(
+        settings=settings,
+        course_id=course_id,
+        llm_provider=llm_provider,
+        candidates=candidates,
+        base_log_context=base_log_context,
+        state=state,
+    )
 
-        attempted_count += 1
-        log_event(
-            logger,
-            "certification_topic_selected",
-            **base_log_context,
-            module_id=module_id,
-            topic_id=topic_id,
-        )
-        try:
-            bank, was_cache_hit = _get_or_generate_question_bank_with_source(
-                settings=settings,
-                course_id=course_id,
-                module_id=module_id,
-                topic_id=topic_id,
-                provider=llm_provider,
-            )
-        except (LLMConfigurationError, LLMAuthError) as exc:
-            systemic_error = exc
-            failed_banks += 1
-            log_event(
-                logger,
-                "certification_topic_skipped",
-                **base_log_context,
-                module_id=module_id,
-                topic_id=topic_id,
-                error_type=type(exc).__name__,
-                reason="systemic",
-            )
-            break  # ningún otro candidato va a tener mejor suerte
-        except LLMUpstreamError as exc:
-            last_upstream_error = exc
-            failed_banks += 1
-            log_event(
-                logger,
-                "certification_topic_skipped",
-                **base_log_context,
-                module_id=module_id,
-                topic_id=topic_id,
-                error_type=type(exc).__name__,
-                reason="upstream",
-            )
-            continue
-        except GenerationFailedError as exc:
-            had_contract_failure = True
-            failed_banks += 1
-            log_event(
-                logger,
-                "certification_topic_skipped",
-                **base_log_context,
-                module_id=module_id,
-                topic_id=topic_id,
-                error_type=type(exc).__name__,
-                reason="invalid_contract_or_grounding",
-            )
-            continue
-
-        if was_cache_hit:
-            cache_hits += 1
-        else:
-            generated_banks += 1
-        banks.append(bank)
-        total_available += len(bank.questions)
-        log_event(
-            logger,
-            "certification_questions_available",
-            **base_log_context,
-            module_id=module_id,
-            topic_id=topic_id,
-            questions_available=total_available,
+    if not state.is_satisfied() and pending:
+        _run_generation_waves(
+            settings=settings,
+            course_id=course_id,
+            llm_provider=llm_provider,
+            pending=pending,
+            base_log_context=base_log_context,
+            state=state,
+            max_concurrency=max_concurrency,
         )
 
     duration_ms = int((time.monotonic() - started_at) * 1000)
+    # "Nunca tocado" = candidatos que la fase cache-only nunca llegó a
+    # mirar (candidate_count - scanned_count) + candidatos que resultaron
+    # cache miss pero la fase de generación nunca intentó (len(pending) -
+    # pending_attempted). Un candidato pendiente ya fue contado una vez en
+    # scanned_count, por eso no se sigue sumando en la fase de generación.
+    never_touched = (len(candidates) - state.scanned_count) + (len(pending) - state.pending_attempted)
+    early_stop = state.is_satisfied() and never_touched > 0
+    if early_stop:
+        remaining = never_touched
+        log_event(
+            logger,
+            "certification_early_stop",
+            **base_log_context,
+            topics_covered=len(state.banks),
+            questions_available=state.total_available,
+            remaining_candidate_count=remaining,
+        )
+        if remaining > 0:
+            log_event(
+                logger,
+                "certification_bank_generation_skipped",
+                **base_log_context,
+                skipped_count=remaining,
+                reason="early_stop",
+            )
 
-    if total_available == 0:
+    if state.total_available == 0:
         log_event(
             logger,
             "certification_prepare_failed",
             **base_log_context,
             requested_count=question_count,
             candidate_count=len(candidates),
-            failed_banks=failed_banks,
+            failed_banks=state.failed_banks,
             duration_ms=duration_ms,
         )
-        if systemic_error is not None:
-            raise systemic_error
-        if last_upstream_error is not None and not had_contract_failure:
+        if state.systemic_error is not None:
+            raise state.systemic_error
+        if state.last_upstream_error is not None and not state.had_contract_failure:
             # Todos los intentos fallaron por red/proveedor, ninguno llegó
             # siquiera a producir contenido inválido: el proveedor está
             # genuinamente inaccesible (Caso B de la especificación).
-            raise last_upstream_error
+            raise state.last_upstream_error
         # El proveedor respondió al menos una vez, pero ningún tópico
         # produjo contenido válido tras agotar reintentos y candidatos
         # (Caso C): esto NO es un error de proveedor.
         raise CertificationInsufficientQuestionsError(course_id, question_count)
 
-    selected = _round_robin_select(banks, question_count, shuffle=shuffle, seed=seed)
+    selected = _round_robin_select(state.banks, question_count, shuffle=shuffle, seed=seed)
 
     questions = [
         ExamQuestionView(
@@ -727,10 +1029,13 @@ def prepare_exam(
         **base_log_context,
         requested_count=question_count,
         candidate_count=len(candidates),
-        cache_hits=cache_hits,
-        generated_banks=generated_banks,
-        failed_banks=failed_banks,
-        questions_available=total_available,
+        cache_hits=state.cache_hits,
+        cache_misses=state.cache_misses,
+        generated_banks=state.generated_banks,
+        failed_banks=state.failed_banks,
+        waves_started=state.waves_started,
+        max_concurrency=max_concurrency,
+        questions_available=state.total_available,
         questions_returned=len(questions),
         early_stop=early_stop,
         duration_ms=duration_ms,

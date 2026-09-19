@@ -58,6 +58,9 @@ export function useCertificationExam(courseId: string | undefined): UseCertifica
 
   async function prepare(request: CertificationPrepareRequest): Promise<boolean> {
     if (!courseId) return false;
+    // v1.1.0 (UX de doble submit): guard explícito, no confiar solo en que
+    // el botón que llama a prepare() esté disabled mientras loading=true.
+    if (loading) return false;
     setLoading(true);
     setError(null);
     try {
@@ -124,6 +127,9 @@ export function useCertificationExam(courseId: string | undefined): UseCertifica
       // pregunta (evita doble envío / re-evaluación accidental).
       return session.evaluations[key];
     }
+    // v1.1.0: guard contra doble click mientras la evaluación anterior
+    // (de esta u otra pregunta) todavía está en curso.
+    if (loading) return null;
     const selected = session.selections[key] ?? [];
     setLoading(true);
     setError(null);
@@ -148,6 +154,10 @@ export function useCertificationExam(courseId: string | undefined): UseCertifica
 
   async function submitExam(): Promise<CertificationPracticeResult | null> {
     if (!session || !courseId) return null;
+    // v1.1.0: mismo guard que prepare() — nunca dos entregas concurrentes
+    // de la misma práctica/simulacro (evitaría registrar el intento dos
+    // veces en "Mi aprendizaje", ver recordCertificationAttempt() abajo).
+    if (loading) return null;
     setLoading(true);
     setError(null);
     try {

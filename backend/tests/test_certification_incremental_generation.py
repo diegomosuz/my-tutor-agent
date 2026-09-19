@@ -40,10 +40,18 @@ def _make_many_topics_content_dir(
     return content_dir
 
 
-def _settings(tmp_path: Path, content_dir: Path) -> Settings:
+def _settings(tmp_path: Path, content_dir: Path, *, max_concurrency: int = 1) -> Settings:
+    # max_concurrency=1 por defecto: estos tests (v1.0.1) verifican
+    # minimalidad/orden exactos de generación, propiedades que solo se
+    # cumplen con call-counts exactos bajo procesamiento estrictamente
+    # secuencial. Con concurrency > 1 una wave ya iniciada puede producir
+    # hasta concurrency-1 bancos "de más" por diseño (ver
+    # docs/PERFORMANCE.md) — eso se prueba aparte en
+    # test_certification_concurrency.py, no acá.
     return Settings(
         content_dir=str(content_dir),
         certification_cache_dir=str(tmp_path / "cert-cache"),
+        certification_max_concurrency=max_concurrency,
     )
 
 

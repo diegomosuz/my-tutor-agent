@@ -4,6 +4,8 @@ hit/miss, texto vacío/máximo, errores auth/upstream, y que la cache key
 cambie por voice/text/instructions/speed."""
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -188,3 +190,83 @@ def test_failed_generation_is_never_cached(tmp_path):
     working_client = FakeSpeechClient()
     synthesize_speech(settings=settings, text="hola", client=working_client)
     assert len(working_client.calls) == 1  # no fue cache hit de un error previo
+
+
+# --------------------------------------------------------------------------
+# Single-flight (v1.1.0, bloque de performance, PARTE 8/16): dos requests
+# casi simultáneos para la MISMA cache key deben producir UNA sola llamada
+# real al proveedor TTS — el bug real observado (ver docs/PERFORMANCE.md).
+# --------------------------------------------------------------------------
+
+
+class _SlowFakeSpeechClient:
+    """Cliente TTS fake con latencia artificial y contador thread-safe de
+    llamadas reales — usado para exhibir el race de single-flight."""
+
+    def __init__(self, *, delay_seconds: float = 0.1, audio: bytes = b"FAKE_MP3_BYTES") -> None:
+        self._delay_seconds = delay_seconds
+        self._audio = audio
+        self._lock = threading.Lock()
+        self.call_count = 0
+
+    def create_speech(self, *, model, voice, instructions, speed, text):
+        with self._lock:
+            self.call_count += 1
+        time.sleep(self._delay_seconds)
+        return self._audio
+
+
+def test_concurrent_requests_same_key_call_provider_once(tmp_path):
+    settings = _settings(tmp_path)
+    client = _SlowFakeSpeechClient(delay_seconds=0.15)
+    results: list[bytes] = []
+    errors: list[Exception] = []
+
+    def _call() -> None:
+        try:
+            results.append(synthesize_speech(settings=settings, text="Narración idéntica.", client=client))
+        except Exception as exc:  # pragma: no cover - solo para diagnóstico si falla
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_call) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    assert not errors
+    assert client.call_count == 1  # una sola generación real, el resto reutilizó el resultado
+    assert len(results) == 5
+    assert all(r == results[0] for r in results)
+
+
+def test_concurrent_requests_different_keys_call_provider_twice(tmp_path):
+    settings = _settings(tmp_path)
+    client = _SlowFakeSpeechClient(delay_seconds=0.1)
+
+    def _call(text: str) -> None:
+        synthesize_speech(settings=settings, text=text, client=client)
+
+    t1 = threading.Thread(target=_call, args=("Narración A.",))
+    t2 = threading.Thread(target=_call, args=("Narración B.",))
+    t1.start()
+    t2.start()
+    t1.join(timeout=5)
+    t2.join(timeout=5)
+
+    assert client.call_count == 2  # keys distintas, nunca se deduplican entre sí
+
+
+def test_singleflight_entry_cleared_after_failure_allows_retry(tmp_path):
+    settings = _settings(tmp_path)
+    failing_client = FakeSpeechClient(audio=SpeechUpstreamError("timeout"))
+    with pytest.raises(SpeechUpstreamError):
+        synthesize_speech(settings=settings, text="reintento", client=failing_client)
+
+    # Si el single-flight no limpiara su entrada in-flight tras la
+    # excepción, este segundo intento (misma key) se quedaría esperando
+    # para siempre un resultado que nunca llega (deadlock).
+    working_client = FakeSpeechClient()
+    audio = synthesize_speech(settings=settings, text="reintento", client=working_client)
+    assert audio == b"FAKE_MP3_BYTES"
+    assert len(working_client.calls) == 1

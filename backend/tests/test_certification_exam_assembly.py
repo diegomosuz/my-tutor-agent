@@ -50,9 +50,17 @@ def _make_multi_topic_content_dir(tmp_path: Path) -> Path:
 
 
 def _settings(tmp_path: Path, content_dir: Path) -> Settings:
+    # max_concurrency=1: estos tests asumen que FakeLLMProvider consume sus
+    # respuestas precargadas en el mismo orden en que los candidatos se
+    # resuelven (round-robin determinístico), una garantía que solo vale
+    # bajo generación estrictamente secuencial — con concurrencia real, dos
+    # threads pueden llamar a generate_structured en cualquier orden (ver
+    # test_certification_concurrency.py para los tests que sí ejercitan
+    # concurrencia real con un fake provider thread-safe por tópico).
     return Settings(
         content_dir=str(content_dir),
         certification_cache_dir=str(tmp_path / "cert-cache"),
+        certification_max_concurrency=1,
     )
 
 

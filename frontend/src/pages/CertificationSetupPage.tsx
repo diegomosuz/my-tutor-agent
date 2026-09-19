@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
+import { AiOperationStatus } from "../components/AiOperationStatus";
 import { Breadcrumb } from "../components/Breadcrumb";
 import { useCertificationExam } from "../certification/useCertificationExam";
 import type { CertificationMode, CourseDetail } from "../types/api";
@@ -61,7 +62,7 @@ export function CertificationSetupPage() {
   }
 
   async function handlePrepare() {
-    if (!courseId) return;
+    if (!courseId || exam.loading) return;
     const scope =
       scopeKind === "topics"
         ? { module_ids: [], topic_ids: selectedTopicIds }
@@ -172,8 +173,13 @@ export function CertificationSetupPage() {
               {course.modules.map((module) => (
                 <div key={module.id} className="cert-setup__topic-group">
                   <span className="cert-setup__topic-group-title">{module.title}</span>
-                  {module.topics.map((topic) => (
-                    <label key={topic.id} className="cert-setup__checkbox">
+                  {module.topics.map((topic, index) => (
+                    // topic.id no es necesariamente único dentro de un módulo
+                    // (ver "duplicate_slug" en course_diagnostics.py, mismo
+                    // caso real ya corregido en ClassroomPage.tsx/
+                    // LearningProgressPage.tsx); se agrega el índice como
+                    // desempate para la key de React.
+                    <label key={`${topic.id}-${index}`} className="cert-setup__checkbox">
                       <input
                         type="checkbox"
                         checked={selectedTopicIds.includes(topic.id)}
@@ -244,6 +250,13 @@ export function CertificationSetupPage() {
         >
           {exam.loading ? "Preparando preguntas…" : "Preparar práctica"}
         </button>
+
+        {exam.loading && (
+          <AiOperationStatus
+            initialMessage={mode === "practice" ? "Preparando práctica…" : "Preparando simulacro…"}
+            delayedMessage="Esta es la primera preparación de parte del material. La generación con IA puede tardar unos segundos."
+          />
+        )}
       </div>
     </div>
   );
