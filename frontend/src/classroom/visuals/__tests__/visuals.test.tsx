@@ -56,6 +56,7 @@ describe("ComparisonVisual — v1.1.0 contenido estructurado", () => {
           { label: "Entradas", values: ["Reglas fijas", "Datos de entrenamiento"] },
           { label: "Resultado", values: ["Determinístico", "Probabilístico"] },
         ],
+        columns: [],
       },
     });
     render(<ComparisonVisual {...props({ scene })} />);
@@ -67,7 +68,7 @@ describe("ComparisonVisual — v1.1.0 contenido estructurado", () => {
 
   it("modo cards: sin 'rows', muestra una card por columna con los key_points", () => {
     const scene = withVisual(baseScene, "comparison", ["SRC-002"], {
-      comparison: { column_labels: ["Concepto A", "Concepto B"], rows: [] },
+      comparison: { column_labels: ["Concepto A", "Concepto B"], rows: [], columns: [] },
     });
     render(<ComparisonVisual {...props({ scene })} />);
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
@@ -82,10 +83,58 @@ describe("ComparisonVisual — v1.1.0 contenido estructurado", () => {
       expect(screen.getByText(kp.text)).toBeInTheDocument();
     }
   });
+
+  // v1.2.0 — PARTE 22.L-N: columns column-specific + fallback legacy.
+  it("L: modo cards con 'columns', cada columna muestra contenido DISTINTO (nunca los mismos key_points repetidos)", () => {
+    const scene = {
+      ...withVisual(baseScene, "comparison", ["SRC-002"], {
+        comparison: {
+          column_labels: ["Antes", "Después"],
+          rows: [],
+          columns: [
+            { title: "Antes", points: ["Configuración repetida", "12 min cargando contexto"] },
+            { title: "Después", points: ["Se configura una vez", "Contexto ya disponible"] },
+          ],
+        },
+      }),
+      key_points: [{ text: "Punto compartido irrelevante", source_refs: ["SRC-002"] }],
+    };
+    render(<ComparisonVisual {...props({ scene })} />);
+    expect(screen.getByText("Configuración repetida")).toBeInTheDocument();
+    expect(screen.getByText("Se configura una vez")).toBeInTheDocument();
+    // Nunca aparecen los mismos puntos duplicados en ambas columnas.
+    expect(screen.queryAllByText("Configuración repetida")).toHaveLength(1);
+    expect(screen.queryByText("Punto compartido irrelevante")).not.toBeInTheDocument();
+  });
+
+  it("M: sin 'columns' (legacy), vuelve a mostrar los key_points compartidos en cada card", () => {
+    const scene = withVisual(baseScene, "comparison", ["SRC-002"], {
+      comparison: { column_labels: ["Concepto A", "Concepto B"], rows: [], columns: [] },
+    });
+    render(<ComparisonVisual {...props({ scene })} />);
+    // Comportamiento legacy intacto: los key_points de la escena aparecen
+    // repetidos en cada card (ver fixture baseScene.key_points).
+    for (const kp of baseScene.key_points) {
+      expect(screen.getAllByText(kp.text).length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("N: la tabla existente (rows) sigue funcionando exactamente igual con el nuevo schema", () => {
+    const scene = withVisual(baseScene, "comparison", ["SRC-002"], {
+      comparison: {
+        column_labels: ["A", "B"],
+        rows: [{ label: "Fila", values: ["x", "y"] }],
+        columns: [],
+      },
+    });
+    render(<ComparisonVisual {...props({ scene })} />);
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getByText("x")).toBeInTheDocument();
+  });
 });
 
-describe("ArchitectureVisual — v1.1.0 nodes/edges", () => {
-  it("renderiza nodos y relaciones EXACTAMENTE como fueron declaradas, sin inventar conexiones", () => {
+describe("ArchitectureVisual — v1.2.0 diagrama real (DiagramCanvas)", () => {
+  it("E/F: renderiza nodos y dibuja un conector SVG real por cada edge declarada, sin inventar conexiones", () => {
     const scene = withVisual(baseScene, "architecture", ["SRC-002"], {
       nodes: [
         { id: "api", label: "API Gateway", description: "", role: "component" },
@@ -93,27 +142,56 @@ describe("ArchitectureVisual — v1.1.0 nodes/edges", () => {
       ],
       edges: [{ from_id: "api", to_id: "db", label: "consulta", relation_type: "connects_to" }],
     });
-    render(<ArchitectureVisual {...props({ scene })} />);
+    const { container } = render(<ArchitectureVisual {...props({ scene })} />);
     expect(screen.getAllByText("API Gateway").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Base de datos").length).toBeGreaterThan(0);
-    expect(screen.getByText("consulta")).toBeInTheDocument();
-    // Solo una relación declarada -> solo un ítem en la lista de aristas.
-    const edgeItems = document.querySelectorAll(".visual-graph__edges li");
-    expect(edgeItems).toHaveLength(1);
+    // Conector geométrico real (SVG <line>), nunca una lista de texto "A -> B".
+    expect(container.querySelectorAll("svg.diagram-canvas__edges line")).toHaveLength(1);
+    expect(container.querySelector(".visual-graph__edges")).not.toBeInTheDocument();
+    // Representación accesible equivalente (PARTE 29), oculta visualmente.
+    expect(container.querySelector(".sr-only")?.textContent).toContain("API Gateway");
+    expect(container.querySelector(".sr-only")?.textContent).toContain("Base de datos");
+  });
+
+  it("G: el label de una edge se muestra de forma compacta cuando hay espacio", () => {
+    const scene = withVisual(baseScene, "architecture", ["SRC-002"], {
+      nodes: [
+        { id: "a", label: "A", description: "", role: null },
+        { id: "b", label: "B", description: "", role: null },
+      ],
+      edges: [{ from_id: "a", to_id: "b", label: "corto", relation_type: "connects_to" }],
+    });
+    const { container } = render(<ArchitectureVisual {...props({ scene })} />);
+    expect(container.querySelector("svg text.diagram-canvas__edge-label")?.textContent).toBe("corto");
+  });
+
+  it("un label de edge demasiado largo no se renderiza inline (no rompe el diagrama)", () => {
+    const longLabel = "a".repeat(80);
+    const scene = withVisual(baseScene, "architecture", ["SRC-002"], {
+      nodes: [
+        { id: "a", label: "A", description: "", role: null },
+        { id: "b", label: "B", description: "", role: null },
+      ],
+      edges: [{ from_id: "a", to_id: "b", label: longLabel, relation_type: "connects_to" }],
+    });
+    const { container } = render(<ArchitectureVisual {...props({ scene })} />);
+    expect(container.querySelector("svg text.diagram-canvas__edge-label")).not.toBeInTheDocument();
+    // El contenido completo sigue disponible para accesibilidad.
+    expect(container.querySelector(".sr-only")?.textContent).toContain(longLabel);
   });
 
   it("sin nodes, no muestra ninguna relación inventada (fallback a key_points)", () => {
     const scene = withVisual(baseScene, "architecture", ["SRC-002"]);
     const { container } = render(<ArchitectureVisual {...props({ scene })} />);
-    expect(container.querySelector(".visual-graph__edges")).not.toBeInTheDocument();
+    expect(container.querySelector(".diagram-canvas")).not.toBeInTheDocument();
     for (const kp of baseScene.key_points) {
       expect(screen.getByText(kp.text)).toBeInTheDocument();
     }
   });
 });
 
-describe("ConceptMapVisual — v1.1.0 nodes/edges", () => {
-  it("distingue visualmente de architecture (radial, no grid) y muestra relaciones declaradas", () => {
+describe("ConceptMapVisual — v1.2.0 diagrama real (DiagramCanvas)", () => {
+  it("I/J/K: centro fijo = scene.title, nodos visibles, edges como conector SVG real (nunca lista 'A -> B')", () => {
     const scene = withVisual(baseScene, "concept_map", ["SRC-002"], {
       nodes: [
         { id: "a", label: "Concepto A", description: "", role: null },
@@ -122,9 +200,19 @@ describe("ConceptMapVisual — v1.1.0 nodes/edges", () => {
       edges: [{ from_id: "a", to_id: "b", label: "", relation_type: "relates_to" }],
     });
     const { container } = render(<ConceptMapVisual {...props({ scene })} />);
-    expect(container.querySelector(".visual-concept-map__center")).toHaveTextContent(baseScene.title.text);
+    expect(container.querySelector(".diagram-canvas__radial-center")).toHaveTextContent(baseScene.title.text);
     expect(screen.getAllByText("Concepto A").length).toBeGreaterThan(0);
-    expect(container.querySelectorAll(".visual-graph__edges li")).toHaveLength(1);
+    expect(screen.getAllByText("Concepto B").length).toBeGreaterThan(0);
+    expect(container.querySelectorAll("svg.diagram-canvas__edges line")).toHaveLength(1);
+    expect(container.querySelector(".visual-graph__edges")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Concepto A.*->.*Concepto B/)).not.toBeInTheDocument();
+  });
+
+  it("sin nodes, cae a key_points alrededor de scene.title (robustez ante cache vieja)", () => {
+    const scene = withVisual(baseScene, "concept_map", ["SRC-002"]);
+    const { container } = render(<ConceptMapVisual {...props({ scene })} />);
+    expect(container.querySelector(".diagram-canvas")).not.toBeInTheDocument();
+    expect(container.querySelector(".visual-concept-map__center")).toHaveTextContent(baseScene.title.text);
   });
 });
 

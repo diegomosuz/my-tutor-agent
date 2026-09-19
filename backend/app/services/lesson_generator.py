@@ -184,10 +184,58 @@ def _assemble_lesson_plan(
     )
 
 
+def _grounding_reason_codes(problems: list[str]) -> str:
+    """Traduce los mensajes de `LessonValidationError.problems` (ya de por
+    sí seguros: construidos por nuestro propio código a partir de
+    scene_id/conteos/visual_type, NUNCA texto libre del LLM) a códigos
+    cortos y estables para logging (v1.2.0, PARTE 20) — más fácil de
+    agregar/filtrar en logs que el mensaje completo, sin cambiar qué se
+    expone (ya era seguro antes)."""
+    codes: list[str] = []
+    for problem in problems:
+        if "scenes vacío" in problem:
+            code = "no_scenes"
+        elif "scene_id duplicados" in problem:
+            code = "duplicate_scene_id"
+        elif "scene_id debe ser secuencial" in problem:
+            code = "non_sequential_scene_id"
+        elif ".visual: source_refs inexistentes" in problem:
+            code = "visual_source_refs_invalid"
+        elif "source_refs vacío" in problem:
+            code = "source_refs_empty"
+        elif "source_refs inexistentes" in problem:
+            code = "source_refs_invalid"
+        elif "process_steps" in problem:
+            code = "process_steps_insufficient"
+        elif "comparison" in problem:
+            code = "comparison_content_missing"
+        elif "nodes" in problem:
+            code = "graph_nodes_insufficient"
+        elif "image requiere" in problem:
+            code = "image_source_missing"
+        else:
+            code = "other"
+        codes.append(code)
+    return ",".join(codes)
+
+
+def _visual_types_for_log(body: GeneratedLessonBody) -> str:
+    """Lista compacta y segura de `visual_type` propuestos en un intento
+    (v1.2.0, PARTE 20 de observabilidad de retries): nunca el prompt, el
+    Grounding Packet, la narración ni la respuesta cruda del LLM — solo el
+    enum cerrado ya validado por Pydantic. Permite, en el futuro, inspeccionar
+    si un reintento reemplaza un visual_type estructurado (architecture/
+    process/comparison) por uno "seguro" (bullets/none) sin exponer ningún
+    contenido pedagógico ni de la fuente."""
+    return ",".join(scene.visual.visual_type.value for scene in body.scenes)
+
+
 def _generate_validated_body(
     provider: LLMProvider,
     messages: list[dict[str, str]],
     canonical: CanonicalTopicContent,
+    *,
+    topic_id: str,
 ) -> GeneratedLessonBody:
     """Bucle de generación + validación con reintentos acotados.
 
@@ -226,6 +274,18 @@ def _generate_validated_body(
             _log_event("lesson_generation_retry", attempt=attempt, reason="invalid_contract")
             continue
 
+        # PARTE 20 (v1.2.0): metadata segura del intento que SÍ logró
+        # parsear un GeneratedLessonBody válido (aunque después falle la
+        # validación de grounding) — permite reconstruir, sin exponer
+        # nunca contenido pedagógico, si un reintento cambió el
+        # visual_type propuesto (p.ej. architecture -> bullets).
+        _log_event(
+            "lesson_generation_attempt",
+            topic_id=topic_id,
+            attempt=attempt,
+            visual_types=_visual_types_for_log(body),
+        )
+
         try:
             validate_lesson_body(body, canonical)
         except LessonValidationError as exc:
@@ -236,7 +296,12 @@ def _generate_validated_body(
                     f"{attempt} intentos: {exc.problems}"
                 ) from exc
             attempt_messages = attempt_messages + [build_correction_message(exc.problems)]
-            _log_event("lesson_generation_retry", attempt=attempt, reason="grounding_invalid")
+            _log_event(
+                "lesson_generation_retry",
+                attempt=attempt,
+                reason="grounding_invalid",
+                reason_codes=_grounding_reason_codes(exc.problems),
+            )
             continue
 
         return body
@@ -320,7 +385,7 @@ def generate_lesson(
         started_at = time.monotonic()
         messages = build_messages(grounding_packet)
         try:
-            body = _generate_validated_body(llm_provider, messages, canonical)
+            body = _generate_validated_body(llm_provider, messages, canonical, topic_id=topic_id)
         except Exception as exc:
             duration_ms = int((time.monotonic() - started_at) * 1000)
             _log_event(

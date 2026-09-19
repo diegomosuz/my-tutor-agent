@@ -111,20 +111,63 @@ class ComparisonRow(BaseModel):
     values: list[str] = Field(min_length=1)
 
 
+class ComparisonColumn(BaseModel):
+    """Contenido PROPIO de una columna en modo "cards" (v1.2.0, bloque de
+    fidelidad visual — bug real encontrado en la auditoría de lesson-v3:
+    antes, sin `rows`, todas las cards de un `comparison` mostraban
+    exactamente los mismos `key_points` de la escena, porque no existía
+    ningún campo que le permitiera al LLM decir "estos puntos son de la
+    columna A, estos otros de la columna B"). `title`/`points` son texto
+    corto de PRESENTACIÓN (mismo criterio que `ProcessStep`/`GraphNode`):
+    el grounding de la visual completa lo sigue garantizando
+    `VisualPlan.source_refs` a nivel de escena — no se agrega un
+    `source_ref` por punto para no duplicar la complejidad de grounding
+    que ya cubre el nivel de escena. Nunca se acepta HTML/markup: son
+    strings simples, renderizados siempre como texto plano por React
+    (mismo mecanismo — nunca `dangerouslySetInnerHTML` — que ya protege a
+    `ProcessStep.label`/`GraphNode.label`)."""
+
+    title: str = Field(min_length=1, max_length=60)
+    points: list[str] = Field(default_factory=list, max_length=6)
+
+    @field_validator("points")
+    @classmethod
+    def _points_not_blank_and_bounded(cls, value: list[str]) -> list[str]:
+        for point in value:
+            if not point or not point.strip():
+                raise ValueError("ComparisonColumn.points no puede tener puntos vacíos")
+            if len(point) > 160:
+                raise ValueError(
+                    "ComparisonColumn.points: cada punto debe ser una frase corta "
+                    f"(máximo 160 caracteres, recibido {len(point)})."
+                )
+        return value
+
+
 class ComparisonPlan(BaseModel):
     """Contenido estructurado de un `visual_type='comparison'`.
 
-    Dos modos:
-    - "cards" (rows vacío): `column_labels` son simplemente las 2-4
-      etiquetas cortas a comparar (p.ej. "Concepto A" / "Concepto B") — el
-      renderer muestra una card por columna usando `key_points`.
-    - "tabla" (rows no vacío): cada fila tiene una etiqueta (p.ej.
+    Tres modos (backward-compatible: v1.2.0 solo AGREGA `columns`, nunca
+    quita ni cambia el significado de `column_labels`/`rows` existentes):
+    - "tabla" (`rows` no vacío): cada fila tiene una etiqueta (p.ej.
       "Entradas") y un valor por columna — igual cantidad de valores que
-      columnas en TODAS las filas.
+      columnas en TODAS las filas. Sin cambios respecto a v1.1.0.
+    - "cards con contenido propio" (`columns` no vacío, v1.2.0): cada
+      columna trae su propio `title` + `points` — el caso real que
+      motivó este campo (p.ej. "Punto de entrada incorrecto" con sus
+      puntos vs. "Punto de entrada correcto" con los suyos, sin repetir
+      contenido entre columnas).
+    - "cards legacy" (`rows` y `columns` vacíos): `column_labels` son
+      simplemente las 2-4 etiquetas cortas a comparar — el renderer cae al
+      comportamiento anterior a v1.2.0 (una card por columna, reutilizando
+      los `key_points` compartidos de la escena). Nunca se invalida una
+      `LessonPlan` cacheada de lesson-v3 por esto: sigue renderizando
+      exactamente igual que antes.
     """
 
     column_labels: list[str] = Field(min_length=2, max_length=4)
     rows: list[ComparisonRow] = Field(default_factory=list, max_length=8)
+    columns: list[ComparisonColumn] = Field(default_factory=list, max_length=4)
 
     @field_validator("column_labels")
     @classmethod
@@ -143,6 +186,20 @@ class ComparisonPlan(BaseModel):
                     f"ComparisonPlan.rows[{i}] tiene {len(row.values)} valores, "
                     f"se esperaban {expected} (uno por columna declarada en column_labels)."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _columns_match_column_label_count(self) -> "ComparisonPlan":
+        # Estructural únicamente (cantidad), nunca exige que el texto de
+        # columns[i].title coincida literalmente con column_labels[i] —
+        # una validación de igualdad de texto agregaría presión de
+        # reintento sin beneficio real de grounding (ver docs/
+        # VISUAL_FIDELITY.md, "Validation pressure").
+        if self.columns and len(self.columns) != len(self.column_labels):
+            raise ValueError(
+                f"ComparisonPlan.columns tiene {len(self.columns)} columna(s), "
+                f"se esperaban {len(self.column_labels)} (una por column_labels)."
+            )
         return self
 
 

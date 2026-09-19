@@ -111,9 +111,20 @@ export interface ComparisonRow {
   values: string[];
 }
 
+/** Contenido propio de una columna en modo "cards" (v1.2.0 — corrige el
+ * bug real donde todas las cards de un `comparison` mostraban exactamente
+ * los mismos `key_points` de la escena). `columns` es opcional y siempre
+ * backward-compatible: una `LessonPlan` de lesson-v3 (sin `columns`) sigue
+ * renderizando igual que antes. */
+export interface ComparisonColumn {
+  title: string;
+  points: string[];
+}
+
 export interface ComparisonPlan {
   column_labels: string[];
   rows: ComparisonRow[];
+  columns: ComparisonColumn[];
 }
 
 export type NodeRole = "component" | "service" | "datastore" | "external" | "actor" | "concept";

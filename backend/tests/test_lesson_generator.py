@@ -7,6 +7,7 @@ llamadas de red.
 from __future__ import annotations
 
 import copy
+import logging
 from pathlib import Path
 
 import pytest
@@ -265,6 +266,26 @@ def test_different_lesson_prompt_version_produces_different_cache_entry(tmp_path
 
 
 # --------------------------------------------------------------------------
+# v1.2.0 — PARTE 21.H/I: prompt_version real distinto de "lesson-v3", y el
+# mecanismo genérico de arriba (test_different_lesson_prompt_version_...)
+# ya prueba que cualquier cambio de prompt_version invalida la cache.
+# --------------------------------------------------------------------------
+
+
+def test_H_default_lesson_prompt_version_is_not_lesson_v3():
+    settings = Settings()
+    assert settings.lesson_prompt_version != "lesson-v3"
+    assert settings.lesson_prompt_version == "lesson-v3.1"
+
+
+def test_I_real_default_prompt_version_produces_lesson_plan_with_new_version(tmp_path):
+    settings = _settings(tmp_path)
+    provider = FakeLLMProvider(responses=[valid_lesson_body_dict()])
+    plan = _generate(settings, provider)
+    assert plan.prompt_version == "lesson-v3.1"
+
+
+# --------------------------------------------------------------------------
 # 10/11. Retry ante JSON/contrato inválido; no retry infinito
 # --------------------------------------------------------------------------
 
@@ -308,6 +329,40 @@ def test_auth_error_is_never_retried(tmp_path):
         _generate(settings, provider)
 
     assert len(provider.calls) == 1
+
+
+# --------------------------------------------------------------------------
+# v1.2.0 — PARTE 20/21.J: observabilidad mínima y segura de reintentos.
+# --------------------------------------------------------------------------
+
+
+def test_J_retry_observability_logs_safe_metadata_never_prompt_or_source(tmp_path, caplog):
+    settings = _settings(tmp_path)
+    bad_body = copy.deepcopy(valid_lesson_body_dict())
+    # SRC-999 no existe en SAMPLE_TOPIC_MARKDOWN (solo SRC-001..004) ->
+    # dispara LessonValidationError (grounding_invalid) en el intento 1.
+    bad_body["scenes"][0]["visual"]["source_refs"] = ["SRC-999"]
+    provider = FakeLLMProvider(responses=[bad_body, valid_lesson_body_dict()])
+
+    with caplog.at_level(logging.INFO, logger="pwc_tutor.lesson"):
+        plan = _generate(settings, provider)
+
+    assert len(provider.calls) == 2
+    assert len(plan.scenes) == 2
+
+    # Metadata segura presente: visual_types propuestos por intento,
+    # reason del retry, y códigos de razón (no el mensaje completo).
+    assert "lesson_generation_attempt" in caplog.text
+    assert "attempt=1" in caplog.text
+    assert "visual_types=hero,bullets" in caplog.text
+    assert "lesson_generation_retry" in caplog.text
+    assert "reason=grounding_invalid" in caplog.text
+    assert "reason_codes=visual_source_refs_invalid" in caplog.text
+
+    # Nunca prompt, Grounding Packet, source real, ni narration.
+    assert "AUTHORIZED SOURCE" not in caplog.text
+    assert "orquestador de contenedores" not in caplog.text  # texto real de SAMPLE_TOPIC_MARKDOWN
+    assert "unidad mínima de despliegue" not in caplog.text  # texto real de narration/key_points
 
 
 def test_upstream_error_is_retried_with_same_messages(tmp_path):

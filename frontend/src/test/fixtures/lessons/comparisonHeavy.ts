@@ -37,6 +37,7 @@ export const COMPARISON_HEAVY_LESSON: LessonPlan = {
             { label: "Proceso", values: ["Lógica condicional fija", "Inferencia estadística"] },
             { label: "Resultado", values: ["Determinístico", "Probabilístico"] },
           ],
+          columns: [],
         },
       }),
     }),
@@ -48,11 +49,37 @@ export const COMPARISON_HEAVY_LESSON: LessonPlan = {
       narration: [gt("Resumiendo la idea central de cada enfoque en una sola frase.")],
       visual: visual({
         visual_type: "comparison",
-        comparison: { column_labels: ["Tradicional", "Con IA"], rows: [] },
+        comparison: { column_labels: ["Tradicional", "Con IA"], rows: [], columns: [] },
       }),
     }),
     scene({
+      // v1.2.0 — PARTE 10: comparison en modo "cards" con contenido
+      // PROPIO por columna (columns), nunca repitiendo key_points entre
+      // columnas — el caso real que motivó el nuevo campo.
       scene_id: "SCENE-004",
+      scene_type: "comparison",
+      title: gt("Antes y después de adoptar un Project"),
+      narration: [gt("Veamos qué cambia concretamente al configurar el contexto una sola vez.")],
+      visual: visual({
+        visual_type: "comparison",
+        comparison: {
+          column_labels: ["Punto de entrada incorrecto", "Punto de entrada correcto"],
+          rows: [],
+          columns: [
+            {
+              title: "Punto de entrada incorrecto",
+              points: ["Configuración repetida cada semana", "12 min cargando contexto"],
+            },
+            {
+              title: "Punto de entrada correcto",
+              points: ["Se configura una sola vez", "El contexto ya está disponible"],
+            },
+          ],
+        },
+      }),
+    }),
+    scene({
+      scene_id: "SCENE-005",
       scene_type: "recap",
       title: gt("Resumen"),
       key_points: [gt("La diferencia clave está en cómo se define el comportamiento del sistema.")],

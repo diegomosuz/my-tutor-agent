@@ -1,15 +1,17 @@
 """Tests del prompt de LessonGenerator: comprehension_check (Fase 6) +
 guías de rendering pedagógico v1.1.0 (lesson-v3): scene_type ampliado,
 elección de visual_type por estructura, densidad, narración≠slide, política
-de imágenes/código. LESSON_PROMPT_VERSION avanzó a "lesson-v3" (invalida la
-cache de "lesson-v2")."""
+de imágenes/código + ajuste quirúrgico v1.2.0 (lesson-v3.1): desambiguación
+process/hierarchy, detección de comparison, densidad más estricta.
+LESSON_PROMPT_VERSION avanzó a "lesson-v3.1" (invalida la cache de
+"lesson-v3", que sigue existiendo intacta en el filesystem)."""
 from __future__ import annotations
 
 from app.prompts.lesson import LESSON_PROMPT_VERSION, SYSTEM_PROMPT
 
 
-def test_lesson_prompt_version_is_v3():
-    assert LESSON_PROMPT_VERSION == "lesson-v3"
+def test_lesson_prompt_version_is_v3_1():
+    assert LESSON_PROMPT_VERSION == "lesson-v3.1"
 
 
 def test_system_prompt_mentions_comprehension_check_guidance():
@@ -65,3 +67,52 @@ def test_system_prompt_mentions_density_limits():
 
 def test_system_prompt_mentions_architecture_never_invents_connections():
     assert "NUNCA inventes una conexión entre dos componentes" in SYSTEM_PROMPT
+
+
+# --------------------------------------------------------------------------
+# v1.2.0 — bloque "Visual Fidelity": ajuste quirúrgico de REGLA 14/15
+# (PARTE 13/14/17 de la especificación).
+# --------------------------------------------------------------------------
+
+
+def test_F_system_prompt_prefers_process_over_hierarchy_for_temporal_order():
+    # F: guía de proceso/jerarquía presente — el criterio de desambiguación
+    # explícito (orden temporal manda sobre composición) debe estar en el
+    # texto real que ve el modelo, no solo en un comentario del código.
+    assert "el orden temporal manda sobre la composición" in SYSTEM_PROMPT
+    assert "Paso 1" in SYSTEM_PROMPT
+    assert "sigue a" in SYSTEM_PROMPT or "flows_to" in SYSTEM_PROMPT
+
+
+def test_hierarchy_guidance_defines_no_temporal_order():
+    assert "SIN orden temporal" in SYSTEM_PROMPT
+    assert "se compone de" in SYSTEM_PROMPT
+
+
+def test_G_system_prompt_comparison_semantic_guidance_present():
+    # G: detección de comparison sin exigir "vs"/"versus"/"comparación".
+    assert "antes/después" in SYSTEM_PROMPT
+    assert "incorrecto/correcto" in SYSTEM_PROMPT
+    assert 'no hace falta que aparezca literalmente la palabra "vs"' in SYSTEM_PROMPT
+
+
+def test_comparison_guidance_never_invents_missing_side():
+    assert "Nunca inventes el lado que falta" in SYSTEM_PROMPT
+
+
+def test_comparison_guidance_mentions_columns_field():
+    assert '"columns"' in SYSTEM_PROMPT
+    assert "nunca repitiendo entre columnas los mismos puntos" in SYSTEM_PROMPT
+
+
+def test_system_prompt_tightens_density_guidance_short_phrases():
+    # PARTE 17: preferir frases cortas de 3 a 7 palabras en vez de
+    # oraciones completas de ~15 palabras.
+    assert "3 a 7 palabras" in SYSTEM_PROMPT
+    assert "nunca truncamiento" in SYSTEM_PROMPT.lower() or "no truncamiento" in SYSTEM_PROMPT.lower() or "guía de generación" in SYSTEM_PROMPT
+
+
+def test_system_prompt_never_forces_diagrams_over_declarative_content():
+    # PARTE 15: no forzar visuales — el prompt debe seguir permitiendo
+    # bullets/hero/none para contenido genuinamente declarativo.
+    assert "el objetivo NUNCA es forzar un diagrama" in SYSTEM_PROMPT

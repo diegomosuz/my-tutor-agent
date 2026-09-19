@@ -35,6 +35,22 @@
   box-sizing: border-box;
 }
 
+/* Utilidad estándar de accesibilidad: contenido presente para tecnologías
+   asistivas, nunca visible ni duplicado en pantalla (v1.2.0, PARTE 29 —
+   usado por los diagramas de DiagramCanvas para el texto equivalente de
+   cada relación). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 html,
 body,
 #root {
@@ -480,7 +496,16 @@ p {
 .slide-panel {
   background: #16130f;
   border-radius: var(--radius-lg);
-  aspect-ratio: 16 / 9;
+  /* v1.2.0, PARTE 9 — bug real corregido: un `aspect-ratio: 16/9` fijo
+     combinado con `overflow: hidden` recortaba silenciosamente contenido
+     denso (ej. una jerarquía de 5 hijos, el 5º quedaba parcialmente
+     oculto). `min-height` deja crecer la slide cuando el contenido
+     realmente lo necesita, manteniendo una proporción 16:9 razonable
+     como PISO, no como techo. `max-height` + el `overflow-y: auto` ya
+     existente en `.slide-panel__content` quedan como último recurso ante
+     contenido verdaderamente excesivo — nunca el mecanismo primario. */
+  min-height: clamp(220px, 45vw, 460px);
+  max-height: 640px;
   width: 100%;
   display: flex;
   flex-direction: column;
@@ -1262,6 +1287,16 @@ p {
   padding: 8px 12px;
 }
 
+/* v1.2.0: hijo "estructurado" (nodes reales) trae role/label/desc en vez
+   de un solo string de key_point — el wrapper apila esos tres en columna
+   sin romper el layout en fila del child en sí. */
+.visual-hierarchy__child-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+
 .visual-hierarchy__connector {
   width: 6px;
   height: 6px;
@@ -1315,42 +1350,9 @@ p {
   line-height: 1.35;
 }
 
-.visual-graph__edges {
-  list-style: none;
-  margin: 14px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.visual-graph__edges li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-  color: #ece5d8;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: var(--radius-sm);
-  padding: 6px 10px;
-}
-
-.visual-graph__edge-from,
-.visual-graph__edge-to {
-  font-weight: 600;
-}
-
-.visual-graph__edge-arrow {
-  color: var(--color-accent-yellow);
-}
-
-.visual-graph__edge-label {
-  font-size: 11px;
-  color: #c9c1b5;
-  font-style: italic;
-}
+/* v1.2.0: el texto accesible de las edges ahora vive en un <ul class="sr-only">
+   dentro de DiagramCanvas (ver diagramGeometry.ts) — nunca se muestra ya
+   como lista visual "A -> B" separada del diagrama (ver DiagramCanvas). */
 
 /* --- concept map --- */
 
@@ -1366,7 +1368,6 @@ p {
   background: var(--color-accent-yellow);
   padding: 10px 18px;
   border-radius: 999px;
-  margin-bottom: 18px;
 }
 
 .visual-concept-map__related {
@@ -1374,27 +1375,90 @@ p {
   flex-wrap: wrap;
   justify-content: center;
   gap: 12px;
+  margin-top: 18px;
 }
 
 .visual-concept-map__node {
-  position: relative;
   font-size: 13px;
   color: #ece5d8;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
   padding: 8px 16px;
-  padding-top: 14px;
 }
 
-.visual-concept-map__stem {
+/* --- v1.2.0: DiagramCanvas — conectores SVG reales (architecture/concept_map) --- */
+
+.diagram-canvas {
+  position: relative;
+}
+
+.diagram-canvas__edges {
   position: absolute;
-  top: -10px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 2px;
-  height: 10px;
-  background: rgba(255, 255, 255, 0.3);
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.diagram-canvas__edge-line {
+  stroke: rgba(255, 182, 0, 0.55);
+  stroke-width: 1.5;
+}
+
+.diagram-canvas__arrowhead {
+  fill: rgba(255, 182, 0, 0.55);
+}
+
+.diagram-canvas__edge-label {
+  fill: #c9c1b5;
+  font-size: 10px;
+  font-style: italic;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: #16130f;
+  stroke-width: 3px;
+}
+
+.diagram-canvas__nodes--grid {
+  /* El layout de grilla real lo aporta `nodesClassName`
+     (`.visual-architecture__frame`, ya existente) — acá solo se agrega el
+     stacking context necesario para quedar sobre el SVG de edges. */
+  position: relative;
+  z-index: 1;
+}
+
+.diagram-canvas__node-slot {
+  min-width: 0;
+}
+
+.diagram-canvas__nodes--radial {
+  position: relative;
+  z-index: 1;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.diagram-canvas__radial-center {
+  position: relative;
+  z-index: 2;
+  display: inline-block;
+  font-size: 16px;
+  font-weight: 700;
+  color: #16130f;
+  background: var(--color-accent-yellow);
+  padding: 10px 18px;
+  border-radius: 999px;
+}
+
+.diagram-canvas__radial-node {
+  position: absolute;
+  z-index: 1;
+  transform: translate(-50%, -50%);
+  max-width: 140px;
 }
 
 /* --- table --- */

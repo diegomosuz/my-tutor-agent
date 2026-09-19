@@ -34,10 +34,12 @@ export const ARCHITECTURE_HEAVY_LESSON: LessonPlan = {
         nodes: [
           { id: "gateway", label: "API Gateway", description: "Punto de entrada único.", role: "component" },
           { id: "service", label: "Servicio de negocio", description: "", role: "service" },
+          { id: "cache", label: "Cache", description: "", role: "datastore" },
           { id: "db", label: "Base de datos", description: "", role: "datastore" },
         ],
         edges: [
           { from_id: "gateway", to_id: "service", label: "reenvía", relation_type: "flows_to" },
+          { from_id: "service", to_id: "cache", label: "consulta primero", relation_type: "depends_on" },
           { from_id: "service", to_id: "db", label: "consulta", relation_type: "depends_on" },
         ],
       }),
@@ -52,6 +54,8 @@ export const ARCHITECTURE_HEAVY_LESSON: LessonPlan = {
         nodes: [
           { id: "escalabilidad", label: "Escalabilidad", description: "", role: "concept" },
           { id: "desacoplamiento", label: "Desacoplamiento", description: "", role: "concept" },
+          { id: "resiliencia", label: "Resiliencia", description: "", role: "concept" },
+          { id: "observabilidad", label: "Observabilidad", description: "", role: "concept" },
         ],
         edges: [{ from_id: "escalabilidad", to_id: "desacoplamiento", label: "", relation_type: "relates_to" }],
       }),

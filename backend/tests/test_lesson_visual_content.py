@@ -18,6 +18,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.lesson import (
+    ComparisonColumn,
     ComparisonPlan,
     ComparisonRow,
     GeneratedLessonBody,
@@ -116,6 +117,67 @@ def test_comparison_requires_two_to_four_columns():
         ComparisonPlan(column_labels=["Solo uno"])
     with pytest.raises(ValidationError):
         ComparisonPlan(column_labels=["A", "B", "C", "D", "E"])
+
+
+# --------------------------------------------------------------------------
+# v1.2.0 — ComparisonColumn: contenido column-specific en modo "cards"
+# (PARTE 21.A-E de la especificación de "Visual Fidelity").
+# --------------------------------------------------------------------------
+
+
+def test_A_comparison_column_specific_content_is_valid():
+    plan = ComparisonPlan(
+        column_labels=["Punto de entrada incorrecto", "Punto de entrada correcto"],
+        columns=[
+            ComparisonColumn(
+                title="Punto de entrada incorrecto",
+                points=["Configuración repetida cada semana", "12 min cargando contexto"],
+            ),
+            ComparisonColumn(
+                title="Punto de entrada correcto",
+                points=["Se configura una sola vez", "El contexto ya está disponible"],
+            ),
+        ],
+    )
+    assert plan.columns[0].points != plan.columns[1].points
+    assert len(plan.columns) == 2
+
+
+def test_B_comparison_column_count_mismatch_is_rejected():
+    with pytest.raises(ValidationError, match="columna"):
+        ComparisonPlan(
+            column_labels=["A", "B", "C"],
+            columns=[ComparisonColumn(title="A", points=["x"]), ComparisonColumn(title="B", points=["y"])],
+        )
+
+
+def test_C_comparison_column_title_required_two_to_four_via_column_labels():
+    # `columns` en sí no acota cantidad más allá de coincidir con
+    # column_labels (2-4, ya acotado ahí) — un `columns` con más de 4
+    # entradas es estructuralmente imposible sin que column_labels
+    # también tenga esa cantidad, lo cual ya está prohibido.
+    with pytest.raises(ValidationError):
+        ComparisonPlan(
+            column_labels=["A", "B", "C", "D", "E"],
+            columns=[ComparisonColumn(title=c, points=[]) for c in "ABCDE"],
+        )
+
+
+def test_D_comparison_column_points_bounded_and_not_blank():
+    with pytest.raises(ValidationError):
+        ComparisonColumn(title="A", points=[""])
+    with pytest.raises(ValidationError):
+        ComparisonColumn(title="A", points=["x" * 161])
+    with pytest.raises(ValidationError):
+        ComparisonColumn(title="A", points=["ok"] * 7)  # max_length=6
+
+
+def test_E_legacy_comparison_without_columns_still_parses():
+    # LessonPlans cacheadas de lesson-v3 (antes de v1.2.0) nunca tenían
+    # `columns` — deben seguir parseando exactamente igual.
+    plan = ComparisonPlan.model_validate({"column_labels": ["Concepto A", "Concepto B"]})
+    assert plan.columns == []
+    assert plan.rows == []
 
 
 # --------------------------------------------------------------------------
