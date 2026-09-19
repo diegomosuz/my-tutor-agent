@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { AiStatusResponse } from "../types/api";
 import { speakSequenceUnified } from "./voicePlayback";
 import { TutorConversation } from "./TutorConversation";
-import { NOT_COVERED_MESSAGE, useTutor } from "./useTutor";
+import { NOT_COVERED_MESSAGE, UNRELATED_MESSAGE, useTutor } from "./useTutor";
 import { useSpeechRecognition } from "./useSpeechRecognition";
 
 const SUGGESTIONS = [
@@ -50,6 +50,12 @@ export function TutorPanel({
 }: TutorPanelProps) {
   const [question, setQuestion] = useState("");
   const [neuralVoiceError, setNeuralVoiceError] = useState<string | null>(null);
+  // v1.3.0 (Classroom UX -- Tutor Expanded Mode): estado de sesión/local
+  // puro -- nunca localStorage, nunca Learning Progress, nunca analytics.
+  // TutorPanel se remonta con una key nueva por tópico (ver ClassroomPage),
+  // así que este useState ya vuelve a false en cada tópico nuevo sin lógica
+  // adicional; al cambiar de escena (sin remount) se mantiene tal cual.
+  const [allowGeneralKnowledge, setAllowGeneralKnowledge] = useState(false);
   const tutor = useTutor({ courseId, moduleId, topicId, sceneId, onBeforeSend: onInterrupt });
   const recognition = useSpeechRecognition();
   const cancelTutorVoiceRef = useRef<(() => void) | null>(null);
@@ -76,14 +82,16 @@ export function TutorPanel({
     const text = question;
     if (!text.trim() || tutor.loading) return; // evita doble envío
     setQuestion("");
-    const reply = await tutor.sendMessage(text);
+    const reply = await tutor.sendMessage(text, allowGeneralKnowledge);
     if (reply && voiceEnabled) {
       const texts =
         reply.response_type === "answer"
-          ? reply.answer_chunks.map((chunk) => chunk.text)
+          ? [...reply.answer_chunks.map((chunk) => chunk.text), ...reply.general_knowledge_chunks]
           : reply.response_type === "clarification"
             ? [reply.clarification_question ?? ""]
-            : [NOT_COVERED_MESSAGE];
+            : reply.response_type === "unrelated"
+              ? [UNRELATED_MESSAGE]
+              : [NOT_COVERED_MESSAGE];
       // Cancela explícitamente la secuencia anterior (marca su propia
       // cadena como cancelada) ANTES de arrancar una nueva: algunos
       // navegadores disparan "onend" al cancelar una utterance, lo que
@@ -207,6 +215,21 @@ export function TutorPanel({
         ))}
       </div>
 
+      <div className="tutor-panel__expanded-mode">
+        <label className="tutor-panel__expanded-mode-toggle">
+          <input
+            type="checkbox"
+            checked={allowGeneralKnowledge}
+            onChange={(e) => setAllowGeneralKnowledge(e.target.checked)}
+          />
+          Ampliar con conocimiento general
+        </label>
+        <p className="tutor-panel__expanded-mode-help">
+          Permite complementar con conocimiento general de IA, pero solo para preguntas
+          relacionadas con este tema
+        </p>
+      </div>
+
       <div className="tutor-panel__footer">
         {tutor.messages.length > 0 && (
           <button type="button" className="tutor-panel__clear" onClick={tutor.clearConversation}>
@@ -214,7 +237,9 @@ export function TutorPanel({
           </button>
         )}
         <p className="tutor-panel__hint">
-          El tutor responde únicamente en base al contenido de este tema.
+          {allowGeneralKnowledge
+            ? "Modo ampliado activo: el tutor puede complementar con conocimiento general de IA para preguntas relacionadas con este tema."
+            : "El tutor responde únicamente en base al contenido de este tema."}
         </p>
       </div>
     </div>

@@ -26,6 +26,11 @@ export function TutorConversation({ messages, showSourceRefs, onInspectRef }: Tu
         <div key={message.id} className={`tutor-message tutor-message--${message.role}`}>
           <span className="tutor-message__role">{message.role === "user" ? "Vos" : "Tutor"}</span>
           <p className="tutor-message__content">{message.content}</p>
+          {message.generalKnowledgeUsed && (
+            <span className="tutor-message__general-knowledge-badge">
+              Respuesta ampliada con conocimiento general
+            </span>
+          )}
           {showSourceRefs && message.sourceRefs && message.sourceRefs.length > 0 && (
             <div className="tutor-message__refs">
               {message.sourceRefs.map((ref) => (

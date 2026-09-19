@@ -237,23 +237,43 @@ export function ClassroomPage() {
     navigate(`/aula/${courseId}/${target.moduleId}/${target.topicId}`);
   }
 
-  // Con una LessonPlan activa, Previo/Siguiente navegan escenas de la
-  // clase generada (Classroom Engine); sin ella, siguen navegando entre
-  // tópicos del curso (comportamiento de Fase 1-3).
-  function goPrev() {
-    if (lesson) {
-      engine.previousScene();
-      return;
-    }
-    goToTopic(prevTopic);
-  }
+  // v1.3.0 (Classroom UX, BLOQUE C): SCENE navigation (dentro de una
+  // LessonPlan) y TOPIC navigation (entre tópicos del curso, cruzando
+  // módulos) son ahora dos affordances SIEMPRE distintas -- nunca el mismo
+  // botón cambiando de semántica. "Siguiente diapositiva" en la última
+  // escena queda deshabilitado (nunca se transforma silenciosamente en
+  // "Finalizar"); avanzar de tema es una acción explícita separada
+  // (ver handleCompleteTopic / topic-nav más abajo).
 
-  function goNext() {
-    if (lesson) {
-      engine.nextScene();
-      return;
+  // Al llegar a la última escena y pulsar "Completar tema y continuar" se
+  // dispara esta secuencia en dos pasos (nunca en el mismo tick que la
+  // navegación, para evitar una condición de carrera real: si
+  // engine.nextScene() y navigate() corrieran en el mismo render, el
+  // efecto que marca el tópico como completado en learningProgressStore
+  // -- ver más abajo, "markTopicCompleted" -- podría leer accidentalmente
+  // el courseId/moduleId/topicId del PRÓXIMO tópico en vez del que
+  // realmente se acaba de terminar). `pendingTopicAdvance` deja que el
+  // ratchet de finalización existente (engine.isCompleted -> el useEffect
+  // de markTopicCompleted, sin duplicar esa lógica acá) se complete en su
+  // propio render, y solo DESPUÉS de confirmarlo navega al próximo tópico.
+  const [pendingTopicAdvance, setPendingTopicAdvance] = useState(false);
+
+  useEffect(() => {
+    if (!pendingTopicAdvance || !engine.isCompleted) return;
+    setPendingTopicAdvance(false);
+    if (nextTopic) {
+      goToTopic(nextTopic);
     }
-    goToTopic(nextTopic);
+    // Si no hay nextTopic (último tópico del curso), "Completar último
+    // tema" no inventa un destino: se queda en la CompletionScreen actual
+    // (recap + "Volver al curso").
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingTopicAdvance, engine.isCompleted]);
+
+  function handleCompleteTopic() {
+    cancelAllSpeech();
+    engine.nextScene(); // única fuente de verdad para el ratchet de completado (Fase 4)
+    setPendingTopicAdvance(true);
   }
 
   async function handleGenerateLesson(forceRegenerate: boolean) {
@@ -499,94 +519,115 @@ export function ClassroomPage() {
                 slide, nunca a "toda la página". Vive DENTRO de
                 .classroom-stage, compartiendo su mismo ancho (columna
                 izquierda). "Salir de la clase" NO vive acá (ver
-                .course-subheader, arriba). */}
-            <div className="scene-controls" role="group" aria-label="Controles de la escena">
-              <div className="scene-controls__side scene-controls__side--prev">
-                <button
-                  type="button"
-                  className="scene-controls__prev"
-                  onClick={goPrev}
-                  disabled={lesson ? engine.isFirstScene : !prevTopic}
-                  aria-label="Escena o tópico anterior"
-                >
-                  ← Previo
-                </button>
-              </div>
+                .course-subheader, arriba).
 
-              <div className="scene-controls__center">
-                <button
-                  type="button"
-                  className="scene-controls__pause"
-                  onClick={() => (engine.isPaused ? engine.resume() : engine.pause())}
-                  disabled={!lesson || engine.isCompleted}
-                  aria-label={engine.isPaused ? "Reanudar clase" : "Pausar clase"}
-                >
-                  {engine.isPaused ? "▶ Reanudar" : "⏸ Pausar"}
-                </button>
-                <button
-                  type="button"
-                  className="scene-controls__repeat"
-                  onClick={() => engine.repeatScene()}
-                  disabled={!lesson || engine.isCompleted}
-                  aria-label="Repetir escena actual"
-                >
-                  ↻ Repetir
-                </button>
-                <div className="scene-controls__voice">
+                v1.3.0 (BLOQUE C): esta toolbar es EXCLUSIVAMENTE navegación
+                de ESCENA -- solo existe cuando hay una LessonPlan activa
+                (sin IA no hay escenas artificiales que navegar). La
+                navegación entre TÓPICOS del curso vive siempre en su propia
+                sección separada, más abajo (topic-nav), nunca acá. */}
+            {lesson && (
+              <div className="scene-controls" role="group" aria-label="Controles de la escena">
+                <div className="scene-controls__side scene-controls__side--prev">
                   <button
                     type="button"
-                    className={
-                      voiceEnabled ? "scene-controls__voice-toggle primary" : "scene-controls__voice-toggle"
-                    }
-                    onClick={toggleVoice}
-                    disabled={!speechSupported && !useNeural}
-                    aria-pressed={voiceEnabled}
-                    aria-label={voiceEnabled ? "Desactivar voz" : "Activar voz"}
+                    className="scene-controls__prev"
+                    onClick={() => engine.previousScene()}
+                    disabled={engine.isFirstScene}
+                    aria-label="Diapositiva anterior"
                   >
-                    {!speechSupported && !useNeural
-                      ? "🔈 Voz no disponible"
-                      : voiceEnabled
-                        ? "🔊 Voz activada"
-                        : "🔈 Activar voz"}
+                    ← Anterior diapositiva
                   </button>
-                  {voiceEnabled && (speechSupported || useNeural) && (
-                    <select
-                      aria-label="Velocidad de voz"
-                      value={voiceSpeed}
-                      onChange={(e) => changeVoiceSpeed(Number(e.target.value) as VoiceSpeed)}
-                    >
-                      {VOICE_SPEED_OPTIONS.map((speed) => (
-                        <option key={speed} value={speed}>
-                          {speed}x
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  {voiceEnabled && useNeural && (
-                    <span className="voice-disclosure" title={`Modelo: ${voiceStatus?.tts_model ?? ""}`}>
-                      Voz generada por IA
-                    </span>
-                  )}
                 </div>
-                {lesson && (
+
+                <div className="scene-controls__center">
+                  <button
+                    type="button"
+                    className="scene-controls__pause"
+                    onClick={() => (engine.isPaused ? engine.resume() : engine.pause())}
+                    disabled={engine.isCompleted}
+                    aria-label={engine.isPaused ? "Reanudar clase" : "Pausar clase"}
+                  >
+                    {engine.isPaused ? "▶ Reanudar" : "⏸ Pausar"}
+                  </button>
+                  <button
+                    type="button"
+                    className="scene-controls__repeat"
+                    onClick={() => engine.repeatScene()}
+                    disabled={engine.isCompleted}
+                    aria-label="Repetir escena actual"
+                  >
+                    ↻ Repetir
+                  </button>
+                  <div className="scene-controls__voice">
+                    <button
+                      type="button"
+                      className={
+                        voiceEnabled ? "scene-controls__voice-toggle primary" : "scene-controls__voice-toggle"
+                      }
+                      onClick={toggleVoice}
+                      disabled={!speechSupported && !useNeural}
+                      aria-pressed={voiceEnabled}
+                      aria-label={voiceEnabled ? "Desactivar voz" : "Activar voz"}
+                    >
+                      {!speechSupported && !useNeural
+                        ? "🔈 Voz no disponible"
+                        : voiceEnabled
+                          ? "🔊 Voz activada"
+                          : "🔈 Activar voz"}
+                    </button>
+                    {voiceEnabled && (speechSupported || useNeural) && (
+                      <select
+                        aria-label="Velocidad de voz"
+                        value={voiceSpeed}
+                        onChange={(e) => changeVoiceSpeed(Number(e.target.value) as VoiceSpeed)}
+                      >
+                        {VOICE_SPEED_OPTIONS.map((speed) => (
+                          <option key={speed} value={speed}>
+                            {speed}x
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {voiceEnabled && useNeural && (
+                      <span className="voice-disclosure" title={`Modelo: ${voiceStatus?.tts_model ?? ""}`}>
+                        Voz generada por IA
+                      </span>
+                    )}
+                  </div>
                   <span className="scene-controls__indicator">
                     Escena {engine.currentSceneIndex + 1} de {engine.totalScenes}
                   </span>
-                )}
-              </div>
+                </div>
 
-              <div className="scene-controls__side scene-controls__side--next">
-                <button
-                  type="button"
-                  className="scene-controls__next primary"
-                  onClick={goNext}
-                  disabled={lesson ? engine.isCompleted : !nextTopic}
-                  aria-label={lesson && engine.isLastScene ? "Finalizar tema" : "Siguiente escena o tópico"}
-                >
-                  {lesson && engine.isLastScene ? "Finalizar" : "Siguiente →"}
+                <div className="scene-controls__side scene-controls__side--next">
+                  <button
+                    type="button"
+                    className="scene-controls__next"
+                    onClick={() => engine.nextScene()}
+                    disabled={engine.isLastScene || engine.isCompleted}
+                    aria-label="Siguiente diapositiva"
+                  >
+                    Siguiente diapositiva →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* v1.3.0 (BLOQUE C): CTA explícito y separado para terminar el
+                tema, nunca una relabelación silenciosa de "Siguiente
+                diapositiva". Reutiliza el ratchet de finalización ya
+                existente (handleCompleteTopic -> engine.nextScene()); ver
+                el comentario extenso más arriba sobre por qué la
+                navegación al próximo tópico se difiere un render. */}
+            {lesson && engine.isLastScene && !engine.isCompleted && (
+              <div className="topic-completion-cta">
+                <span>Llegaste al final de este tema.</span>
+                <button type="button" className="topic-completion-cta__button" onClick={handleCompleteTopic}>
+                  {nextTopic ? "Completar tema y continuar →" : "Completar último tema"}
                 </button>
               </div>
-            </div>
+            )}
 
             {neuralVoiceError && (
               <div className="voice-neural-error">
@@ -669,6 +710,32 @@ export function ClassroomPage() {
                 onInspectRef={import.meta.env.DEV ? setInspectedTutorRef : undefined}
               />
             )}
+
+            {/* v1.3.0 (BLOQUE C): navegación de TÓPICO, SIEMPRE visible
+                (con o sin LessonPlan) -- computada sobre el orden lineal
+                real del curso (flatTopics), cruzando módulos sin
+                problema. Nunca comparte botón con la navegación de
+                escena de arriba. */}
+            <div className="topic-nav" role="group" aria-label="Navegación entre tópicos">
+              <button
+                type="button"
+                className="topic-nav__prev"
+                onClick={() => goToTopic(prevTopic)}
+                disabled={!prevTopic}
+                aria-label="Tema anterior"
+              >
+                ← Tema anterior
+              </button>
+              <button
+                type="button"
+                className="topic-nav__next"
+                onClick={() => goToTopic(nextTopic)}
+                disabled={!nextTopic}
+                aria-label="Tema siguiente"
+              >
+                Tema siguiente →
+              </button>
+            </div>
 
             {course && course.modules.length > 0 && (
               <div className="module-topic-nav">

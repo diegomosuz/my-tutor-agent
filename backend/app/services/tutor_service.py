@@ -28,12 +28,12 @@ import time
 
 from app.config import Settings
 from app.models.schemas import CanonicalTopicContent
-from app.models.tutor import TutorMessage, TutorReplyBody
+from app.models.tutor import TutorMessage, TutorReplyBody, TutorResponseType
 from app.prompts.tutor import SceneContext, build_tutor_correction_message, build_tutor_messages
 from app.services import courses as course_service
 from app.services import lesson_generator
 from app.services.llm_provider import LLMConfigurationError, LLMProvider, get_llm_provider
-from app.services.llm_retry import GenerationFailedError, generate_with_retries
+from app.services.llm_retry import GenerationFailedError, ValidationFailure, generate_with_retries
 from app.services.service_logging import log_event
 from app.services.tutor_validation import validate_tutor_reply
 
@@ -87,6 +87,7 @@ def ask_tutor(
     message: str,
     scene_id: str | None,
     recent_history: list[TutorMessage],
+    allow_general_knowledge: bool = False,
     provider: LLMProvider | None = None,
 ) -> TutorReplyBody:
     """Genera la respuesta grounded del tutor a una pregunta del alumno.
@@ -96,6 +97,14 @@ def ask_tutor(
     repositorio seguro). Lanza `LLMConfigurationError` si el provider no
     está configurado. Lanza `GenerationFailedError` si no se pudo producir
     una respuesta válida tras los reintentos permitidos.
+
+    `allow_general_knowledge` (v1.3.0, default False -- PARTE 22/25):
+    en False, comportamiento IDÉNTICO a antes de este bloque. En True,
+    permite -- únicamente para esta consulta puntual -- que el tutor use
+    conocimiento general del modelo para preguntas relacionadas con el
+    tema pero no cubiertas por AUTHORIZED SOURCE (ver
+    app/prompts/tutor.py REGLA 20/21). Nunca se persiste entre preguntas:
+    el frontend lo reenvía en cada request (PARTE 24).
     """
     llm_provider = provider or get_llm_provider(settings)
 
@@ -121,6 +130,7 @@ def ask_tutor(
         "scene_id": scene_id or "-",
         "provider": llm_provider.name,
         "model": llm_provider.model,
+        "allow_general_knowledge": allow_general_knowledge,
     }
     log_event(logger, "tutor_query_started", **log_context)
     started_at = time.monotonic()
@@ -130,10 +140,24 @@ def ask_tutor(
         recent_history=recent_history,
         scene_context=scene_context,
         grounding_packet=grounding_packet,
+        allow_general_knowledge=allow_general_knowledge,
     )
 
     def _validate(body: TutorReplyBody) -> None:
         validate_tutor_reply(body, canonical)
+        # Defensa en profundidad (v1.3.0): en modo estricto el prompt
+        # nunca menciona "unrelated" como opción (REGLA 20/21 ni siquiera
+        # se incluyen) -- si de todos modos apareciera, es una
+        # inconsistencia real del modelo, se rechaza y se reintenta igual
+        # que cualquier otro problema de contrato.
+        if body.response_type == TutorResponseType.unrelated and not allow_general_knowledge:
+            raise ValidationFailure(
+                [
+                    "response_type='unrelated' solo es válido cuando el request permite "
+                    "conocimiento general (allow_general_knowledge=true); en modo estricto "
+                    "usá 'not_covered' si la fuente no alcanza para responder."
+                ]
+            )
 
     try:
         body = generate_with_retries(
@@ -161,5 +185,6 @@ def ask_tutor(
         **log_context,
         duration_ms=duration_ms,
         response_type=body.response_type.value,
+        general_knowledge_used=body.general_knowledge_used,
     )
     return body

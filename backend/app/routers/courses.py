@@ -215,6 +215,7 @@ def ask_topic_tutor(
             message=body.message,
             scene_id=body.scene_id,
             recent_history=body.recent_history,
+            allow_general_knowledge=body.allow_general_knowledge,
         )
     except course_service.CourseNotFoundError:
         raise HTTPException(status_code=404, detail=_COURSE_NOT_FOUND.format(course_id))

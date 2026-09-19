@@ -114,8 +114,9 @@ describe("TutorPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
 
     // useTutor recibe onBeforeSend=onInterrupt; se verifica que sendMessage se llamó
-    // (la pausa real ocurre dentro de useTutor.sendMessage, ya testeada en useTutor.test.ts)
-    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledWith("¿Qué es un Pod?"));
+    // (la pausa real ocurre dentro de useTutor.sendMessage, ya testeada en useTutor.test.ts).
+    // Segundo arg = allowGeneralKnowledge (false por default, switch apagado).
+    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledWith("¿Qué es un Pod?", false));
   });
 
   it("muestra el banner de interrupción con botón Continuar clase cuando isInterrupting=true", () => {
@@ -131,6 +132,7 @@ describe("TutorPanel", () => {
     mockSendMessage.mockResolvedValue({
       response_type: "answer",
       answer_chunks: [{ text: "Un Pod agrupa contenedores.", source_refs: ["SRC-002"] }],
+      general_knowledge_chunks: [],
       clarification_question: null,
     });
     const props = baseProps();
@@ -153,6 +155,7 @@ describe("TutorPanel", () => {
     mockSendMessage.mockResolvedValue({
       response_type: "answer",
       answer_chunks: [{ text: "Un Pod agrupa contenedores.", source_refs: ["SRC-002"] }],
+      general_knowledge_chunks: [],
       clarification_question: null,
     });
     render(<TutorPanel {...baseProps()} />);
@@ -170,6 +173,7 @@ describe("TutorPanel", () => {
     mockSendMessage.mockResolvedValue({
       response_type: "answer",
       answer_chunks: [{ text: "Respuesta 1.", source_refs: ["SRC-002"] }],
+      general_knowledge_chunks: [],
       clarification_question: null,
     });
     const props = baseProps();
@@ -184,6 +188,7 @@ describe("TutorPanel", () => {
     mockSendMessage.mockResolvedValue({
       response_type: "answer",
       answer_chunks: [{ text: "Respuesta 2.", source_refs: ["SRC-003"] }],
+      general_knowledge_chunks: [],
       clarification_question: null,
     });
     fireEvent.change(input, { target: { value: "Segunda pregunta" } });
@@ -250,5 +255,111 @@ describe("TutorPanel", () => {
     ) as HTMLInputElement;
     expect(input.value).toBe("Resumí esta parte");
     expect(mockSendMessage).not.toHaveBeenCalled();
+  });
+
+  // --------------------------------------------------------------------
+  // v1.3.0 (bloque "Classroom UX" -- Tutor Expanded Mode), PARTE 37 A-H
+  // --------------------------------------------------------------------
+
+  it("A: el switch 'Ampliar con conocimiento general' arranca apagado por default", () => {
+    render(<TutorPanel {...baseProps()} />);
+    const toggle = screen.getByRole("checkbox", { name: "Ampliar con conocimiento general" });
+    expect(toggle).not.toBeChecked();
+  });
+
+  it("B: activar el switch envía allow_general_knowledge=true en el siguiente mensaje", async () => {
+    mockSendMessage.mockResolvedValue(null);
+    render(<TutorPanel {...baseProps()} />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Ampliar con conocimiento general" }));
+    fireEvent.change(screen.getByPlaceholderText("Escribí tu pregunta sobre este tema…"), {
+      target: { value: "¿Cómo se relaciona esto con otra idea?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    await waitFor(() =>
+      expect(mockSendMessage).toHaveBeenCalledWith("¿Cómo se relaciona esto con otra idea?", true)
+    );
+  });
+
+  it("C: con el switch apagado (default) se envía allow_general_knowledge=false", async () => {
+    mockSendMessage.mockResolvedValue(null);
+    render(<TutorPanel {...baseProps()} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Escribí tu pregunta sobre este tema…"), {
+      target: { value: "¿Qué es un Pod?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledWith("¿Qué es un Pod?", false));
+  });
+
+  it("D: el switch persiste al cambiar solo de escena (sin remount, mismo tópico)", () => {
+    const props = baseProps();
+    const { rerender } = render(<TutorPanel {...props} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Ampliar con conocimiento general" }));
+    expect(screen.getByRole("checkbox", { name: "Ampliar con conocimiento general" })).toBeChecked();
+
+    rerender(<TutorPanel {...props} sceneId="SCENE-002" />);
+    expect(screen.getByRole("checkbox", { name: "Ampliar con conocimiento general" })).toBeChecked();
+  });
+
+  it("E: una respuesta con general_knowledge_used=true muestra el badge de transparencia", () => {
+    mockUseTutorReturn.messages = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Respuesta ampliada.",
+        responseType: "answer",
+        generalKnowledgeUsed: true,
+      },
+    ];
+    render(<TutorPanel {...baseProps()} />);
+    expect(screen.getByText("Respuesta ampliada con conocimiento general")).toBeInTheDocument();
+  });
+
+  it("F: una respuesta grounded normal (general_knowledge_used=false) no muestra el badge", () => {
+    mockUseTutorReturn.messages = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Un Pod agrupa contenedores.",
+        responseType: "answer",
+        generalKnowledgeUsed: false,
+      },
+    ];
+    render(<TutorPanel {...baseProps()} />);
+    expect(screen.queryByText("Respuesta ampliada con conocimiento general")).not.toBeInTheDocument();
+  });
+
+  it("G: response_type='unrelated' muestra el mensaje fijo de tema no relacionado", async () => {
+    mockSendMessage.mockResolvedValue({
+      response_type: "unrelated",
+      answer_chunks: [],
+      general_knowledge_chunks: [],
+      clarification_question: null,
+      general_knowledge_used: false,
+    });
+    const props = baseProps();
+    props.voiceEnabled = true;
+    render(<TutorPanel {...props} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Ampliar con conocimiento general" }));
+
+    fireEvent.change(screen.getByPlaceholderText("Escribí tu pregunta sobre este tema…"), {
+      target: { value: "¿Cuál es la capital de Australia?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    await waitFor(() => expect(mockSpeakSequence).toHaveBeenCalledTimes(1));
+    expect(mockSpeakSequence.mock.calls[0][0][0]).toMatch(/no parece estar relacionada/i);
+  });
+
+  it("H: el texto de ayuda del switch nunca sugiere web/internet/búsqueda", () => {
+    render(<TutorPanel {...baseProps()} />);
+    const help = screen.getByText(
+      "Permite complementar con conocimiento general de IA, pero solo para preguntas relacionadas con este tema"
+    );
+    const text = help.textContent?.toLowerCase() ?? "";
+    expect(text).not.toMatch(/web|internet|búsqueda|actualizad/);
   });
 });

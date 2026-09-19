@@ -10,6 +10,14 @@ const MAX_HISTORY_MESSAGES = 10;
 export const NOT_COVERED_MESSAGE =
   "Este tópico no contiene información suficiente para responder eso. Podés preguntarme sobre el contenido visible de este tema.";
 
+// v1.3.0 (Classroom UX -- Tutor Expanded Mode): solo puede ocurrir cuando
+// el alumno activó "Ampliar con conocimiento general" -- en modo estricto
+// el backend nunca produce response_type="unrelated" (ver REGLA 20/backend
+// PARTE 22-24). El backend redacta el mensaje fijo del lado del frontend,
+// igual que NOT_COVERED_MESSAGE: el LLM nunca compone este texto.
+export const UNRELATED_MESSAGE =
+  "Esa pregunta no parece estar relacionada con este tema. Puedo ayudarte con preguntas sobre el contenido de este tema, incluso yendo un poco más allá con conocimiento general, pero no con temas sin relación.";
+
 export interface TutorConversationMessage {
   id: string;
   role: "user" | "assistant";
@@ -18,16 +26,24 @@ export interface TutorConversationMessage {
   /** Solo presente en mensajes del tutor de tipo "answer"; nunca se
    * muestra al alumno, solo en el panel de grounding en desarrollo. */
   sourceRefs?: string[];
+  /** true cuando la respuesta mezcló o usó exclusivamente conocimiento
+   * general (modo ampliado) -- controla el badge de transparencia. */
+  generalKnowledgeUsed?: boolean;
 }
 
 function replyToMessage(reply: TutorReplyBody): TutorConversationMessage {
   if (reply.response_type === "answer") {
+    const content = [
+      ...reply.answer_chunks.map((chunk) => chunk.text),
+      ...reply.general_knowledge_chunks,
+    ].join("\n\n");
     return {
       id: crypto.randomUUID(),
       role: "assistant",
-      content: reply.answer_chunks.map((chunk) => chunk.text).join("\n\n"),
+      content,
       responseType: "answer",
       sourceRefs: Array.from(new Set(reply.answer_chunks.flatMap((c) => c.source_refs))),
+      generalKnowledgeUsed: reply.general_knowledge_used,
     };
   }
   if (reply.response_type === "clarification") {
@@ -36,6 +52,14 @@ function replyToMessage(reply: TutorReplyBody): TutorConversationMessage {
       role: "assistant",
       content: reply.clarification_question ?? "",
       responseType: "clarification",
+    };
+  }
+  if (reply.response_type === "unrelated") {
+    return {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      content: UNRELATED_MESSAGE,
+      responseType: "unrelated",
     };
   }
   return {
@@ -67,7 +91,7 @@ export interface UseTutorResult {
   messages: TutorConversationMessage[];
   loading: boolean;
   error: { title: string; detail: string } | null;
-  sendMessage: (text: string) => Promise<TutorReplyBody | null>;
+  sendMessage: (text: string, allowGeneralKnowledge?: boolean) => Promise<TutorReplyBody | null>;
   clearConversation: () => void;
 }
 
@@ -94,7 +118,10 @@ export function useTutor({
     };
   }, []);
 
-  async function sendMessage(text: string): Promise<TutorReplyBody | null> {
+  async function sendMessage(
+    text: string,
+    allowGeneralKnowledge = false
+  ): Promise<TutorReplyBody | null> {
     const trimmed = text.trim();
     if (!trimmed || loading || !courseId || !moduleId || !topicId) return null;
 
@@ -118,7 +145,12 @@ export function useTutor({
         courseId,
         moduleId,
         topicId,
-        { message: trimmed, scene_id: sceneId, recent_history: historyForRequest },
+        {
+          message: trimmed,
+          scene_id: sceneId,
+          recent_history: historyForRequest,
+          allow_general_knowledge: allowGeneralKnowledge,
+        },
         controller.signal
       );
       setMessages((prev) => [...prev, replyToMessage(reply)]);

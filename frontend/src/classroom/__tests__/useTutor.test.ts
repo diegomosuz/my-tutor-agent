@@ -27,7 +27,9 @@ function answerReply(text = "Kubernetes orquesta contenedores.", refs = ["SRC-00
   return {
     response_type: "answer" as const,
     answer_chunks: [{ text, source_refs: refs }],
+    general_knowledge_chunks: [],
     clarification_question: null,
+    general_knowledge_used: false,
   };
 }
 

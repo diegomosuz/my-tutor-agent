@@ -265,17 +265,17 @@ describe("ClassroomPage — v1.1.1 navegación del aula", () => {
   it("D: Previo funciona (retrocede de escena 2 a escena 1)", async () => {
     await renderWithLesson();
 
-    fireEvent.click(screen.getByRole("button", { name: /Siguiente escena o tópico/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
     await waitFor(() => expect(screen.getByText("Componentes")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "Escena o tópico anterior" }));
+    fireEvent.click(screen.getByRole("button", { name: "Diapositiva anterior" }));
     await waitFor(() => expect(screen.getByText("Introducción")).toBeInTheDocument());
   });
 
   it("E: Siguiente funciona (avanza de escena 1 a escena 2)", async () => {
     await renderWithLesson();
 
-    fireEvent.click(screen.getByRole("button", { name: /Siguiente escena o tópico/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
     await waitFor(() => expect(screen.getByText("Componentes")).toBeInTheDocument());
   });
 
@@ -319,26 +319,28 @@ describe("ClassroomPage — v1.1.1 navegación del aula", () => {
   it("I: el estado disabled de Previo/Siguiente sigue siendo correcto en los extremos", async () => {
     await renderWithLesson();
 
-    expect(screen.getByRole("button", { name: "Escena o tópico anterior" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Diapositiva anterior" })).toBeDisabled();
 
-    fireEvent.click(screen.getByRole("button", { name: /Siguiente escena o tópico/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
     await waitFor(() => expect(screen.getByText("Componentes")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: /Siguiente escena o tópico/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
     await waitFor(() => expect(screen.getByText("Resumen")).toBeInTheDocument());
 
-    // Última escena: "Siguiente" pasa a "Finalizar" y sigue habilitado.
-    const finishButton = screen.getByRole("button", { name: "Finalizar tema" });
-    expect(finishButton).not.toBeDisabled();
-    fireEvent.click(finishButton);
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Finalizar tema" })).toBeDisabled()
-    );
+    // v1.3.0 (BLOQUE C): última escena -- "Siguiente diapositiva" queda
+    // deshabilitado, NUNCA se relabelea a "Finalizar". El CTA explícito y
+    // separado "Completar tema y continuar" es lo único que avanza.
+    expect(screen.getByRole("button", { name: "Siguiente diapositiva" })).toBeDisabled();
+    const completeButton = screen.getByRole("button", { name: "Completar último tema" });
+    expect(completeButton).not.toBeDisabled();
+    fireEvent.click(completeButton);
+    await waitFor(() => expect(screen.getByText("✓ Tema completado")).toBeInTheDocument());
   });
 
   it("J: el tutor sigue operativo (pregunta cubierta) dentro del nuevo layout", async () => {
     mockAskTutor.mockResolvedValue({
       response_type: "answer",
       answer_chunks: [groundedText("Un Pod es la unidad mínima de despliegue.", ["SRC-002"])],
+      general_knowledge_chunks: [],
       clarification_question: null,
     });
     await renderWithLesson();
@@ -356,11 +358,11 @@ describe("ClassroomPage — v1.1.1 navegación del aula", () => {
   it("K: Learning Progress sigue registrando completion al terminar el tema", async () => {
     await renderWithLesson();
 
-    fireEvent.click(screen.getByRole("button", { name: /Siguiente escena o tópico/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
     await waitFor(() => expect(screen.getByText("Componentes")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: /Siguiente escena o tópico/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
     await waitFor(() => expect(screen.getByText("Resumen")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "Finalizar tema" }));
+    fireEvent.click(screen.getByRole("button", { name: "Completar último tema" }));
 
     await waitFor(() => {
       const progress = getCourseLearningProgress("curso-demo");
@@ -412,9 +414,9 @@ describe("ClassroomPage — v1.1.1 navegación del aula", () => {
   it("M: navegar entre escenas no introduce requests duplicados de curso/tópico/lección", async () => {
     await renderWithLesson();
 
-    fireEvent.click(screen.getByRole("button", { name: /Siguiente escena o tópico/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
     await waitFor(() => expect(screen.getByText("Componentes")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "Escena o tópico anterior" }));
+    fireEvent.click(screen.getByRole("button", { name: "Diapositiva anterior" }));
     await waitFor(() => expect(screen.getByText("Introducción")).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Repetir escena actual" }));
 
@@ -454,5 +456,140 @@ describe("ClassroomPage — v1.1.1 navegación del aula", () => {
         screen.getByText("Este tópico no existe o no está disponible en el material del curso.")
       ).toBeInTheDocument()
     );
+  });
+});
+
+// ----------------------------------------------------------------------
+// v1.3.0 (bloque "Classroom UX" -- BLOQUE C: navegación), PARTE 21 A-J
+// ----------------------------------------------------------------------
+
+const MULTI_MODULE_COURSE = {
+  id: "curso-demo",
+  title: "Curso demo",
+  description: "",
+  order: 1,
+  modules: [
+    {
+      id: "modulo-1",
+      title: "Módulo 1",
+      order: 1,
+      topics: [
+        { id: "topico-a", title: "Tópico A", order: 1 },
+        { id: "topico-b", title: "Tópico B", order: 2 },
+      ],
+    },
+    {
+      id: "modulo-2",
+      title: "Módulo 2",
+      order: 2,
+      topics: [{ id: "topico-c", title: "Tópico C", order: 1 }],
+    },
+  ],
+};
+
+describe("ClassroomPage — v1.3.0 Classroom UX (BLOQUE C: navegación)", () => {
+  it("A: sin LessonPlan (modo sin IA) no se renderizan controles de escena, solo navegación de tópico", async () => {
+    renderPage();
+    await screen.findByRole("button", { name: /Preparar clase con IA/ });
+
+    expect(screen.queryByRole("group", { name: "Controles de la escena" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Navegación entre tópicos" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tema anterior" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Tema siguiente" })).toBeDisabled();
+  });
+
+  it("B: la navegación de tópico está siempre visible, incluso con una LessonPlan activa", async () => {
+    await renderWithLesson();
+    expect(screen.getByRole("group", { name: "Navegación entre tópicos" })).toBeInTheDocument();
+  });
+
+  it("C: 'Tema siguiente' navega al próximo tópico cruzando módulos", async () => {
+    mockGetCourse.mockReset().mockResolvedValue(MULTI_MODULE_COURSE);
+    renderPage("/aula/curso-demo/modulo-1/topico-b");
+    await screen.findByRole("button", { name: /Preparar clase con IA/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "Tema siguiente" }));
+    expect(mockNavigate).toHaveBeenCalledWith("/aula/curso-demo/modulo-2/topico-c");
+  });
+
+  it("D: 'Tema anterior' nunca dispara navegación de escena (son affordances separadas)", async () => {
+    mockGetCourse.mockReset().mockResolvedValue(MULTI_MODULE_COURSE);
+    await renderWithLesson(SAMPLE_LESSON, "/aula/curso-demo/modulo-1/topico-b");
+
+    fireEvent.click(screen.getByRole("button", { name: "Tema anterior" }));
+    expect(mockNavigate).toHaveBeenCalledWith("/aula/curso-demo/modulo-1/topico-a");
+    // La escena actual de la LessonPlan no cambió por este click de tópico.
+    expect(screen.getByText("Introducción")).toBeInTheDocument();
+  });
+
+  it("E: navegar de escena (Siguiente diapositiva) nunca dispara navegación de tópico", async () => {
+    mockGetCourse.mockReset().mockResolvedValue(MULTI_MODULE_COURSE);
+    await renderWithLesson(SAMPLE_LESSON, "/aula/curso-demo/modulo-1/topico-b");
+
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
+    await waitFor(() => expect(screen.getByText("Componentes")).toBeInTheDocument());
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("F: 'Completar tema y continuar' marca el tema completo y navega automáticamente al próximo tópico", async () => {
+    mockGetCourse.mockReset().mockResolvedValue(MULTI_MODULE_COURSE);
+    await renderWithLesson(SAMPLE_LESSON, "/aula/curso-demo/modulo-1/topico-a");
+
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
+    await waitFor(() => expect(screen.getByText("Componentes")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
+    await waitFor(() => expect(screen.getByText("Resumen")).toBeInTheDocument());
+
+    const completeButton = screen.getByRole("button", { name: "Completar tema y continuar →" });
+    fireEvent.click(completeButton);
+
+    await waitFor(() => {
+      const progress = getCourseLearningProgress("curso-demo");
+      expect(progress?.topics["modulo-1:topico-a"]?.status).toBe("completed");
+    });
+    expect(mockNavigate).toHaveBeenCalledWith("/aula/curso-demo/modulo-1/topico-b");
+  });
+
+  it("G: en el último tópico del curso, 'Completar último tema' nunca inventa un destino", async () => {
+    mockGetCourse.mockReset().mockResolvedValue(MULTI_MODULE_COURSE);
+    await renderWithLesson(SAMPLE_LESSON, "/aula/curso-demo/modulo-2/topico-c");
+
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
+    await waitFor(() => expect(screen.getByText("Componentes")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
+    await waitFor(() => expect(screen.getByText("Resumen")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Completar último tema" }));
+    await waitFor(() => expect(screen.getByText("✓ Tema completado")).toBeInTheDocument());
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("H: 'Siguiente diapositiva' nunca se relabelea a 'Finalizar' en la última escena", async () => {
+    await renderWithLesson();
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
+    await waitFor(() => expect(screen.getByText("Componentes")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
+    await waitFor(() => expect(screen.getByText("Resumen")).toBeInTheDocument());
+
+    expect(screen.queryByRole("button", { name: "Finalizar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Finalizar tema" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Siguiente diapositiva" })).toBeDisabled();
+  });
+
+  it("I: el CTA de completar tema solo aparece en la última escena, nunca antes", async () => {
+    await renderWithLesson();
+    expect(
+      screen.queryByRole("button", { name: /Completar (tema y continuar|último tema)/ })
+    ).not.toBeInTheDocument();
+  });
+
+  it("J: repetir escena y pausar/reanudar nunca navegan de tópico", async () => {
+    mockGetCourse.mockReset().mockResolvedValue(MULTI_MODULE_COURSE);
+    await renderWithLesson(SAMPLE_LESSON, "/aula/curso-demo/modulo-1/topico-b");
+
+    fireEvent.click(screen.getByRole("button", { name: "Pausar clase" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reanudar clase" }));
+    fireEvent.click(screen.getByRole("button", { name: "Repetir escena actual" }));
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 });

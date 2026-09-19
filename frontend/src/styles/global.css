@@ -872,6 +872,29 @@ p {
   font-size: 13px;
 }
 
+/* v1.3.0 (bloque "Classroom UX", Bloque B): antes de este bloque NO
+   existía ninguna regla de tamaño para las imágenes de SafeMarkdown --
+   una imagen de 1600px se mostraba a su ancho intrínseco completo, sin
+   ningún límite, desbordando el panel entero. `width/height: auto` +
+   `max-width: 100%` respeta el tamaño intrínseco cuando es menor (nunca
+   agranda una imagen chica) y limita el ancho cuando es más grande que el
+   panel; `max-height` evita que una imagen muy alta se coma el resto de
+   la página; `object-fit: contain` + `width/height: auto` combinados
+   garantizan que el aspect ratio nunca se deforme (nunca `object-fit:
+   cover`, que recortaría contenido). Centrada porque una imagen más
+   angosta que el panel, sola en su párrafo, se ve mejor centrada que
+   pegada al margen izquierdo. */
+.content-panel__body img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: min(50vh, 420px);
+  object-fit: contain;
+  margin: 12px auto;
+  border-radius: 6px;
+}
+
 /* ---------- Classroom Engine: progreso, pausa, animaciones (Fase 4) ---------- */
 
 .classroom-progress {
@@ -2049,6 +2072,18 @@ p {
   gap: 6px;
 }
 
+.tutor-message__general-knowledge-badge {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-style: italic;
+  color: var(--color-text-faint);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-strong);
+}
+
 .tutor-panel__loading {
   font-size: 12.5px;
   color: var(--color-text-faint);
@@ -2159,6 +2194,30 @@ p {
 
 .tutor-panel__hint {
   font-size: 12px;
+  color: var(--color-text-faint);
+}
+
+.tutor-panel__expanded-mode {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+}
+
+.tutor-panel__expanded-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.tutor-panel__expanded-mode-help {
+  margin: 4px 0 0;
+  font-size: 11.5px;
   color: var(--color-text-faint);
 }
 
@@ -2593,7 +2652,9 @@ p {
 .content-panel__tab:focus-visible,
 .completion-screen__button:focus-visible,
 .grounding-panel__ref-chip:focus-visible,
-.slide-panel__cta:focus-visible {
+.slide-panel__cta:focus-visible,
+.topic-nav button:focus-visible,
+.topic-completion-cta__button:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
@@ -2638,6 +2699,76 @@ p {
     flex-basis: 100%;
     justify-content: center;
   }
+}
+
+/* v1.3.0 (Classroom UX, BLOQUE C): CTA explícito y separado para terminar
+   un tema -- nunca el mismo botón que "Siguiente diapositiva" (que queda
+   deshabilitado, nunca relabeleado a "Finalizar"). Visualmente distinto de
+   .scene-controls a propósito, para que no se confunda con un botón más
+   de esa toolbar. */
+.topic-completion-cta {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-radius: var(--radius-lg);
+  background: var(--color-primary-subtle);
+  border: 1px solid var(--color-primary);
+}
+
+.topic-completion-cta span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.topic-completion-cta__button {
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.topic-completion-cta__button:hover {
+  background: var(--color-primary-dark);
+}
+
+/* v1.3.0 (BLOQUE C): navegación de TÓPICO, siempre visible, siempre
+   separada de la navegación de escena de arriba (.scene-controls). */
+.topic-nav {
+  margin-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.topic-nav button {
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.topic-nav button:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.topic-nav button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* ---------- Estados: loading / error / vacío ---------- */

@@ -234,14 +234,22 @@ export interface TutorRequest {
   message: string;
   scene_id: string | null;
   recent_history: TutorMessage[];
+  // v1.3.0 (Classroom UX -- Tutor Expanded Mode): default false preserva el
+  // comportamiento estricto de siempre. Espejo manual de
+  // `backend/app/models/tutor.py::TutorRequest`.
+  allow_general_knowledge?: boolean;
 }
 
-export type TutorResponseType = "answer" | "not_covered" | "clarification";
+export type TutorResponseType = "answer" | "not_covered" | "clarification" | "unrelated";
 
 export interface TutorReplyBody {
   response_type: TutorResponseType;
   answer_chunks: GroundedText[];
+  // v1.3.0: texto plano de conocimiento general (nunca grounded, nunca
+  // tiene source_refs -- ver docstring de TutorReplyBody en el backend).
+  general_knowledge_chunks: string[];
   clarification_question: string | null;
+  general_knowledge_used: boolean;
 }
 
 export interface CheckpointRequest {
