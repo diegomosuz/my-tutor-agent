@@ -318,6 +318,28 @@ export function ClassroomPage() {
     }
   }
 
+  // v1.1.0, PARTE 13: si el tópico fue completado y el Markdown cambió
+  // desde entonces (content_sha256 distinto), se muestra un aviso NO
+  // bloqueante — nunca se desmarca "completed" automáticamente, eso
+  // requeriría asumir que el cambio invalida el logro del alumno, lo cual
+  // no siempre es cierto (puede ser una corrección menor).
+  const contentUpdatedSinceCompletion = useMemo(() => {
+    if (!courseId || !moduleId || !topicId || !topic) return false;
+    const stored = getCourseLearningProgress(courseId)?.topics[`${moduleId}:${topicId}`];
+    if (!stored || stored.status !== "completed" || !stored.contentSha256) return false;
+    return stored.contentSha256 !== topic.canonical.content_sha256;
+  }, [courseId, moduleId, topicId, topic]);
+
+  // v1.1.1 — bug real preexistente corregido: este early-return vivía
+  // ANTES del useMemo de arriba, violando las reglas de hooks de React
+  // (un componente no puede llamar un número distinto de hooks entre
+  // renders). Navegar de un tópico válido a uno inexistente (`error`
+  // pasa a truthy) SIN desmontar ClassroomPage — ej. editando la URL a
+  // mano, o un enlace a un tópico borrado del curso — disparaba "Rendered
+  // fewer hooks than expected" y tiraba abajo la página entera al
+  // ErrorBoundary. Nunca relacionado con la reorganización de layout de
+  // este bloque; se corrige acá porque se encontró durante el QA real de
+  // esta misma sección (PARTE 22).
   if (error) {
     return (
       <div className="page">
@@ -333,18 +355,6 @@ export function ClassroomPage() {
   }
 
   const resourceLinks = topic ? extractMarkdownLinks(topic.content_markdown) : [];
-
-  // v1.1.0, PARTE 13: si el tópico fue completado y el Markdown cambió
-  // desde entonces (content_sha256 distinto), se muestra un aviso NO
-  // bloqueante — nunca se desmarca "completed" automáticamente, eso
-  // requeriría asumir que el cambio invalida el logro del alumno, lo cual
-  // no siempre es cierto (puede ser una corrección menor).
-  const contentUpdatedSinceCompletion = useMemo(() => {
-    if (!courseId || !moduleId || !topicId || !topic) return false;
-    const stored = getCourseLearningProgress(courseId)?.topics[`${moduleId}:${topicId}`];
-    if (!stored || stored.status !== "completed" || !stored.contentSha256) return false;
-    return stored.contentSha256 !== topic.canonical.content_sha256;
-  }, [courseId, moduleId, topicId, topic]);
 
   return (
     <>
@@ -370,6 +380,9 @@ export function ClassroomPage() {
             </select>
           </div>
         )}
+        <button type="button" className="course-subheader__exit" onClick={handleExit}>
+          Salir de la clase
+        </button>
       </div>
 
       <Breadcrumb
@@ -467,8 +480,6 @@ export function ClassroomPage() {
                     topicId={topicId ?? ""}
                   />
                   <div className="slide-panel__scene-indicator">
-                    Escena {engine.currentSceneIndex + 1} de {engine.totalScenes}
-                    {" · "}
                     <button
                       type="button"
                       className="slide-panel__regenerate"
@@ -530,6 +541,131 @@ export function ClassroomPage() {
                   </p>
                 </div>
               )}
+
+            {/* Toolbar de la escena: pertenece visualmente a la slide, nunca
+                a "toda la página" — por eso vive DENTRO de .classroom-stage,
+                compartiendo su mismo ancho (columna izquierda). "Salir de la
+                clase" NO vive acá (ver .course-subheader, arriba). */}
+            <div className="scene-controls" role="group" aria-label="Controles de la escena">
+              <div className="scene-controls__side scene-controls__side--prev">
+                <button
+                  type="button"
+                  className="scene-controls__prev"
+                  onClick={goPrev}
+                  disabled={lesson ? engine.isFirstScene : !prevTopic}
+                  aria-label="Escena o tópico anterior"
+                >
+                  ← Previo
+                </button>
+              </div>
+
+              <div className="scene-controls__center">
+                <button
+                  type="button"
+                  className="scene-controls__pause"
+                  onClick={() => (engine.isPaused ? engine.resume() : engine.pause())}
+                  disabled={!lesson || engine.isCompleted}
+                  aria-label={engine.isPaused ? "Reanudar clase" : "Pausar clase"}
+                >
+                  {engine.isPaused ? "▶ Reanudar" : "⏸ Pausar"}
+                </button>
+                <button
+                  type="button"
+                  className="scene-controls__repeat"
+                  onClick={() => engine.repeatScene()}
+                  disabled={!lesson || engine.isCompleted}
+                  aria-label="Repetir escena actual"
+                >
+                  ↻ Repetir
+                </button>
+                <div className="scene-controls__voice">
+                  <button
+                    type="button"
+                    className={
+                      voiceEnabled ? "scene-controls__voice-toggle primary" : "scene-controls__voice-toggle"
+                    }
+                    onClick={toggleVoice}
+                    disabled={!speechSupported && !useNeural}
+                    aria-pressed={voiceEnabled}
+                    aria-label={voiceEnabled ? "Desactivar voz" : "Activar voz"}
+                  >
+                    {!speechSupported && !useNeural
+                      ? "🔈 Voz no disponible"
+                      : voiceEnabled
+                        ? "🔊 Voz activada"
+                        : "🔈 Activar voz"}
+                  </button>
+                  {voiceEnabled && (speechSupported || useNeural) && (
+                    <select
+                      aria-label="Velocidad de voz"
+                      value={voiceSpeed}
+                      onChange={(e) => changeVoiceSpeed(Number(e.target.value) as VoiceSpeed)}
+                    >
+                      {VOICE_SPEED_OPTIONS.map((speed) => (
+                        <option key={speed} value={speed}>
+                          {speed}x
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {voiceEnabled && useNeural && (
+                    <span className="voice-disclosure" title={`Modelo: ${voiceStatus?.tts_model ?? ""}`}>
+                      Voz generada por IA
+                    </span>
+                  )}
+                </div>
+                {lesson && (
+                  <span className="scene-controls__indicator">
+                    Escena {engine.currentSceneIndex + 1} de {engine.totalScenes}
+                  </span>
+                )}
+              </div>
+
+              <div className="scene-controls__side scene-controls__side--next">
+                <button
+                  type="button"
+                  className="scene-controls__next primary"
+                  onClick={goNext}
+                  disabled={lesson ? engine.isCompleted : !nextTopic}
+                  aria-label={lesson && engine.isLastScene ? "Finalizar tema" : "Siguiente escena o tópico"}
+                >
+                  {lesson && engine.isLastScene ? "Finalizar" : "Siguiente →"}
+                </button>
+              </div>
+            </div>
+
+            {neuralVoiceError && (
+              <div className="voice-neural-error">
+                <span>{neuralVoiceError}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNeuralVoiceError(null);
+                    setNeuralDismissed(true);
+                  }}
+                >
+                  Usar voz del navegador
+                </button>
+              </div>
+            )}
+
+            {courseId && moduleId && topicId && (
+              <TutorPanel
+                key={`${courseId}-${moduleId}-${topicId}`}
+                courseId={courseId}
+                moduleId={moduleId}
+                topicId={topicId}
+                sceneId={engine.currentScene?.scene_id ?? null}
+                aiStatus={aiStatus}
+                voiceEnabled={voiceEnabled}
+                voiceRate={voiceSpeed}
+                useNeuralVoice={useNeural}
+                isInterrupting={tutorInterrupting}
+                onInterrupt={handleTutorInterrupt}
+                onContinueClass={handleContinueClass}
+                onInspectRef={import.meta.env.DEV ? setInspectedTutorRef : undefined}
+              />
+            )}
 
             {course && course.modules.length > 0 && (
               <div className="module-topic-nav">
@@ -657,24 +793,6 @@ export function ClassroomPage() {
           />
         )}
 
-        {courseId && moduleId && topicId && (
-          <TutorPanel
-            key={`${courseId}-${moduleId}-${topicId}`}
-            courseId={courseId}
-            moduleId={moduleId}
-            topicId={topicId}
-            sceneId={engine.currentScene?.scene_id ?? null}
-            aiStatus={aiStatus}
-            voiceEnabled={voiceEnabled}
-            voiceRate={voiceSpeed}
-            useNeuralVoice={useNeural}
-            isInterrupting={tutorInterrupting}
-            onInterrupt={handleTutorInterrupt}
-            onContinueClass={handleContinueClass}
-            onInspectRef={import.meta.env.DEV ? setInspectedTutorRef : undefined}
-          />
-        )}
-
         {import.meta.env.DEV && inspectedTutorRef && (
           <div className="grounding-panel__block-preview grounding-panel__block-preview--floating">
             {(() => {
@@ -697,95 +815,6 @@ export function ClassroomPage() {
             </button>
           </div>
         )}
-
-        <div className="controls-bar">
-          <button
-            type="button"
-            onClick={goPrev}
-            disabled={lesson ? engine.isFirstScene : !prevTopic}
-            aria-label="Escena o tópico anterior"
-          >
-            ← Previo
-          </button>
-          <button
-            type="button"
-            onClick={goNext}
-            disabled={lesson ? engine.isCompleted : !nextTopic}
-            aria-label={lesson && engine.isLastScene ? "Finalizar tema" : "Siguiente escena o tópico"}
-          >
-            {lesson && engine.isLastScene ? "Finalizar" : "Siguiente →"}
-          </button>
-          <span className="controls-bar__divider" aria-hidden="true" />
-          <button
-            type="button"
-            onClick={() => (engine.isPaused ? engine.resume() : engine.pause())}
-            disabled={!lesson || engine.isCompleted}
-            aria-label={engine.isPaused ? "Reanudar clase" : "Pausar clase"}
-          >
-            {engine.isPaused ? "▶ Reanudar" : "⏸ Pausar"}
-          </button>
-          <button
-            type="button"
-            onClick={() => engine.repeatScene()}
-            disabled={!lesson || engine.isCompleted}
-            aria-label="Repetir escena actual"
-          >
-            ↻ Repetir
-          </button>
-          <span className="controls-bar__divider" aria-hidden="true" />
-          <div className="controls-bar__voice">
-            <button
-              type="button"
-              className={voiceEnabled ? "primary" : undefined}
-              onClick={toggleVoice}
-              disabled={!speechSupported && !useNeural}
-              aria-pressed={voiceEnabled}
-              aria-label={voiceEnabled ? "Desactivar voz" : "Activar voz"}
-            >
-              {!speechSupported && !useNeural
-                ? "🔈 Voz no disponible"
-                : voiceEnabled
-                  ? "🔊 Voz activada"
-                  : "🔈 Activar voz"}
-            </button>
-            {voiceEnabled && (speechSupported || useNeural) && (
-              <select
-                aria-label="Velocidad de voz"
-                value={voiceSpeed}
-                onChange={(e) => changeVoiceSpeed(Number(e.target.value) as VoiceSpeed)}
-              >
-                {VOICE_SPEED_OPTIONS.map((speed) => (
-                  <option key={speed} value={speed}>
-                    {speed}x
-                  </option>
-                ))}
-              </select>
-            )}
-            {voiceEnabled && useNeural && (
-              <span className="voice-disclosure" title={`Modelo: ${voiceStatus?.tts_model ?? ""}`}>
-                Voz generada por IA
-              </span>
-            )}
-          </div>
-          {neuralVoiceError && (
-            <div className="voice-neural-error">
-              <span>{neuralVoiceError}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setNeuralVoiceError(null);
-                  setNeuralDismissed(true);
-                }}
-              >
-                Usar voz del navegador
-              </button>
-            </div>
-          )}
-          <span className="controls-bar__divider" aria-hidden="true" />
-          <button type="button" className="danger" onClick={handleExit}>
-            Salir de la clase
-          </button>
-        </div>
       </div>
     </>
   );

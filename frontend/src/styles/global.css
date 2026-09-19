@@ -233,6 +233,35 @@ p {
   color: var(--color-text);
 }
 
+/* "Salir de la clase": acción de navegación de nivel superior, NO un
+   control de reproducción — vive en el header/context bar (arriba a la
+   derecha), nunca en la toolbar de la escena (ver .scene-controls).
+   Estilo neutral/ghost a propósito: el rojo de ".danger" está reservado
+   para acciones destructivas reales en el resto de la app (ver Ajustes),
+   y salir del aula no es una de ellas. */
+.course-subheader__exit {
+  margin-left: auto;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.course-subheader__exit:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-muted);
+}
+
+.course-subheader__exit:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 /* ---------- Breadcrumb ---------- */
 
 .breadcrumb {
@@ -2302,21 +2331,39 @@ p {
 
 /* ---------- Barra de controles ---------- */
 
-.controls-bar {
-  margin-top: 20px;
+/* ---------- Toolbar de la escena (v1.1.1) ----------
+   Pertenece visualmente a la slide: vive dentro de .classroom-stage,
+   comparte su ancho, y va inmediatamente debajo de ella (slide -> toolbar
+   -> tutor). Tres zonas (prev / centro / next) vía flex, nunca una navbar
+   global: fondo neutro, borde y radio coherentes con el resto de cards del
+   aula, sombra sutil (no exagerada), padding compacto. */
+.scene-controls {
+  margin-top: 14px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
-  padding: 12px 16px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.scene-controls__side {
+  flex: 0 0 auto;
+}
+
+.scene-controls__center {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   flex-wrap: wrap;
+  flex: 1 1 auto;
 }
 
-.controls-bar button {
+.scene-controls button {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2329,51 +2376,46 @@ p {
   color: var(--color-text);
   cursor: pointer;
   transition: all 0.15s ease;
+  white-space: nowrap;
 }
 
-.controls-bar button:hover:not(:disabled) {
+.scene-controls button:hover:not(:disabled) {
   border-color: var(--color-primary);
   color: var(--color-primary);
 }
 
-.controls-bar button:disabled {
+.scene-controls button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-.controls-bar button.primary {
+/* "Siguiente" es la acción primaria del reproductor: botón primario PwC.
+   "Previo"/Pause/Repeat/Voz quedan con el estilo neutral de arriba. */
+.scene-controls button.primary {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: #fff;
 }
 
-.controls-bar button.primary:hover:not(:disabled) {
+.scene-controls button.primary:hover:not(:disabled) {
   background: var(--color-primary-dark);
 }
 
-.controls-bar button.danger {
-  color: var(--color-accent-red);
-  border-color: var(--color-accent-red);
+.scene-controls__indicator {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  white-space: nowrap;
 }
 
-.controls-bar button.danger:hover {
-  background: #fdeceb;
-}
-
-.controls-bar__divider {
-  width: 1px;
-  height: 22px;
-  background: var(--color-border);
-  margin: 0 4px;
-}
-
-.controls-bar__voice {
+.scene-controls__voice {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
-.controls-bar__voice select {
+.scene-controls__voice select {
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border-strong);
@@ -2383,14 +2425,65 @@ p {
   color: var(--color-text);
 }
 
+/* Disclosure de voz por IA: texto secundario y compacto a propósito (nunca
+   debe expandir la toolbar — sección 9 de la especificación de UX). */
+.scene-controls__voice .voice-disclosure {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Foco visible consistente para navegación por teclado (sección 39). */
-.controls-bar button:focus-visible,
+.scene-controls button:focus-visible,
+.course-subheader__exit:focus-visible,
 .content-panel__tab:focus-visible,
 .completion-screen__button:focus-visible,
 .grounding-panel__ref-chip:focus-visible,
 .slide-panel__cta:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+
+/* Tablet: 1024x768 / 768x1024 — el toolbar de 3 zonas sigue entrando en
+   una fila; solo se angosta el padding/gap. Ver breakpoint de mobile más
+   abajo (@media max-width: 640px) para el stack de dos filas. */
+@media (max-width: 1024px) {
+  .scene-controls {
+    padding: 9px 12px;
+    gap: 8px;
+  }
+}
+
+/* Mobile (~390-480px): dos filas — fila 1 Previo/Siguiente (los más
+   importantes de localizar), fila 2 Pause/Repetir/Voz + indicador. Nunca
+   overflow horizontal: los botones se dejan angostar antes que desbordar. */
+@media (max-width: 640px) {
+  .scene-controls {
+    flex-wrap: wrap;
+  }
+
+  .scene-controls__side {
+    flex: 1 1 0;
+  }
+
+  .scene-controls__side--prev {
+    order: 1;
+  }
+
+  .scene-controls__side--next {
+    order: 2;
+  }
+
+  .scene-controls__side button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .scene-controls__center {
+    order: 3;
+    flex-basis: 100%;
+    justify-content: center;
+  }
 }
 
 /* ---------- Estados: loading / error / vacío ---------- */

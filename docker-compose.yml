@@ -28,7 +28,7 @@ services:
       OPENAI_TTS_VOICE: ${OPENAI_TTS_VOICE:-marin}
       OPENAI_TTS_INSTRUCTIONS: ${OPENAI_TTS_INSTRUCTIONS:-}
       SPEECH_CACHE_DIR: /app/data/speech-cache
-      APP_VERSION: ${APP_VERSION:-1.1.0}
+      APP_VERSION: ${APP_VERSION:-1.1.1}
     volumes:
       # Bind mount long-form: evita problemas de interpretación de rutas de
       # Windows que ocurren con la sintaxis corta "host:container".
