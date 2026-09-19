@@ -20,6 +20,7 @@ function props(overrides: Partial<VisualComponentProps> = {}): VisualComponentPr
     courseId: "curso-demo",
     moduleId: "modulo-demo",
     topicId: "topico-demo",
+    isPaused: false,
     ...overrides,
   };
 }

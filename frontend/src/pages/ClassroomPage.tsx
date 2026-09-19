@@ -478,6 +478,7 @@ export function ClassroomPage() {
                     courseId={courseId ?? ""}
                     moduleId={moduleId ?? ""}
                     topicId={topicId ?? ""}
+                    isPaused={engine.isPaused}
                   />
                   <div className="slide-panel__scene-indicator">
                     <button

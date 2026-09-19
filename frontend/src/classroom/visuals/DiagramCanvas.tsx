@@ -26,6 +26,23 @@ export interface DiagramCanvasProps {
   /** Clase adicional para el contenedor de nodos (permite reusar estilos
    * específicos de architecture/concept_map sobre este esqueleto común). */
   nodesClassName?: string;
+  /** Pedagogical Animations (v1.2.0, bloque "Pedagogical Animations"):
+   * predicados OPCIONALES de visibilidad por node/edge. Por defecto (sin
+   * pasar ninguno de los dos) TODO es visible siempre — comportamiento
+   * IDÉNTICO al de antes de este bloque, cero cambio para cualquier
+   * consumidor que no los use. Cuando se pasan, DiagramCanvas sigue
+   * midiendo/posicionando exactamente igual (la geometría NUNCA depende
+   * de qué esté revelado — PARTE 41, layout stability): estos predicados
+   * solo agregan una clase CSS (`diagram-canvas__node-slot--hidden`/
+   * `--active` y `diagram-canvas__edge-line--hidden`/`--active`) que
+   * controla opacidad, nunca posición ni presencia en el DOM (el nodo
+   * sigue midiéndose por `useDiagramEdgeGeometry` esté o no "revelado" —
+   * necesario para que las edges que aparecen después tengan coordenadas
+   * correctas desde el primer momento). */
+  isNodeVisible?: (nodeId: string) => boolean;
+  isNodeActive?: (nodeId: string) => boolean;
+  isEdgeVisible?: (edgeIndex: number) => boolean;
+  isEdgeActive?: (edgeIndex: number) => boolean;
 }
 
 /** Radio del layout radial como fracción del lado más chico del
@@ -39,8 +56,24 @@ export function DiagramCanvas({
   renderNode,
   centerLabel,
   nodesClassName,
+  isNodeVisible,
+  isNodeActive,
+  isEdgeVisible,
+  isEdgeActive,
 }: DiagramCanvasProps) {
   const { containerRef, registerNode, lines } = useDiagramEdgeGeometry(edges);
+
+  function edgeVisibilityClass(edgeIndex: number): string {
+    if (!isEdgeVisible) return "";
+    if (!isEdgeVisible(edgeIndex)) return " diagram-canvas__edge-line--hidden";
+    return isEdgeActive?.(edgeIndex) ? " diagram-canvas__edge-line--active" : " diagram-canvas__edge-line--revealed";
+  }
+
+  function nodeVisibilityClass(nodeId: string, basePrefix: string): string {
+    if (!isNodeVisible) return "";
+    if (!isNodeVisible(nodeId)) return ` ${basePrefix}--hidden`;
+    return isNodeActive?.(nodeId) ? ` ${basePrefix}--active` : ` ${basePrefix}--revealed`;
+  }
 
   return (
     <div className={`diagram-canvas diagram-canvas--${layout}`} ref={containerRef}>
@@ -69,7 +102,7 @@ export function DiagramCanvas({
                 y1={line.from.y}
                 x2={line.to.x}
                 y2={line.to.y}
-                className="diagram-canvas__edge-line"
+                className={`diagram-canvas__edge-line${edgeVisibilityClass(line.edgeIndex)}`}
                 markerEnd={line.directed ? "url(#diagram-canvas-arrow)" : undefined}
               />
               {label && (
@@ -83,11 +116,21 @@ export function DiagramCanvas({
       </svg>
 
       {layout === "radial" ? (
-        <RadialNodes nodes={nodes} registerNode={registerNode} renderNode={renderNode} centerLabel={centerLabel} />
+        <RadialNodes
+          nodes={nodes}
+          registerNode={registerNode}
+          renderNode={renderNode}
+          centerLabel={centerLabel}
+          nodeVisibilityClass={nodeVisibilityClass}
+        />
       ) : (
         <div className={`diagram-canvas__nodes diagram-canvas__nodes--grid ${nodesClassName ?? ""}`}>
           {nodes.map((node, i) => (
-            <div key={node.id} ref={registerNode(node.id)} className="diagram-canvas__node-slot">
+            <div
+              key={node.id}
+              ref={registerNode(node.id)}
+              className={`diagram-canvas__node-slot${nodeVisibilityClass(node.id, "diagram-canvas__node-slot")}`}
+            >
               {renderNode(node, i)}
             </div>
           ))}
@@ -117,11 +160,13 @@ function RadialNodes({
   registerNode,
   renderNode,
   centerLabel,
+  nodeVisibilityClass,
 }: {
   nodes: GraphNode[];
   registerNode: (id: string) => (el: HTMLElement | null) => void;
   renderNode: (node: GraphNode, index: number) => ReactNode;
   centerLabel?: ReactNode;
+  nodeVisibilityClass: (nodeId: string, basePrefix: string) => string;
 }) {
   const count = nodes.length;
   if (count === 0)
@@ -141,7 +186,7 @@ function RadialNodes({
           <div
             key={node.id}
             ref={registerNode(node.id)}
-            className="diagram-canvas__radial-node"
+            className={`diagram-canvas__radial-node${nodeVisibilityClass(node.id, "diagram-canvas__radial-node")}`}
             style={{ left: `${x}%`, top: `${y}%` }}
           >
             {renderNode(node, i)}

@@ -946,6 +946,96 @@ p {
   }
 }
 
+/* ---------- Pedagogical Animations (v1.2.0, bloque "Pedagogical
+   Animations") ----------
+   Progresión visual REAL controlada por JS (usePedagogicalAnimation),
+   nunca solo una transición CSS decorativa (ver pedagogicalAnimation.ts
+   para la distinción con classroom-stagger-item de más arriba). Estas
+   clases solo cambian opacidad/transform/highlight -- NUNCA layout
+   (posición/tamaño), que DiagramCanvas ya reserva desde el primer render
+   sin importar qué esté revelado (PARTE 41, layout stability). Nunca
+   display:none (mantiene el contenido en el accessibility tree, PARTE 26
+   -- ver también el <ul class="sr-only"> de DiagramCanvas, siempre
+   completo). El "pause" real ocurre en JS (usePedagogicalAnimation dejar
+   de programar el próximo timer): estas transitions solo suavizan un
+   cambio de estado ya decidido, nunca inician una revelación nueva por sí
+   solas. */
+.pedagogical-hidden,
+.diagram-canvas__node-slot--hidden,
+.diagram-canvas__radial-node--hidden {
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+
+.pedagogical-active,
+.pedagogical-revealed,
+.diagram-canvas__node-slot--active,
+.diagram-canvas__node-slot--revealed,
+.diagram-canvas__radial-node--active,
+.diagram-canvas__radial-node--revealed {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+
+/* "active" = paso actual, recibe un énfasis sobrio y estático (nunca un
+   loop de animación -- PARTE 22/42): un aro de foco con el color de marca
+   PwC, sin parpadeo ni escala exagerada. */
+.pedagogical-active {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.diagram-canvas__node-slot--active > *,
+.diagram-canvas__radial-node--active > * {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.diagram-canvas__edge-line--hidden {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.diagram-canvas__edge-line--revealed {
+  opacity: 1;
+  transition: opacity 0.3s ease;
+}
+
+.diagram-canvas__edge-line--active {
+  opacity: 1;
+  stroke-width: 2.5;
+  transition: opacity 0.3s ease, stroke-width 0.3s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Respaldo CSS puro (defensa en profundidad): usePedagogicalAnimation
+     ya detecta prefers-reduced-motion en JS y nunca programa un timer
+     (salta directo al estado final, PARTE 14/25) -- estas reglas cubren
+     cualquier caso no previsto donde una clase "hidden" quedara
+     aplicada de todos modos. */
+  .pedagogical-hidden,
+  .pedagogical-active,
+  .pedagogical-revealed,
+  .diagram-canvas__node-slot--hidden,
+  .diagram-canvas__node-slot--active,
+  .diagram-canvas__node-slot--revealed,
+  .diagram-canvas__radial-node--hidden,
+  .diagram-canvas__radial-node--active,
+  .diagram-canvas__radial-node--revealed,
+  .diagram-canvas__edge-line--hidden,
+  .diagram-canvas__edge-line--active,
+  .diagram-canvas__edge-line--revealed {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+    outline: none !important;
+  }
+}
+
 /* ---------- Scene Renderer / Visuals (Fase 4) ---------- */
 
 .scene-renderer {

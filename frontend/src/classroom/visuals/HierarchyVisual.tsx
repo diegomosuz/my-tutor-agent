@@ -1,5 +1,9 @@
+import { useMemo } from "react";
 import type { VisualComponentProps } from "./types";
 import { deriveHierarchyTree } from "./hierarchyTree";
+import { buildAnimationSequence } from "../pedagogicalAnimation";
+import { usePedagogicalAnimation } from "../usePedagogicalAnimation";
+import { pedagogicalStatusClass } from "./pedagogicalStatusClass";
 
 /** visual_type = "hierarchy" (v1.2.0, bloque "Visual Fidelity" — bug real
  * corregido: antes este componente ignoraba completamente `visual.nodes`/
@@ -14,8 +18,19 @@ import { deriveHierarchyTree } from "./hierarchyTree";
  *   siendo una mejora real sobre el key_points genérico de antes;
  * - si `nodes` viene vacío (LessonPlan vieja en cache, anterior a este
  *   bloque), cae exactamente al comportamiento legacy: `key_points` como
- *   hijos de `scene.title`. Compatibilidad hacia atrás total. */
-export function HierarchyVisual({ scene }: VisualComponentProps) {
+ *   hijos de `scene.title`. Compatibilidad hacia atrás total.
+ *
+ * Animación pedagógica (v1.2.0, bloque "Pedagogical Animations"): SOLO
+ * cuando hay `nodes` estructurados. Con una raíz real: root primero,
+ * luego TODOS los children como un único grupo simultáneo (nunca
+ * child A -> child B -> child C, que implicaría causalidad entre
+ * siblings que la fuente no establece — PARTE 6). Sin raíz clara: reveal
+ * neutro/simultáneo de todos los nodes (PARTE 7 — nunca se refuerza
+ * artificialmente una relación padre/hijo que el VisualPlan no
+ * estableció). El fallback de `key_points` (sin `nodes` estructurados)
+ * mantiene la transición CSS existente sin cambios: no hay estructura
+ * real sobre la cual construir una secuencia determinística. */
+export function HierarchyVisual({ scene, isPaused }: VisualComponentProps) {
   const { nodes, edges } = scene.visual;
   const hasStructuredNodes = nodes.length > 0;
   const tree = hasStructuredNodes ? deriveHierarchyTree(nodes, edges) : null;
@@ -25,19 +40,22 @@ export function HierarchyVisual({ scene }: VisualComponentProps) {
     ? (tree!.children.length > 0 ? tree!.children : nodes)
     : null;
 
+  const sequence = useMemo(() => buildAnimationSequence(scene), [scene]);
+  const anim = usePedagogicalAnimation(sequence, isPaused);
+  const rootStatus = tree?.root ? pedagogicalStatusClass(anim.elementStatus(tree.root.id)) : "pedagogical-revealed";
+
   return (
     <div className="visual visual--hierarchy">
-      <div className="visual-hierarchy__root">{rootLabel}</div>
+      <div className={`visual-hierarchy__root ${rootStatus}`}>{rootLabel}</div>
       {hasStructuredNodes ? (
         children!.length > 0 && (
           <>
             <div className="visual-hierarchy__trunk" aria-hidden="true" />
             <div className="visual-hierarchy__children">
-              {children!.map((node, i) => (
+              {children!.map((node) => (
                 <div
                   key={node.id}
-                  className="visual-hierarchy__child classroom-stagger-item"
-                  style={{ animationDelay: `${0.1 * i}s` }}
+                  className={`visual-hierarchy__child ${pedagogicalStatusClass(anim.elementStatus(node.id))}`}
                 >
                   <span className="visual-hierarchy__connector" aria-hidden="true" />
                   <span className="visual-hierarchy__child-text">

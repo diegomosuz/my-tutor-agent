@@ -42,6 +42,10 @@ export interface SceneRendererProps {
   courseId: string;
   moduleId: string;
   topicId: string;
+  /** Pedagogical Animations (v1.2.0) — ver VisualComponentProps.isPaused.
+   * Opcional con default `false` para no romper ningún test/consumidor
+   * existente que todavía no lo pasa explícitamente. */
+  isPaused?: boolean;
 }
 
 export function SceneRenderer({
@@ -51,6 +55,7 @@ export function SceneRenderer({
   courseId,
   moduleId,
   topicId,
+  isPaused = false,
 }: SceneRendererProps) {
   const lookupSourceBlock = useMemo(() => buildSourceBlockLookup(canonical), [canonical]);
   const Visual = VISUAL_RENDERERS[scene.visual.visual_type] ?? NoVisual;
@@ -67,6 +72,7 @@ export function SceneRenderer({
         courseId={courseId}
         moduleId={moduleId}
         topicId={topicId}
+        isPaused={isPaused}
       />
     </div>
   );

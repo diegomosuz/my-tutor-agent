@@ -23,4 +23,10 @@ export interface VisualComponentProps {
   courseId: string;
   moduleId: string;
   topicId: string;
+  /** Pedagogical Animations (v1.2.0): mismo `engine.isPaused` que ya
+   * controla Pausar/Reanudar narración — un único control de playback
+   * (ver PARTE 15). Los visuals con animación pedagógica
+   * (process/hierarchy/architecture/concept_map/comparison) lo pasan a
+   * `usePedagogicalAnimation`; el resto puede ignorarlo. */
+  isPaused: boolean;
 }

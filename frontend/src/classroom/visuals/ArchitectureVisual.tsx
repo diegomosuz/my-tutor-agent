@@ -1,5 +1,8 @@
+import { useMemo } from "react";
 import type { VisualComponentProps } from "./types";
 import { DiagramCanvas } from "./DiagramCanvas";
+import { buildAnimationSequence } from "../pedagogicalAnimation";
+import { usePedagogicalAnimation } from "../usePedagogicalAnimation";
 
 /** visual_type = "architecture" (v1.2.0, bloque "Visual Fidelity" — antes
  * las `edges` se mostraban como una lista de texto "A -> B" separada de
@@ -13,9 +16,20 @@ import { DiagramCanvas } from "./DiagramCanvas";
  * `VisualPlan._graph_edges_reference_declared_nodes`): nunca se infiere ni
  * se inventa una conexión adicional. Si `nodes` no viene poblado
  * (robustez ante cache vieja), cae a mostrar `key_points` como componentes
- * sueltos, sin conexiones — comportamiento anterior a v1.1.0. */
-export function ArchitectureVisual({ scene }: VisualComponentProps) {
+ * sueltos, sin conexiones — comportamiento anterior a v1.1.0.
+ *
+ * Animación pedagógica (v1.2.0, bloque "Pedagogical Animations"):
+ * `buildAnimationSequence` intenta un traversal BFS determinístico desde
+ * una raíz inequívoca (indegree 0, única, alcanza a todos los nodes); si
+ * no existe, revela todos los nodes primero y las edges después (PARTE 8
+ * — nunca convierte el orden del array en causalidad). `DiagramCanvas`
+ * sigue calculando la geometría exactamente igual sin importar qué esté
+ * revelado — la animación solo cambia opacidad/clase, nunca posición
+ * (PARTE 41, layout stability). */
+export function ArchitectureVisual({ scene, isPaused }: VisualComponentProps) {
   const { nodes, edges } = scene.visual;
+  const sequence = useMemo(() => buildAnimationSequence(scene), [scene]);
+  const anim = usePedagogicalAnimation(sequence, isPaused);
 
   if (nodes.length === 0) {
     const boxes = scene.key_points.length > 0 ? scene.key_points : [scene.title];
@@ -41,6 +55,10 @@ export function ArchitectureVisual({ scene }: VisualComponentProps) {
         edges={edges}
         layout="grid"
         nodesClassName="visual-architecture__frame"
+        isNodeVisible={(id) => anim.elementStatus(id) !== "hidden"}
+        isNodeActive={(id) => anim.elementStatus(id) === "active"}
+        isEdgeVisible={(i) => anim.elementStatus(`edge-${i}`) !== "hidden"}
+        isEdgeActive={(i) => anim.elementStatus(`edge-${i}`) === "active"}
         renderNode={(node) => (
           <div className="visual-architecture__node">
             {node.role && <span className="visual-graph__node-role">{node.role}</span>}

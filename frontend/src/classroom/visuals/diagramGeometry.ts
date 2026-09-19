@@ -13,6 +13,11 @@ export interface Point {
 
 export interface EdgeLine {
   key: string;
+  /** Índice ORIGINAL de esta edge en `edges` (v1.2.0, bloque "Pedagogical
+   * Animations") — estable incluso si `lines` termina filtrando alguna
+   * edge cuyos extremos no montaron; es lo que `buildAnimationSequence`
+   * usa como id (`edge-{index}`) para referenciar esta misma edge. */
+  edgeIndex: number;
   from: Point;
   to: Point;
   label: string;
@@ -73,6 +78,7 @@ export function useDiagramEdgeGeometry(edges: GraphEdge[]) {
       const toRect = toEl.getBoundingClientRect();
       next.push({
         key: `${edge.from_id}->${edge.to_id}-${i}`,
+        edgeIndex: i,
         from: {
           x: fromRect.left + fromRect.width / 2 - containerRect.left,
           y: fromRect.top + fromRect.height / 2 - containerRect.top,
