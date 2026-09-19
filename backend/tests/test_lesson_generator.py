@@ -275,14 +275,44 @@ def test_different_lesson_prompt_version_produces_different_cache_entry(tmp_path
 def test_H_default_lesson_prompt_version_is_not_lesson_v3():
     settings = Settings()
     assert settings.lesson_prompt_version != "lesson-v3"
-    assert settings.lesson_prompt_version == "lesson-v3.1"
+    assert settings.lesson_prompt_version == "lesson-v3.2"
 
 
 def test_I_real_default_prompt_version_produces_lesson_plan_with_new_version(tmp_path):
     settings = _settings(tmp_path)
     provider = FakeLLMProvider(responses=[valid_lesson_body_dict()])
     plan = _generate(settings, provider)
-    assert plan.prompt_version == "lesson-v3.1"
+    assert plan.prompt_version == "lesson-v3.2"
+
+
+# --------------------------------------------------------------------------
+# v1.2.0 — bloque "Visual Selection Reliability", PARTE 14.K: lesson-v3.1
+# (Visual Fidelity) y lesson-v3.2 (Visual Selection Reliability) deben
+# producir entradas de cache DISTINTAS, aunque el resto de la cache key
+# (content_sha256/provider/model) sea idéntico — mismo mecanismo genérico
+# ya probado arriba (test_different_lesson_prompt_version_...), acá con
+# los dos valores REALES y consecutivos de este bloque.
+# --------------------------------------------------------------------------
+
+
+def test_K_lesson_v3_1_and_v3_2_produce_different_cache_entries(tmp_path):
+    content_dir = _make_content_dir(tmp_path)
+
+    settings_v3_1 = _settings(tmp_path, content_dir)
+    settings_v3_1.lesson_prompt_version = "lesson-v3.1"
+    provider_a = FakeLLMProvider(model="model-x", responses=[valid_lesson_body_dict()])
+    plan_a = _generate(settings_v3_1, provider_a)
+    assert plan_a.cached is False
+    assert plan_a.prompt_version == "lesson-v3.1"
+
+    settings_v3_2 = _settings(tmp_path, content_dir)
+    settings_v3_2.lesson_cache_dir = settings_v3_1.lesson_cache_dir
+    settings_v3_2.lesson_prompt_version = "lesson-v3.2"
+    provider_b = FakeLLMProvider(model="model-x", responses=[valid_lesson_body_dict()])
+    plan_b = _generate(settings_v3_2, provider_b)
+    assert plan_b.cached is False  # cache miss: lesson-v3.1 != lesson-v3.2
+    assert plan_b.prompt_version == "lesson-v3.2"
+    assert len(provider_b.calls) == 1
 
 
 # --------------------------------------------------------------------------
@@ -363,6 +393,42 @@ def test_J_retry_observability_logs_safe_metadata_never_prompt_or_source(tmp_pat
     assert "AUTHORIZED SOURCE" not in caplog.text
     assert "orquestador de contenedores" not in caplog.text  # texto real de SAMPLE_TOPIC_MARKDOWN
     assert "unidad mínima de despliegue" not in caplog.text  # texto real de narration/key_points
+
+
+def test_L_semantic_mismatch_retry_logs_reason_code_never_source_content(tmp_path, caplog):
+    # v1.2.0 (PARTE 11/14.L): el mismatch semántico (hierarchy/concept_map
+    # con edges 100% flows_to) debe clasificarse con SU PROPIO reason_code
+    # en los logs de retry -- nunca con el genérico "process_steps..." que
+    # el propio mensaje de corrección menciona como sugerencia (ver
+    # ordering en lesson_generator.py::_grounding_reason_codes).
+    settings = _settings(tmp_path)
+    bad_body = copy.deepcopy(valid_lesson_body_dict())
+    bad_body["scenes"][0]["visual"] = {
+        "visual_type": "hierarchy",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "nodes": [
+            {"id": "paso-1", "label": "Paso 1"},
+            {"id": "paso-2", "label": "Paso 2"},
+        ],
+        "edges": [{"from_id": "paso-1", "to_id": "paso-2", "relation_type": "flows_to"}],
+    }
+    provider = FakeLLMProvider(responses=[bad_body, valid_lesson_body_dict()])
+
+    with caplog.at_level(logging.INFO, logger="pwc_tutor.lesson"):
+        plan = _generate(settings, provider)
+
+    assert len(provider.calls) == 2
+    assert len(plan.scenes) == 2
+
+    assert "reason_codes=visual_semantic_mismatch_process" in caplog.text
+    # Nunca el reason_code genérico de cantidad insuficiente de pasos, ni
+    # el prompt/Grounding Packet/source real.
+    assert "reason_codes=process_steps_insufficient" not in caplog.text
+    assert "AUTHORIZED SOURCE" not in caplog.text
+    assert "orquestador de contenedores" not in caplog.text
+    assert "Paso 1" not in caplog.text  # label real de un node, nunca logueado
 
 
 def test_upstream_error_is_retried_with_same_messages(tmp_path):

@@ -309,3 +309,159 @@ def test_J_scene_title_without_source_refs_is_still_rejected():
         from app.models.lesson import GroundedText
 
         GroundedText(text="Sin refs", source_refs=[])
+
+
+# --------------------------------------------------------------------------
+# v1.2.0 (bloque "Visual Selection Reliability") — PARTE 14.A-F: mismatch
+# semántico interno (hierarchy/concept_map con edges 100% "flows_to") y
+# aceptación de los visual_type "hierarchy-like"/process/architecture/
+# comparison cuando su contenido estructurado SÍ es internamente coherente.
+# Todas las fixtures son genéricas (sin nombres de curso/módulo reales, ver
+# PARTE 13): "Paso 1/2", "Categoría/Subcategoría", "API/Base de datos",
+# "Concepto A/B", "Antes/Después".
+# --------------------------------------------------------------------------
+
+
+def test_A_hierarchy_with_all_flows_to_edges_is_rejected_as_semantic_mismatch():
+    body_dict = valid_lesson_body_dict()
+    body_dict["scenes"][0]["visual"] = {
+        "visual_type": "hierarchy",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "nodes": [
+            {"id": "paso-1", "label": "Paso 1"},
+            {"id": "paso-2", "label": "Paso 2"},
+        ],
+        "edges": [{"from_id": "paso-1", "to_id": "paso-2", "relation_type": "flows_to"}],
+    }
+    body = GeneratedLessonBody.model_validate(body_dict)
+    with pytest.raises(LessonValidationError, match=r"\[visual_semantic_mismatch_process\]"):
+        validate_lesson_body(body, CANONICAL)
+
+
+def test_A2_concept_map_with_all_flows_to_edges_is_also_rejected():
+    # concept_map comparte la misma señal inequívoca que hierarchy (ver
+    # _HIERARCHY_LIKE_VISUAL_TYPES en lesson_validation.py).
+    body_dict = valid_lesson_body_dict()
+    body_dict["scenes"][0]["visual"] = {
+        "visual_type": "concept_map",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "nodes": [
+            {"id": "concepto-a", "label": "Concepto A"},
+            {"id": "concepto-b", "label": "Concepto B"},
+        ],
+        "edges": [{"from_id": "concepto-a", "to_id": "concepto-b", "relation_type": "flows_to"}],
+    }
+    body = GeneratedLessonBody.model_validate(body_dict)
+    with pytest.raises(LessonValidationError, match=r"\[visual_semantic_mismatch_process\]"):
+        validate_lesson_body(body, CANONICAL)
+
+
+def test_hierarchy_with_one_non_flows_to_edge_among_several_is_not_rejected():
+    # Evita falsos positivos: una sola edge que NO es "flows_to" ya alcanza
+    # para no marcar mismatch, aunque el resto sí lo sean (ver docstring de
+    # _is_purely_sequential — "ambigüedad != inconsistencia").
+    body_dict = valid_lesson_body_dict()
+    body_dict["scenes"][0]["visual"] = {
+        "visual_type": "hierarchy",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "nodes": [
+            {"id": "raiz", "label": "Categoría"},
+            {"id": "hijo-1", "label": "Subcategoría 1"},
+            {"id": "hijo-2", "label": "Subcategoría 2"},
+        ],
+        "edges": [
+            {"from_id": "raiz", "to_id": "hijo-1", "relation_type": "contains"},
+            {"from_id": "hijo-1", "to_id": "hijo-2", "relation_type": "flows_to"},
+        ],
+    }
+    body = GeneratedLessonBody.model_validate(body_dict)
+    validate_lesson_body(body, CANONICAL)  # no debe lanzar
+
+
+def test_B_valid_process_visual_is_accepted():
+    body_dict = valid_lesson_body_dict()
+    body_dict["scenes"][0]["visual"] = {
+        "visual_type": "process",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "process_steps": [{"label": "Paso 1"}, {"label": "Paso 2"}],
+    }
+    body = GeneratedLessonBody.model_validate(body_dict)
+    validate_lesson_body(body, CANONICAL)  # no debe lanzar
+
+
+def test_C_valid_parent_child_hierarchy_is_accepted():
+    body_dict = valid_lesson_body_dict()
+    body_dict["scenes"][0]["visual"] = {
+        "visual_type": "hierarchy",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "nodes": [
+            {"id": "raiz", "label": "Categoría"},
+            {"id": "hijo-1", "label": "Subcategoría 1"},
+        ],
+        "edges": [{"from_id": "raiz", "to_id": "hijo-1", "relation_type": "contains"}],
+    }
+    body = GeneratedLessonBody.model_validate(body_dict)
+    validate_lesson_body(body, CANONICAL)  # no debe lanzar
+
+
+def test_D_valid_architecture_is_accepted():
+    body_dict = valid_lesson_body_dict()
+    body_dict["scenes"][0]["visual"] = {
+        "visual_type": "architecture",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "nodes": [
+            {"id": "api", "label": "API"},
+            {"id": "db", "label": "Base de datos"},
+        ],
+        "edges": [{"from_id": "api", "to_id": "db", "relation_type": "connects_to"}],
+    }
+    body = GeneratedLessonBody.model_validate(body_dict)
+    validate_lesson_body(body, CANONICAL)  # no debe lanzar
+
+
+def test_E_valid_concept_map_is_accepted():
+    body_dict = valid_lesson_body_dict()
+    body_dict["scenes"][0]["visual"] = {
+        "visual_type": "concept_map",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "nodes": [
+            {"id": "concepto-a", "label": "Concepto A"},
+            {"id": "concepto-b", "label": "Concepto B"},
+        ],
+        "edges": [{"from_id": "concepto-a", "to_id": "concepto-b", "relation_type": "relates_to"}],
+    }
+    body = GeneratedLessonBody.model_validate(body_dict)
+    validate_lesson_body(body, CANONICAL)  # no debe lanzar
+
+
+def test_F_valid_comparison_is_accepted():
+    body_dict = valid_lesson_body_dict()
+    body_dict["scenes"][0]["visual"] = {
+        "visual_type": "comparison",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "comparison": {
+            "column_labels": ["Antes", "Después"],
+            "columns": [
+                {"title": "Antes", "points": ["Proceso manual"]},
+                {"title": "Después", "points": ["Proceso automatizado"]},
+            ],
+        },
+    }
+    body = GeneratedLessonBody.model_validate(body_dict)
+    validate_lesson_body(body, CANONICAL)  # no debe lanzar

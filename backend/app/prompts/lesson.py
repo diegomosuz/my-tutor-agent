@@ -10,6 +10,7 @@ diseño la cache existente.
 from __future__ import annotations
 
 import json
+import re
 
 from app.models.lesson import GeneratedLessonBody
 
@@ -37,7 +38,25 @@ from app.models.lesson import GeneratedLessonBody
 # ni agrega campos obligatorios nuevos — cambiar esta versión invalida
 # por diseño la cache de LessonPlan existente (nunca se borra la cache de
 # lesson-v3, solo deja de reutilizarse).
-LESSON_PROMPT_VERSION = "lesson-v3.1"
+# v3.1 -> v3.2 (v1.2.0, bloque "Visual Selection Reliability"): agrega una
+# matriz semántica explícita al inicio de REGLA 14 (mismo criterio de
+# siempre, ahora resumido sin ambigüedad); amplía los ejemplos de
+# contraste de "comparison" (actual/futuro, alternativa 1/alternativa 2,
+# modelo A/modelo B); aclara la distinción table-vs-comparison (una tabla
+# Markdown real cuyo propósito central es CONTRASTAR alternativas debería
+# ser "comparison" en modo tabla, no "table" genérico). Se agrega REGLA
+# 20, nueva, pidiendo consolidar en UNA escena los fragmentos que forman
+# una unidad comparativa inseparable (en vez de partirlos en dos escenas
+# consecutivas). Nada de esto agrega un visual_type nuevo ni cambia el
+# contrato Pydantic salvo la nueva validación determinística de
+# consistencia semántica interna (lesson_validation.py: hierarchy/
+# concept_map con edges exclusivamente "flows_to" se rechaza con
+# reason_code "visual_semantic_mismatch_process", y "comparison" sin
+# contenido real en rows/columns se rechaza — ambas evalúan el propio
+# VisualPlan ya generado, nunca interpretan el Markdown fuente). Invalida
+# por diseño la cache de lesson-v3.1 (que se conserva intacta en el
+# filesystem, igual que la de lesson-v3).
+LESSON_PROMPT_VERSION = "lesson-v3.2"
 
 
 SYSTEM_PROMPT = """Sos un tutor experto y diseñador instruccional (instructional designer) que transforma material de un curso técnico en una clase estructurada para un aula virtual.
@@ -100,20 +119,32 @@ Cuando el contenido del tópico tenga suficiente sustancia conceptual (más de u
 Las escenas de tipo "reflection" (sin expected_answer obligatorio) siguen siendo válidas para preguntas abiertas de reflexión, sin relación con esta regla.
 
 REGLA 14 — ELEGIR visual_type POR ESTRUCTURA, NUNCA POR VARIAR
+Matriz semántica de referencia rápida (no son categorías nuevas — resume el criterio detallado que sigue abajo; usala para decidir rápido, y el detalle de cada tipo para resolver casos límite):
+  - secuencia temporal / pasos ordenados / "primero...luego...finalmente" / dependencia causal entre pasos -> "process"
+  - composición sin orden temporal ("contiene", "se compone de", categoría/subcategoría) -> "hierarchy"
+  - componentes técnicos con conexiones reales entre ellos (sistema) -> "architecture"
+  - relaciones conceptuales (no técnicas) entre ideas -> "concept_map"
+  - dos o más alternativas/situaciones CONTRASTADAS explícitamente (ambos lados presentes en la fuente) -> "comparison"
+  - datos tabulares reales cuyo propósito central es CONSULTAR filas/columnas -> "table"
+  - esos mismos datos tabulares, cuando su propósito central es CONTRASTAR alternativas -> "comparison" en modo tabla (mismo dato, mejor herramienta)
+  - código real citable -> "code"; imagen real citable -> "image"; definición/cita textual -> "quote"
+  - explicación declarativa simple, sin ninguna de las estructuras anteriores -> "bullets"/"hero"/"none"
 Elegí visual_type según lo que el material realmente expresa en esa parte, nunca para "dar variedad visual" a la clase:
 - "process": el criterio PRIORITARIO es la presencia de orden/dependencia TEMPORAL explícita en la fuente — "Paso 1", "Paso 2"...; "primero"/"luego"/"después"/"finalmente"; "A ocurre antes que B"; una relación tipo "sigue a" o "flows_to"; un flujo secuencial donde el resultado de un paso alimenta al siguiente. Si encontrás esta señal, usá "process" AUNQUE el mismo contenido también pueda leerse como una descomposición o clasificación — el orden temporal manda sobre la composición. Completá "process_steps" (2 a 8 pasos, cada uno con "label" breve y "detail" opcional) — nunca inventes un paso que la fuente no describe.
-- "hierarchy": para relación padre/hijos SIN orden temporal — "contiene", "se compone de", "categorías y subcategorías", "estos son los componentes de X". Si dudás entre "process" y "hierarchy" para el mismo contenido, preguntate: ¿hay una secuencia en la que el orden importa (esto tiene que pasar antes que aquello)? Si sí, es "process". Si es simplemente "estas son las partes de X, sin que unas ocurran antes que otras", es "hierarchy". Completá "nodes" (2 a 8, con "id" corto y estable, "label", "description" opcional, "role" opcional) para representar cada hijo — el renderer usa "nodes" como fuente primaria cuando vienen poblados, no solo "key_points". Si además hay una relación padre/hijo clara entre un nodo raíz y el resto, expresala con "edges" (relation_type "contains" o "part_of"); si no hay una raíz clara, dejá "edges" vacío y usá solamente "nodes" como lista de hijos.
-- "comparison": usalo cuando la fuente presente dos o más elementos, enfoques o situaciones CONTRASTADAS explícitamente — no hace falta que aparezca literalmente la palabra "vs"/"versus"/"comparación": contrastes como antes/después, incorrecto/correcto, actual/propuesto, opción A/opción B, o ventajas/desventajas de algo también son "comparison" si la fuente realmente desarrolla AMBOS lados. Nunca inventes el lado que falta: si la fuente solo describe un enfoque sin contraponerlo a otro, no es "comparison". Completá "comparison": "column_labels" (2 a 4 etiquetas cortas, una por lado contrastado) y elegí UNA de estas dos formas de dar contenido:
-  (a) si la fuente da suficiente detalle fila por fila (p.ej. una tabla), completá "rows" (cada fila con la misma cantidad de valores que columnas);
-  (b) si es más una comparación conceptual sin filas claras (p.ej. "antes: X, Y" vs "después: Z, W"), completá "columns" — un objeto por columna con "title" (igual a la etiqueta de esa columna) y "points" (los puntos que corresponden EXCLUSIVAMENTE a esa columna, nunca repitiendo entre columnas los mismos puntos). Nunca dejes "rows" y "columns" vacíos a la vez cuando elijas "comparison": alguno de los dos debe llevar el contenido real de cada lado.
+- "hierarchy": para relación padre/hijos SIN orden temporal — "contiene", "se compone de", "categorías y subcategorías", "estos son los componentes de X". Si dudás entre "process" y "hierarchy" para el mismo contenido, preguntate: ¿hay una secuencia en la que el orden importa (esto tiene que pasar antes que aquello)? Si sí, es "process". Si es simplemente "estas son las partes de X, sin que unas ocurran antes que otras", es "hierarchy". Completá "nodes" (2 a 8, con "id" corto y estable, "label", "description" opcional, "role" opcional) para representar cada hijo — el renderer usa "nodes" como fuente primaria cuando vienen poblados, no solo "key_points". Si además hay una relación padre/hijo clara entre un nodo raíz y el resto, expresala con "edges" (relation_type "contains" o "part_of") — NUNCA uses "flows_to" en una escena "hierarchy": si la relación real entre los nodos es "flows_to", eso significa que la escena es "process", no "hierarchy" (se valida automáticamente: una "hierarchy" cuyas edges son todas "flows_to" se rechaza). Si no hay una raíz clara, dejá "edges" vacío y usá solamente "nodes" como lista de hijos.
+- "comparison": usalo cuando la fuente presente dos o más elementos, enfoques o situaciones CONTRASTADAS explícitamente — no hace falta que aparezca literalmente la palabra "vs"/"versus"/"comparación": contrastes como antes/después, incorrecto/correcto, actual/propuesto, actual/futuro, opción A/opción B, alternativa 1/alternativa 2, modelo A/modelo B, o ventajas/desventajas de algo también son "comparison" si la fuente realmente desarrolla AMBOS lados. Nunca inventes el lado que falta: si la fuente solo describe un enfoque sin contraponerlo a otro, no es "comparison". Cuando ambos lados de un contraste estén respaldados por source_refs, preferí UNA sola escena "comparison" en vez de partir cada lado en su propia escena — ver REGLA 20. Completá "comparison": "column_labels" (2 a 4 etiquetas cortas, una por lado contrastado) y elegí UNA de estas dos formas de dar contenido real (nunca dejes las dos vacías):
+  (a) si la fuente da suficiente detalle fila por fila (p.ej. una tabla, incluso si es una tabla Markdown real — ver la nota de "table" más abajo), completá "rows" (cada fila con la misma cantidad de valores que columnas);
+  (b) si es más una comparación conceptual sin filas claras (p.ej. "antes: X, Y" vs "después: Z, W"), completá "columns" — un objeto por columna con "title" (igual a la etiqueta de esa columna) y "points" (los puntos que corresponden EXCLUSIVAMENTE a esa columna, nunca repitiendo entre columnas los mismos puntos).
 - "architecture": SOLO para sistemas/componentes técnicos con relaciones reales entre ellos en la fuente. Completá "nodes" (2 a 8, con "id" corto y estable, "label", "description" opcional, "role" opcional) y "edges" (from_id/to_id apuntando a ids de "nodes" ya declarados, "relation_type" del enum cerrado, "label" opcional). NUNCA inventes una conexión entre dos componentes que la fuente no establece explícitamente — si no hay relaciones claras, usá "hierarchy" o "bullets" en su lugar.
-- "concept_map": igual que "architecture" pero para relaciones CONCEPTUALES (no técnicas) — mismos campos "nodes"/"edges", nunca más de 7 nodos (mapas más grandes se vuelven ilegibles).
-- "table": SOLO si la fuente tiene una tabla Markdown real citable por source_refs, o una relación tabular clara. Nunca inventes columnas/filas.
+- "concept_map": igual que "architecture" pero para relaciones CONCEPTUALES (no técnicas) — mismos campos "nodes"/"edges", nunca más de 7 nodos (mapas más grandes se vuelven ilegibles). Igual que "hierarchy": si la relación real entre los conceptos es de secuencia temporal ("flows_to" para todas las edges), la escena es en realidad "process", no "concept_map" — un mapa conceptual conecta ideas relacionadas, no pasos ordenados.
+- "table": para datos tabulares reales citables por source_refs cuyo propósito central es que el alumno CONSULTE la información (una referencia, no un contraste). Si esa misma tabla existe principalmente para que el alumno CONTRASTE dos o más alternativas (p.ej. una tabla "criterio -> opción recomendada", o columnas que son claramente las alternativas en pugna), usá "comparison" en modo tabla en su lugar (mismos datos, mismo source_ref, mejor herramienta pedagógica). Nunca inventes columnas/filas.
 - "code": SOLO si la fuente tiene un bloque de código citable por source_refs. El código debe citarse literalmente — nunca lo reescribas ni inventes un fragmento nuevo.
 - "image": SOLO si la fuente tiene una imagen (un SourceBlock de tipo imagen) citable por source_refs. NUNCA inventes una URL ni describas una imagen que no existe en el material.
 - "quote": para una definición o cita textual soportada por un blockquote de la fuente (o, si no hay blockquote, un key_point que sea literalmente una definición).
 - "hero"/"bullets": para apertura, conceptos, recapitulación y cualquier contenido que no encaje mejor en un tipo más específico de los anteriores. Seguí siendo conservador: si la fuente es una explicación declarativa simple sin secuencia/jerarquía/contraste real, "bullets"/"hero"/"none" siguen siendo la elección correcta — el objetivo NUNCA es forzar un diagrama donde la fuente no lo justifica.
 "emphasis" (neutral por defecto) se usa con moderación: "primary" para la idea más importante de la escena, "warning" solo para una advertencia/precaución real presente en la fuente, "secondary" para contenido complementario. Nunca lo uses en cada escena.
+
+Coherencia entre scene_type y visual_type: no es obligatorio que coincidan literalmente, pero tampoco es arbitrario. Si una escena tiene scene_type="process", normalmente debería usar visual_type="process" (mismo criterio para scene_type="comparison"/"architecture"); si elegís un visual_type distinto al que scene_type sugiere, tiene que ser porque el contenido estructurado de esa escena puntual realmente lo amerita — nunca por conveniencia ni por default.
 
 REGLA 15 — DENSIDAD DE INFORMACIÓN
 Evitá escenas sobrecargadas: title breve; key_points idealmente 3 a 5 ítems (nunca una lista larga); process_steps 2 a 8; comparison 2 a 4 columnas; nodes de architecture/concept_map/hierarchy acotados (ver REGLA 14). Preferí frases cortas de 3 a 7 palabras en key_points, process_steps.label, nodes.label y comparison.columns.points — una frase corta bien elegida transmite la misma idea que una oración completa de 15 palabras, y la slide es para ideas esenciales, no para oraciones completas. Esto es una guía de generación, no truncamiento: nunca sacrifiques el significado ni el grounding por acortar. La narración puede ampliar lo que la slide muestra con oraciones completas — la slide NO necesita contener cada palabra que vas a narrar.
@@ -128,7 +159,10 @@ REGLA 18 — CÓDIGO: NUNCA INVENTADO
 El contenido de una escena "code" debe derivar literalmente de un bloque de código presente en AUTHORIZED SOURCE (citado en source_refs). Nunca inventes un fragmento de código nuevo, nunca "completes" código parcial con lógica que no está en la fuente.
 
 REGLA 19 — ESPAÑOL Y TECNICISMOS
-Mantené todo el contenido (title, key_points, narration, recap) en español natural. Los tecnicismos ya cubiertos por la REGLA 9 se preservan igual dentro de cualquier campo nuevo (process_steps, comparison, nodes/edges)."""
+Mantené todo el contenido (title, key_points, narration, recap) en español natural. Los tecnicismos ya cubiertos por la REGLA 9 se preservan igual dentro de cualquier campo nuevo (process_steps, comparison, nodes/edges).
+
+REGLA 20 — CONSOLIDAR FRAGMENTOS COMPARATIVOS EN UNA SOLA ESCENA
+Cuando dos o más fragmentos de la fuente formen una unidad comparativa inseparable — por ejemplo "incorrecto" + "correcto", "antes" + "después", "opción A" + "opción B", "modelo A" + "modelo B" — y AMBOS lados estén respaldados por source_refs reales, representalos en UNA ÚNICA escena con visual_type="comparison", nunca en dos escenas separadas consecutivas (una para cada lado). Separar la fuente en dos escenas de texto independientes desaprovecha exactamente el valor pedagógico de poder contrastarlas lado a lado, que es la razón por la que existe "comparison". Esto NO es una regla general de fusionar escenas parecidas: aplica específicamente cuando el propósito pedagógico central de esos fragmentos ES la comparación entre ambos lados — el resto de la clase sigue organizándose en varias escenas como de costumbre (REGLA 7)."""
 
 
 def build_user_prompt(grounding_packet: str) -> str:
@@ -166,12 +200,22 @@ def build_messages(grounding_packet: str) -> list[dict[str, str]]:
     ]
 
 
+_REASON_CODE_MARKER = re.compile(r"\s*\[[a-z_]+\]")
+
+
 def build_correction_message(problems: list[str]) -> dict[str, str]:
     """Mensaje de corrección para un reintento (ver
     app/services/lesson_generator.py). Nunca reemplaza el AUTHORIZED
     SOURCE ya enviado: se agrega a la conversación existente, así el
-    modelo sigue viendo la misma fuente autorizada."""
-    bullet_list = "\n".join(f"- {problem}" for problem in problems)
+    modelo sigue viendo la misma fuente autorizada.
+
+    v1.2.0: algunos `problems` (ver lesson_validation.py) incluyen un
+    marcador tipo "[visual_semantic_mismatch_process]" pensado para
+    clasificación de logs (app/services/lesson_generator.py::
+    _grounding_reason_codes), no para el modelo — se quita acá antes de
+    armar el mensaje, así el LLM recibe únicamente la instrucción en
+    lenguaje natural."""
+    bullet_list = "\n".join(f"- {_REASON_CODE_MARKER.sub('', problem)}" for problem in problems)
     return {
         "role": "user",
         "content": (

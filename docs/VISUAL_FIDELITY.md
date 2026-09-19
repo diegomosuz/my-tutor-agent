@@ -1,5 +1,11 @@
 # Visual Fidelity (v1.2.0, primer bloque)
 
+> Continúa en [`VISUAL_SELECTION.md`](./VISUAL_SELECTION.md) (segundo
+> bloque, `lesson-v3.2`): ajusta la selección de `visual_type` para los
+> tres patrones de inconsistencia que quedaron abiertos acá (sección 11 y
+> 12 de este documento) — nunca cambia lo que este documento describe
+> sobre el renderer.
+
 Este bloque corrige, con evidencia real (auditoría de 44 escenas lesson-v3
 sobre `claude-foundations-certification`, ver el diagnóstico previo a
 este documento), la brecha entre lo que `VisualPlan` ya podía expresar

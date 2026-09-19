@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from app.models.lesson import GeneratedLessonBody, GroundedText, VisualPlan, VisualType
+from app.models.lesson import GeneratedLessonBody, GroundedText, RelationType, VisualPlan, VisualType
 from app.models.schemas import CanonicalTopicContent
 from app.services.canonical import validate_source_refs
 
@@ -127,12 +127,34 @@ def validate_lesson_body(
 _MIN_PROCESS_STEPS = 2
 _MIN_GRAPH_NODES = 2
 
+# v1.2.0 (bloque "Visual Selection Reliability"): tipos de visual donde
+# TODAS las edges siendo `flows_to` es una señal inequívoca de que el
+# contenido es en realidad una secuencia temporal (debería ser "process"),
+# no una composición (hierarchy) ni un mapa conceptual (concept_map) sin
+# orden temporal. Regla determinística sobre el PROPIO VisualPlan ya
+# generado (nunca interpretación libre del Markdown fuente) — ver PARTE 4
+# de la especificación y docs/VISUAL_SELECTION.md.
+_HIERARCHY_LIKE_VISUAL_TYPES = (VisualType.hierarchy, VisualType.concept_map)
+
+
+def _is_purely_sequential(edges: list) -> bool:
+    """True únicamente si HAY edges y TODAS (sin excepción) son
+    `flows_to`. Una sola edge de otro tipo (`contains`/`part_of`/etc.) ya
+    alcanza para no marcarlo como mismatch — evita falsos positivos sobre
+    jerarquías legítimas que además declaran una relación de flujo
+    puntual. Sin edges, no hay señal suficiente: nunca se marca mismatch
+    solo por ausencia de edges (ambigüedad != inconsistencia)."""
+    if not edges:
+        return False
+    return all(edge.relation_type == RelationType.flows_to for edge in edges)
+
 
 def _validate_visual_content(
     scene_id: str, visual: VisualPlan, block_type_by_ref: dict[str, str]
 ) -> list[str]:
     """Valida que el contenido estructurado de `visual` (v1.1.0, bloque de
-    rendering pedagógico) sea coherente con su `visual_type` — determinístico,
+    rendering pedagógico; extendido en v1.2.0 con chequeos de consistencia
+    semántica interna) sea coherente con su `visual_type` — determinístico,
     sin LLM. Cada visual_type que requiere contenido estructurado (process,
     comparison, architecture, concept_map, image) debe traerlo poblado; el
     resto de los campos estructurados quedan vacíos/None (no se valida como
@@ -149,6 +171,18 @@ def _validate_visual_content(
     elif visual.visual_type == VisualType.comparison:
         if visual.comparison is None:
             problems.append(f"{scene_id}.visual: comparison requiere el campo 'comparison' poblado.")
+        elif not visual.comparison.rows and not visual.comparison.columns:
+            # v1.2.0: "comparison" sin ningún lado con contenido real
+            # (ni tabla ni columns) — PARTE 5, "debe tener al menos dos
+            # lados realmente representables". Nunca se rechaza una
+            # LessonPlan ya CACHEADA por esto (esta función solo corre en
+            # generación fresca, nunca al leer cache — ver
+            # lesson_generator.py::_read_cache).
+            problems.append(
+                f"{scene_id}.visual: comparison requiere contenido real de al menos un "
+                "lado — completá 'rows' (modo tabla) o 'columns' (modo cards con "
+                "contenido propio por columna), nunca dejes ambos vacíos."
+            )
 
     elif visual.visual_type in (VisualType.architecture, VisualType.concept_map):
         if len(visual.nodes) < _MIN_GRAPH_NODES:
@@ -166,5 +200,25 @@ def _validate_visual_content(
                 f"{scene_id}.visual: image requiere que al menos uno de sus source_refs "
                 "apunte a un SourceBlock de tipo 'image' del material autorizado."
             )
+
+    # v1.2.0 — PARTE 4: mismatch semántico interno. "hierarchy"/"concept_map"
+    # cuyas edges son EXCLUSIVAMENTE "flows_to" describen, por definición
+    # del propio enum RelationType, una secuencia temporal — exactamente
+    # lo que "process" existe para representar. Nunca se reescribe
+    # automáticamente (eso implicaría reinterpretar contenido en código,
+    # algo que este bloque explícitamente evita): se rechaza con un
+    # reason_code específico para que el retry de structured output lo
+    # corrija con el modelo, nunca con una heurística de texto.
+    if visual.visual_type in _HIERARCHY_LIKE_VISUAL_TYPES and _is_purely_sequential(visual.edges):
+        problems.append(
+            f"{scene_id}.visual: declarado como '{visual.visual_type.value}' pero TODAS sus "
+            "edges son 'flows_to' (relación de secuencia temporal), no de composición "
+            "jerárquica. [visual_semantic_mismatch_process] Si el contenido citado en "
+            "source_refs realmente describe una secuencia ordenada, usá visual_type="
+            "'process' con 'process_steps' en su lugar. Si en cambio sí es una "
+            "composición real sin orden temporal, cambiá el relation_type de esas "
+            "edges a 'contains' o 'part_of' — nunca inventes una relación que la "
+            "fuente no sostenga."
+        )
 
     return problems

@@ -205,6 +205,12 @@ def _grounding_reason_codes(problems: list[str]) -> str:
             code = "source_refs_empty"
         elif "source_refs inexistentes" in problem:
             code = "source_refs_invalid"
+        elif "[visual_semantic_mismatch_process]" in problem:
+            # v1.2.0 (PARTE 11): debe ir ANTES que las ramas genéricas de
+            # "process_steps"/"nodes" — el mensaje de mismatch semántico
+            # menciona "process_steps" como sugerencia de corrección, no
+            # como un problema de cantidad insuficiente.
+            code = "visual_semantic_mismatch_process"
         elif "process_steps" in problem:
             code = "process_steps_insufficient"
         elif "comparison" in problem:

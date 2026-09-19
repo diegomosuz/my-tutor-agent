@@ -1,17 +1,21 @@
 """Tests del prompt de LessonGenerator: comprehension_check (Fase 6) +
 guías de rendering pedagógico v1.1.0 (lesson-v3): scene_type ampliado,
 elección de visual_type por estructura, densidad, narración≠slide, política
-de imágenes/código + ajuste quirúrgico v1.2.0 (lesson-v3.1): desambiguación
-process/hierarchy, detección de comparison, densidad más estricta.
-LESSON_PROMPT_VERSION avanzó a "lesson-v3.1" (invalida la cache de
-"lesson-v3", que sigue existiendo intacta en el filesystem)."""
+de imágenes/código + ajuste quirúrgico v1.2.0 bloque "Visual Fidelity"
+(lesson-v3.1): desambiguación process/hierarchy, detección de comparison,
+densidad más estricta + bloque "Visual Selection Reliability"
+(lesson-v3.2): matriz semántica explícita, consolidación de fragmentos
+comparativos en una escena, distinción table-vs-comparison.
+LESSON_PROMPT_VERSION avanzó a "lesson-v3.2" (invalida la cache de
+"lesson-v3.1", que sigue existiendo intacta en el filesystem, igual que
+"lesson-v3")."""
 from __future__ import annotations
 
 from app.prompts.lesson import LESSON_PROMPT_VERSION, SYSTEM_PROMPT
 
 
-def test_lesson_prompt_version_is_v3_1():
-    assert LESSON_PROMPT_VERSION == "lesson-v3.1"
+def test_lesson_prompt_version_is_v3_2():
+    assert LESSON_PROMPT_VERSION == "lesson-v3.2"
 
 
 def test_system_prompt_mentions_comprehension_check_guidance():
@@ -116,3 +120,78 @@ def test_system_prompt_never_forces_diagrams_over_declarative_content():
     # PARTE 15: no forzar visuales — el prompt debe seguir permitiendo
     # bullets/hero/none para contenido genuinamente declarativo.
     assert "el objetivo NUNCA es forzar un diagrama" in SYSTEM_PROMPT
+
+
+# --------------------------------------------------------------------------
+# v1.2.0 — bloque "Visual Selection Reliability" (lesson-v3.2): matriz
+# semántica explícita, prioridad process/hierarchy reforzada con la
+# validación determinística, detección ampliada de comparison, y
+# consolidación de fragmentos comparativos en una sola escena (PARTE
+# 2/3/6/7/14.G-I de la especificación).
+# --------------------------------------------------------------------------
+
+
+def test_semantic_matrix_summary_present_at_top_of_regla_14():
+    assert "Matriz semántica de referencia rápida" in SYSTEM_PROMPT
+    assert "secuencia temporal / pasos ordenados" in SYSTEM_PROMPT
+    assert "componentes técnicos con conexiones reales entre ellos (sistema)" in SYSTEM_PROMPT
+    assert "relaciones conceptuales (no técnicas) entre ideas" in SYSTEM_PROMPT
+
+
+def test_visual_selection_process_hierarchy_priority_guidance_present():
+    # PARTE 14.H: la prioridad process > hierarchy ante orden temporal ya
+    # existía en v3.1 (test_F_system_prompt_prefers_process_over_hierarchy);
+    # v3.2 la refuerza prohibiendo explícitamente "flows_to" en hierarchy y
+    # documentando la validación determinística asociada.
+    assert "NUNCA uses \"flows_to\" en una escena \"hierarchy\"" in SYSTEM_PROMPT
+    assert "se valida automáticamente" in SYSTEM_PROMPT
+    assert "es en realidad \"process\", no \"concept_map\"" in SYSTEM_PROMPT
+
+
+def test_visual_selection_comparison_before_after_guidance_present():
+    # PARTE 14.G: ejemplos de contraste ampliados más allá de v3.1
+    # (antes/después, incorrecto/correcto ya existían) — v3.2 agrega
+    # actual/futuro, alternativa 1/alternativa 2, modelo A/modelo B.
+    assert "actual/futuro" in SYSTEM_PROMPT
+    assert "alternativa 1/alternativa 2" in SYSTEM_PROMPT
+    assert "modelo A/modelo B" in SYSTEM_PROMPT
+
+
+def test_visual_selection_table_vs_comparison_distinction_present():
+    assert "CONSULTAR filas/columnas" in SYSTEM_PROMPT or "CONSULTE la información" in SYSTEM_PROMPT
+    assert "comparison\" en modo tabla" in SYSTEM_PROMPT
+
+
+def test_visual_selection_scene_consolidation_guidance_present():
+    # PARTE 14.I: REGLA 20 pide consolidar fragmentos comparativos
+    # inseparables en una única escena en vez de partirlos en dos.
+    assert "REGLA 20" in SYSTEM_PROMPT
+    assert "CONSOLIDAR FRAGMENTOS COMPARATIVOS EN UNA SOLA ESCENA" in SYSTEM_PROMPT
+    assert "nunca en dos escenas separadas consecutivas" in SYSTEM_PROMPT
+    assert "NO es una regla general de fusionar escenas parecidas" in SYSTEM_PROMPT
+
+
+def test_visual_selection_scene_type_visual_type_coherence_guidance_present():
+    # PARTE 9: guía de coherencia, deliberadamente SIN validación rígida en
+    # código (ver lesson_validation.py — no hay ningún chequeo de
+    # scene_type vs visual_type ahí).
+    assert "Coherencia entre scene_type y visual_type" in SYSTEM_PROMPT
+    assert "nunca por conveniencia ni por default" in SYSTEM_PROMPT
+
+
+def test_correction_message_strips_reason_code_marker_before_reaching_llm():
+    # PARTE 10: el marcador [visual_semantic_mismatch_process] es solo
+    # para clasificación interna de logs (lesson_generator.py) — nunca
+    # debe llegar al mensaje que efectivamente se envía al LLM.
+    from app.prompts.lesson import build_correction_message
+
+    problems = [
+        "SCENE-002.visual: declarado como 'hierarchy' pero TODAS sus edges "
+        "son 'flows_to' (relación de secuencia temporal), no de composición "
+        "jerárquica. [visual_semantic_mismatch_process] Si el contenido "
+        "citado en source_refs realmente describe una secuencia ordenada, "
+        "usá visual_type='process' con 'process_steps' en su lugar."
+    ]
+    message = build_correction_message(problems)
+    assert "[visual_semantic_mismatch_process]" not in message["content"]
+    assert "TODAS sus edges son 'flows_to'" in message["content"]
