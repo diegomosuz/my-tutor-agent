@@ -18,6 +18,18 @@ LLM). Esto NO es RAG: no hay embeddings, vector store ni similarity
 search — la selección de tópicos es determinística desde el scope pedido,
 resuelto contra el filesystem real de cursos.
 
+Preparación INCREMENTAL y demand-driven (v1.0.1 — ver
+docs/RELEASE_NOTES_v1.0.1.md): `prepare_exam` NUNCA genera un QuestionBank
+por cada tópico del scope antes de ensamblar el examen. Ordena los
+candidatos (round-robin determinístico por módulo, sin `random`), y para
+cada uno reutiliza cache si existe o genera solo si falta, deteniéndose en
+cuanto hay cobertura y cantidad suficientes para `question_count` (early
+stop). Un tópico que falla (error transitorio de proveedor, o contrato/
+grounding inválido tras agotar reintentos) se salta y no aborta el resto —
+solo un error SISTÉMICO (credencial rechazada o mal configurada) corta la
+búsqueda de más candidatos de inmediato. Ver `prepare_exam` para el
+algoritmo completo.
+
 Principio de producto (ver CLAUDE.md / docs/ARCHITECTURE.md): esta
 práctica NO representa ni afirma reproducir un examen oficial de ninguna
 certificación externa.
@@ -61,7 +73,13 @@ from app.services import courses as course_service
 from app.services.cache_schema import CACHE_SCHEMA_VERSION
 from app.services.certification_evaluator import VERDICT_POINTS, evaluate_answer
 from app.services.certification_validation import validate_question_bank
-from app.services.llm_provider import LLMConfigurationError, LLMProvider, get_llm_provider
+from app.services.llm_provider import (
+    LLMAuthError,
+    LLMConfigurationError,
+    LLMProvider,
+    LLMUpstreamError,
+    get_llm_provider,
+)
 from app.services.llm_retry import GenerationFailedError, generate_with_retries
 from app.services.service_logging import log_event
 
@@ -77,6 +95,7 @@ __all__ = [
     "CertificationBankNotFoundError",
     "CertificationQuestionNotFoundError",
     "CertificationInvalidOptionError",
+    "CertificationInsufficientQuestionsError",
     "GenerationFailedError",
 ]
 
@@ -107,6 +126,25 @@ class CertificationQuestionNotFoundError(Exception):
 class CertificationInvalidOptionError(Exception):
     """selected_option_ids referencia un option_id que no existe en la
     pregunta real."""
+
+
+class CertificationInsufficientQuestionsError(Exception):
+    """v1.0.1 (PARTE 8, Caso C): se agotaron todos los candidatos del
+    scope y, aun con tolerancia a fallos por tópico, no se consiguió NI
+    UNA pregunta válida. El proveedor LLM sí llegó a responder al menos
+    una vez (si nunca respondió, se conserva la clasificación de error de
+    proveedor real — ver `prepare_exam`) — esto NO es un error de
+    proveedor, es "no hay material suficiente/válido para este pedido".
+    Nunca incluye prompts, texto de respuestas ni datos sensibles en su
+    mensaje."""
+
+    def __init__(self, course_id: str, requested_count: int) -> None:
+        self.course_id = course_id
+        self.requested_count = requested_count
+        super().__init__(
+            f"No se pudieron generar preguntas válidas para el curso '{course_id}' "
+            f"(se pidieron {requested_count})."
+        )
 
 
 # --------------------------------------------------------------------------
@@ -218,6 +256,31 @@ def get_or_generate_question_bank(
     `GenerationFailedError` si no se pudo producir un banco válido tras los
     reintentos permitidos.
     """
+    bank, _was_cache_hit = _get_or_generate_question_bank_with_source(
+        settings=settings,
+        course_id=course_id,
+        module_id=module_id,
+        topic_id=topic_id,
+        provider=provider,
+        force_regenerate=force_regenerate,
+    )
+    return bank
+
+
+def _get_or_generate_question_bank_with_source(
+    *,
+    settings: Settings,
+    course_id: str,
+    module_id: str,
+    topic_id: str,
+    provider: LLMProvider | None = None,
+    force_regenerate: bool = False,
+) -> tuple[QuestionBank, bool]:
+    """Igual que `get_or_generate_question_bank`, pero además devuelve si
+    fue un cache hit — usado internamente por `prepare_exam` (v1.0.1) para
+    poder reportar `cache_hits`/`generated_banks` en el resumen de
+    observabilidad sin recalcular la cache key por su cuenta (evita
+    duplicar/desincronizar la lógica de cache)."""
     llm_provider = provider or get_llm_provider(settings)
 
     canonical, grounding_packet = course_service.get_grounding_packet(
@@ -258,7 +321,7 @@ def get_or_generate_question_bank(
         cached_bank = _read_cache(cache_dir, key)
         if cached_bank is not None:
             log_event(logger, "certification_bank_cache_hit", **log_context)
-            return cached_bank
+            return cached_bank, True
 
     log_event(logger, "certification_bank_cache_miss", **log_context)
     log_event(logger, "certification_bank_generation_started", **log_context)
@@ -271,6 +334,12 @@ def get_or_generate_question_bank(
     def _validate(body: GeneratedQuestionBankBody) -> None:
         validate_question_bank(body, canonical)
 
+    def _on_retry(attempt: int, reason: str) -> None:
+        # `reason` ya viene sanitizado por llm_retry.py ("upstream_error"
+        # | "invalid_contract" | "grounding_invalid"); nunca incluye texto
+        # de la respuesta del LLM ni del prompt.
+        log_event(logger, "certification_bank_generation_retry", **log_context, attempt=attempt, reason=reason)
+
     try:
         body = generate_with_retries(
             provider=llm_provider,
@@ -278,6 +347,7 @@ def get_or_generate_question_bank(
             response_model=GeneratedQuestionBankBody,
             validate=_validate,
             build_correction_message=build_certification_correction_message,
+            on_retry=_on_retry,
         )
     except Exception as exc:
         duration_ms = int((time.monotonic() - started_at) * 1000)
@@ -311,7 +381,7 @@ def get_or_generate_question_bank(
         duration_ms=duration_ms,
         question_count=len(bank.questions),
     )
-    return bank
+    return bank, False
 
 
 # --------------------------------------------------------------------------
@@ -399,6 +469,51 @@ def _round_robin_select(
     return selected
 
 
+def _order_candidates_for_generation(
+    pairs: list[tuple[str, str]], *, is_topic_specific_scope: bool
+) -> list[tuple[str, str]]:
+    """Reordena los candidatos (module_id, topic_id) para GENERACIÓN
+    incremental (v1.0.1, PARTE 1). Nunca usa `random`; 100% determinístico.
+
+    - Scope "tópicos específicos": se usa el orden que ya devuelve
+      `resolve_scope` (el orden en que el alumno/UI los pidió) tal cual —
+      no tiene sentido "cubrir módulos" cuando el alumno ya eligió tópicos
+      puntuales.
+    - Scope "curso completo" / "módulos específicos": round-robin
+      determinístico por módulo (preservando el orden real de módulos y,
+      dentro de cada módulo, el orden real de sus tópicos, ya establecido
+      por `resolve_scope`): primero el 1er tópico de cada módulo, luego el
+      2do de cada módulo que todavía tenga, etc. Esto evita concentrar
+      siempre las primeras preguntas en el primer módulo cuando el pedido
+      es, por ejemplo, "5 preguntas de curso completo" sobre un curso con
+      30 tópicos.
+    """
+    if is_topic_specific_scope:
+        return list(pairs)
+
+    by_module: dict[str, list[tuple[str, str]]] = {}
+    module_order: list[str] = []
+    for module_id, topic_id in pairs:
+        if module_id not in by_module:
+            by_module[module_id] = []
+            module_order.append(module_id)
+        by_module[module_id].append((module_id, topic_id))
+
+    ordered: list[tuple[str, str]] = []
+    index = 0
+    while True:
+        appended_any = False
+        for module_id in module_order:
+            bucket = by_module[module_id]
+            if index < len(bucket):
+                ordered.append(bucket[index])
+                appended_any = True
+        if not appended_any:
+            break
+        index += 1
+    return ordered
+
+
 def prepare_exam(
     *,
     settings: Settings,
@@ -410,25 +525,182 @@ def prepare_exam(
     seed: int | None = None,
     provider: LLMProvider | None = None,
 ) -> CertificationPrepareResponse:
-    """Resuelve el scope, genera/recupera un QuestionBank por tópico y
-    ensambla el examen de forma determinística (round-robin por tópico,
-    NUNCA con el LLM). Si no hay preguntas suficientes disponibles, NO es
-    un error: se devuelven las disponibles junto con
-    requested_count/actual_count (sección 22 de la especificación)."""
+    """Resuelve el scope y genera/recupera QuestionBanks de forma
+    INCREMENTAL y demand-driven (v1.0.1: PARTES 1-5 de la especificación
+    de hardening) — nunca genera bancos para todo el scope antes de
+    ensamblar el examen. El ensamblaje final sigue siendo 100%
+    determinístico (round-robin por pregunta, `_round_robin_select`,
+    NUNCA con el LLM).
+
+    Algoritmo:
+      1. Ordenar candidatos (module_id, topic_id) — round-robin por módulo
+         para scope curso/módulos, orden pedido para scope de tópicos.
+      2. Recorrer candidatos EN ORDEN, cache-first (`get_or_generate_question_bank`
+         ya consulta cache antes de llamar al LLM). Si un candidato falla
+         por un motivo específico de ESE tópico (`LLMUpstreamError` tras
+         agotar sus reintentos, o `GenerationFailedError` — contrato/
+         grounding inválido tras reintentos), se registra y se continúa
+         con el siguiente candidato: UN tópico roto nunca aborta toda la
+         preparación. Un error SISTÉMICO (`LLMConfigurationError` /
+         `LLMAuthError` — nunca va a mejorar reintentando otro tópico)
+         aborta la búsqueda de más candidatos de inmediato.
+      3. Early stop (PARTE 2): en cuanto se cubrieron aproximadamente
+         `min(question_count, candidatos_disponibles)` tópicos DISTINTOS
+         Y ya hay `question_count` preguntas disponibles en total, se deja
+         de generar/consultar más candidatos (PARTE 5: nunca se corta tras
+         un solo tópico si todavía no se alcanzó esa cobertura mínima).
+      4. Si al terminar (por agotamiento o early stop) no se consiguió
+         NINGUNA pregunta válida: se decide el error más preciso posible
+         (proveedor realmente inaccesible vs. ningún tópico produjo
+         contenido válido) — nunca un 502 genérico si el proveedor sí
+         respondió. Si se consiguió AL MENOS una pregunta válida, nunca es
+         un error, aunque sea menos que `question_count` (un tópico/curso
+         corto puede legítimamente no alcanzar para completar el pedido)."""
     llm_provider = provider or get_llm_provider(settings)
 
     resolved_topics = resolve_scope(settings=settings, course_id=course_id, scope=scope)
+    candidates = _order_candidates_for_generation(
+        resolved_topics, is_topic_specific_scope=bool(scope.topic_ids)
+    )
+    target_topic_coverage = min(question_count, len(candidates))
+
+    base_log_context = {"course_id": course_id, "mode": mode.value}
+    log_event(
+        logger,
+        "certification_prepare_started",
+        **base_log_context,
+        requested_count=question_count,
+        candidate_count=len(candidates),
+    )
+    started_at = time.monotonic()
 
     banks: list[QuestionBank] = []
-    for module_id, topic_id in resolved_topics:
-        bank = get_or_generate_question_bank(
-            settings=settings,
-            course_id=course_id,
+    total_available = 0
+    cache_hits = 0
+    generated_banks = 0
+    failed_banks = 0
+    systemic_error: Exception | None = None
+    last_upstream_error: LLMUpstreamError | None = None
+    had_contract_failure = False
+    early_stop = False
+    attempted_count = 0
+
+    for module_id, topic_id in candidates:
+        if len(banks) >= target_topic_coverage and total_available >= question_count:
+            early_stop = True
+            remaining = len(candidates) - attempted_count
+            log_event(
+                logger,
+                "certification_early_stop",
+                **base_log_context,
+                topics_covered=len(banks),
+                questions_available=total_available,
+                remaining_candidate_count=remaining,
+            )
+            if remaining > 0:
+                log_event(
+                    logger,
+                    "certification_bank_generation_skipped",
+                    **base_log_context,
+                    skipped_count=remaining,
+                    reason="early_stop",
+                )
+            break
+
+        attempted_count += 1
+        log_event(
+            logger,
+            "certification_topic_selected",
+            **base_log_context,
             module_id=module_id,
             topic_id=topic_id,
-            provider=llm_provider,
         )
+        try:
+            bank, was_cache_hit = _get_or_generate_question_bank_with_source(
+                settings=settings,
+                course_id=course_id,
+                module_id=module_id,
+                topic_id=topic_id,
+                provider=llm_provider,
+            )
+        except (LLMConfigurationError, LLMAuthError) as exc:
+            systemic_error = exc
+            failed_banks += 1
+            log_event(
+                logger,
+                "certification_topic_skipped",
+                **base_log_context,
+                module_id=module_id,
+                topic_id=topic_id,
+                error_type=type(exc).__name__,
+                reason="systemic",
+            )
+            break  # ningún otro candidato va a tener mejor suerte
+        except LLMUpstreamError as exc:
+            last_upstream_error = exc
+            failed_banks += 1
+            log_event(
+                logger,
+                "certification_topic_skipped",
+                **base_log_context,
+                module_id=module_id,
+                topic_id=topic_id,
+                error_type=type(exc).__name__,
+                reason="upstream",
+            )
+            continue
+        except GenerationFailedError as exc:
+            had_contract_failure = True
+            failed_banks += 1
+            log_event(
+                logger,
+                "certification_topic_skipped",
+                **base_log_context,
+                module_id=module_id,
+                topic_id=topic_id,
+                error_type=type(exc).__name__,
+                reason="invalid_contract_or_grounding",
+            )
+            continue
+
+        if was_cache_hit:
+            cache_hits += 1
+        else:
+            generated_banks += 1
         banks.append(bank)
+        total_available += len(bank.questions)
+        log_event(
+            logger,
+            "certification_questions_available",
+            **base_log_context,
+            module_id=module_id,
+            topic_id=topic_id,
+            questions_available=total_available,
+        )
+
+    duration_ms = int((time.monotonic() - started_at) * 1000)
+
+    if total_available == 0:
+        log_event(
+            logger,
+            "certification_prepare_failed",
+            **base_log_context,
+            requested_count=question_count,
+            candidate_count=len(candidates),
+            failed_banks=failed_banks,
+            duration_ms=duration_ms,
+        )
+        if systemic_error is not None:
+            raise systemic_error
+        if last_upstream_error is not None and not had_contract_failure:
+            # Todos los intentos fallaron por red/proveedor, ninguno llegó
+            # siquiera a producir contenido inválido: el proveedor está
+            # genuinamente inaccesible (Caso B de la especificación).
+            raise last_upstream_error
+        # El proveedor respondió al menos una vez, pero ningún tópico
+        # produjo contenido válido tras agotar reintentos y candidatos
+        # (Caso C): esto NO es un error de proveedor.
+        raise CertificationInsufficientQuestionsError(course_id, question_count)
 
     selected = _round_robin_select(banks, question_count, shuffle=shuffle, seed=seed)
 
@@ -451,12 +723,17 @@ def prepare_exam(
 
     log_event(
         logger,
-        "certification_exam_prepared",
-        course_id=course_id,
-        mode=mode.value,
-        topic_count=len(resolved_topics),
+        "certification_prepare_completed",
+        **base_log_context,
         requested_count=question_count,
-        actual_count=len(questions),
+        candidate_count=len(candidates),
+        cache_hits=cache_hits,
+        generated_banks=generated_banks,
+        failed_banks=failed_banks,
+        questions_available=total_available,
+        questions_returned=len(questions),
+        early_stop=early_stop,
+        duration_ms=duration_ms,
     )
 
     return CertificationPrepareResponse(

@@ -85,6 +85,22 @@ def test_prepare_invalid_topic_scope_returns_422(client, monkeypatch):
     assert response.status_code == 422
 
 
+def test_prepare_all_topics_invalid_contract_returns_422_not_502(client, monkeypatch):
+    """v1.0.1: cuando el proveedor SÍ responde pero ningún tópico produce
+    contenido válido tras agotar reintentos, la respuesta debe ser 422
+    ("no se pudieron generar preguntas suficientes"), NUNCA un 502 de
+    "proveedor no respondió correctamente" — el proveedor sí respondió."""
+    from app.services.llm_provider import LLMResponseError
+
+    bad = LLMResponseError("contrato inválido")
+    # topico-demo único del scope -> 3 intentos (MAX_GENERATION_ATTEMPTS)
+    _patch_provider(monkeypatch, [bad, bad, bad])
+    response = client.post(_PREPARE_URL, json={"scope": {"topic_ids": ["introduccion"]}})
+    assert response.status_code == 422
+    detail = str(response.json()).lower()
+    assert "no respondió" not in detail  # nunca el mensaje de 502 genérico
+
+
 def test_prepare_question_count_out_of_range_returns_422(client):
     response = client.post(
         _PREPARE_URL, json={"scope": {"topic_ids": ["introduccion"]}, "question_count": 0}

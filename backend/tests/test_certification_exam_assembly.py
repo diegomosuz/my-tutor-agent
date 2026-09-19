@@ -169,8 +169,14 @@ def test_round_robin_balances_across_topics(tmp_path):
         provider=provider,
     )
     topic_sequence = [q.topic_id for q in response.questions]
-    # round-robin: A, B, C, A (vuelve a la primera tras agotar una ronda)
-    assert topic_sequence == ["topico-a1", "topico-a2", "topico-b1", "topico-a1"]
+    # v1.0.1: los candidatos ahora se generan en orden round-robin POR
+    # MÓDULO (1er tópico de modulo-a, 1er tópico de modulo-b, 2do tópico
+    # de modulo-a — modulo-b no tiene un 2do tópico), no en el orden plano
+    # de resolve_scope (a1, a2, b1). El ensamblaje del examen sigue siendo
+    # round-robin sobre los bancos EN ESE ORDEN DE GENERACIÓN: a1, b1, a2,
+    # y vuelve a a1 al agotar una ronda. Ver
+    # _order_candidates_for_generation en certification_service.py.
+    assert topic_sequence == ["topico-a1", "topico-b1", "topico-a2", "topico-a1"]
 
 
 def test_round_robin_continues_with_others_when_one_topic_is_short(tmp_path):

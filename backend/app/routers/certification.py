@@ -36,7 +36,11 @@ _LLM_AUTH_REJECTED = (
     "El proveedor LLM configurado rechazó la credencial. Verificá la configuración del backend."
 )
 _LLM_UPSTREAM_FAILED = (
-    "El proveedor LLM externo no respondió correctamente. Intentá nuevamente más tarde."
+    "El proveedor de IA no está disponible temporalmente. Intentá nuevamente más tarde."
+)
+_INSUFFICIENT_QUESTIONS = (
+    "No fue posible generar suficientes preguntas con el material seleccionado. "
+    "Probá con otro alcance (más módulos/tópicos) o intentá nuevamente más tarde."
 )
 
 
@@ -46,12 +50,19 @@ def prepare_certification_exam(
     body: CertificationPrepareRequest,
     settings: Settings = Depends(get_settings),
 ) -> CertificationPrepareResponse:
-    """Prepara una práctica o un simulacro (sección 20). Genera (o
-    reutiliza de cache) un QuestionBank por cada tópico del scope
-    resuelto, y ensambla el examen de forma determinística (round-robin,
-    sin LLM). Si el scope no tiene suficientes preguntas disponibles,
-    devuelve las que hay junto con `requested_count`/`actual_count` — eso
-    NO es un error."""
+    """Prepara una práctica o un simulacro (sección 20; hardening v1.0.1).
+    Genera/reutiliza de cache QuestionBanks de forma INCREMENTAL — nunca
+    todo el scope antes de ensamblar — y ensambla el examen de forma
+    determinística (round-robin, sin LLM). Si el scope no tiene
+    suficientes preguntas disponibles PERO se consiguió al menos una, NO
+    es un error: devuelve las que hay junto con
+    `requested_count`/`actual_count`. Un tópico individual que falla nunca
+    aborta la preparación completa mientras otros candidatos puedan cubrir
+    el pedido (ver `certification_service.prepare_exam`); solo si NINGUNA
+    pregunta válida pudo conseguirse tras agotar todos los candidatos se
+    responde con un error — 422 si el proveedor sí respondió pero ningún
+    tópico produjo contenido válido, o el código de error de proveedor
+    real (502/503) si el proveedor nunca llegó a responder."""
     try:
         return certification_service.prepare_exam(
             settings=settings,
@@ -70,6 +81,8 @@ def prepare_certification_exam(
         raise HTTPException(status_code=404, detail=_TOPIC_NOT_FOUND.format(str(exc)))
     except certification_service.CertificationInvalidScopeError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    except certification_service.CertificationInsufficientQuestionsError:
+        raise HTTPException(status_code=422, detail=_INSUFFICIENT_QUESTIONS)
     except LLMConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except LLMAuthError:
@@ -77,6 +90,9 @@ def prepare_certification_exam(
     except LLMUpstreamError:
         raise HTTPException(status_code=502, detail=_LLM_UPSTREAM_FAILED)
     except GenerationFailedError as exc:
+        # Defensivo: `prepare_exam` ya captura GenerationFailedError por
+        # candidato internamente y nunca debería dejarlo escapar, pero se
+        # mantiene este mapeo por compatibilidad/seguridad.
         logger.warning("certification_bank_rejected course_id=%s", course_id)
         raise HTTPException(
             status_code=422,

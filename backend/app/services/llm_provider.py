@@ -23,11 +23,22 @@ traducirlas a códigos HTTP claros sin filtrar secretos (ver
   falta credencial, falta modelo). No debe reintentarse.
 - `LLMAuthError`: credencial rechazada por el proveedor (401/403). No debe
   reintentarse.
-- `LLMUpstreamError`: error recuperable del proveedor externo (timeout,
-  conexión, 5xx). Reintentable con límite.
-- `LLMResponseError`: la respuesta del proveedor no tiene la forma
-  esperada (JSON inválido, `choices` vacío, `message.content` ausente,
-  etc). Reintentable con límite (vía mensaje de corrección).
+- `LLMUpstreamError`: error recuperable del proveedor externo — nunca hubo
+  una respuesta HTTP completa que procesar (timeout, error de conexión,
+  5xx). Reintentable con límite.
+- `LLMResponseError`: el proveedor SÍ respondió (HTTP 200 incluido), pero
+  el contenido no tiene la forma esperada — JSON inválido, `choices`
+  vacío, `message.content` ausente, refusal, structured output truncado
+  (`finish_reason=length`) o bloqueado por content filter, o cualquier
+  excepción no reconocida que ocurra durante el parseo/validación local
+  del SDK después de la llamada de red. Reintentable con límite (vía
+  mensaje de corrección).
+
+Regla dura (bug real corregido en v1.0.1, ver `docs/RELEASE_NOTES_v1.0.1.md`):
+un HTTP 200 que después no cumple el contrato NUNCA debe clasificarse como
+`LLMUpstreamError` — `LLMUpstreamError` es exclusivamente para cuando la
+llamada de red en sí falló (timeout/conexión/5xx), nunca para problemas de
+parseo/schema que ocurren sobre una respuesta ya recibida.
 
 Ninguna excepción de este módulo debe incluir la API key ni el header
 `Authorization` en su mensaje.
@@ -292,6 +303,8 @@ class OpenAIProvider(LLMProvider):
             APIStatusError,
             APITimeoutError,
             AuthenticationError,
+            ContentFilterFinishReasonError,
+            LengthFinishReasonError,
         )
 
         try:
@@ -321,11 +334,36 @@ class OpenAIProvider(LLMProvider):
             raise LLMResponseError(
                 f"Proveedor 'openai': respuesta HTTP no exitosa (HTTP {status})."
             ) from exc
+        except LengthFinishReasonError as exc:
+            # El modelo respondió (HTTP 200) pero se truncó antes de poder
+            # completar el structured output — esto es una respuesta
+            # inválida/incompleta, NUNCA un problema de red/proveedor.
+            raise LLMResponseError(
+                "Proveedor 'openai': la respuesta se truncó antes de completar el "
+                "formato estructurado esperado (finish_reason=length)."
+            ) from exc
+        except ContentFilterFinishReasonError as exc:
+            raise LLMResponseError(
+                "Proveedor 'openai': la respuesta fue bloqueada por el filtro de "
+                "contenido del proveedor antes de completar el formato esperado."
+            ) from exc
         except LLMProviderError:
             raise
-        except Exception as exc:  # defensivo: cualquier otro error del SDK
-            raise LLMUpstreamError(
-                f"Proveedor 'openai': error inesperado del SDK ({type(exc).__name__})."
+        except Exception as exc:
+            # Fase 8 (v1.0.1), sección 6 — bug real corregido: cualquier
+            # excepción no reconocida hasta acá ocurre DESPUÉS de que el
+            # SDK ya recibió una respuesta HTTP y está parseando/validando
+            # el structured output localmente (json inválido, schema
+            # incompatible, etc.) — es un problema de CONTRATO/RESPUESTA,
+            # nunca de red/proveedor. Antes se reclasificaba como
+            # LLMUpstreamError acá, lo que producía logs y HTTP 502
+            # engañosos para una respuesta que en realidad fue HTTP 200.
+            # Los errores de red/timeout/conexión/5xx genuinos ya fueron
+            # capturados explícitamente arriba por su tipo específico del
+            # SDK, así que lo que llega acá nunca es upstream real.
+            raise LLMResponseError(
+                f"Proveedor 'openai': la respuesta no pudo procesarse como el "
+                f"contrato esperado ({type(exc).__name__})."
             ) from exc
 
         choices = getattr(completion, "choices", None)

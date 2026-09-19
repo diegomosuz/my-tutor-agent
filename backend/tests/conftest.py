@@ -54,6 +54,21 @@ def client(content_dir: Path, tmp_path: Path) -> TestClient:
             # deja estado entre tests.
             lesson_cache_dir=str(tmp_path / "lesson-cache"),
             certification_cache_dir=str(tmp_path / "certification-cache"),
+            speech_cache_dir=str(tmp_path / "speech-cache"),
+            # v1.0.1: fija explícitamente provider + toda credencial. Sin
+            # esto, un .env local de desarrollo (gitignored, nunca
+            # commiteado, pero posible en la máquina de cualquier dev, con
+            # LLM_PROVIDER/una API key real de una sesión de trabajo
+            # anterior) se filtra vía docker-compose hacia el container de
+            # test y rompe la hermeticidad de los tests "sin credencial"
+            # (el provider por default deja de ser "pwc" y/o empiezan a
+            # hacer una llamada real en vez de ejercitar el path 503). Los
+            # tests nunca deben depender de qué tenga configurado el
+            # entorno del desarrollador.
+            llm_provider="pwc",
+            openai_api_key="",
+            pwc_genai_api_key="",
+            gen_ai_api_key="",
         )
 
     app.dependency_overrides[get_settings] = _override_settings

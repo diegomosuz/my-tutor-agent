@@ -151,7 +151,16 @@ def test_one_broken_course_does_not_affect_other_courses(tmp_path):
     assert by_id["curso-sano"].status == "ok"
 
 
-def test_duplicate_topic_slug_is_error(tmp_path):
+def test_duplicate_topic_slug_is_warning(tmp_path):
+    """v1.0.1 — bug real corregido: `duplicate_slug` bajó de `error` a
+    `warning`. Causa raíz de un falso "diagnostico: error" reportado sobre
+    un curso real ("Claude Foundations Certification") que funcionaba
+    perfectamente de punta a punta (catálogo, aula, TTS, certificación) —
+    `_resolve_by_slug` siempre toma el primer match determinísticamente,
+    así que una colisión de slugs nunca rompe la app, solo "sombrea" el
+    segundo archivo (mismo tipo de situación que un asset no soportado,
+    que ya era `warning`). `error` queda reservado para tópicos
+    literalmente ilegibles (UTF-8/frontmatter inválido)."""
     content_dir = tmp_path / "content"
     module = content_dir / "curso" / "01-modulo"
     module.mkdir(parents=True)
@@ -162,4 +171,4 @@ def test_duplicate_topic_slug_is_error(tmp_path):
     _count, status, reports = course_diagnostics.run_course_diagnostics(content_dir)
     issue_codes = [i.code for i in reports[0].issues]
     assert "duplicate_slug" in issue_codes
-    assert status == "error"
+    assert status == "warning"

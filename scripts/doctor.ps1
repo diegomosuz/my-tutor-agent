@@ -32,6 +32,33 @@ function Write-Check {
     Write-Host $line -ForegroundColor $color
 }
 
+function Get-StatusSymbolAndColor {
+    # v1.0.1: bug real corregido -- "Cursos detectados" mostraba siempre
+    # [OK] mirando solo si count > 0, ignorando por completo el campo
+    # courses.diagnostics ("ok"/"warning"/"error"), lo que producia el
+    # contradictorio "[OK] ... diagnostico: error". Esta funcion mapea un
+    # estado de 3 valores a simbolo/color de forma explicita y testeable.
+    param([Parameter(Mandatory)] [string]$Status)
+    switch ($Status) {
+        "ok" { return @{ Symbol = "[OK]  "; Color = "Green" } }
+        "warning" { return @{ Symbol = "[WARN]"; Color = "Yellow" } }
+        "error" { return @{ Symbol = "[FAIL]"; Color = "Red" } }
+        default { return @{ Symbol = "[FAIL]"; Color = "Red" } }
+    }
+}
+
+function Write-StatusCheck {
+    param(
+        [Parameter(Mandatory)] [string]$Label,
+        [Parameter(Mandatory)] [string]$Status,
+        [string]$Detail = ""
+    )
+    $mapped = Get-StatusSymbolAndColor -Status $Status
+    $line = "$($mapped.Symbol) $Label"
+    if ($Detail) { $line += " - $Detail" }
+    Write-Host $line -ForegroundColor $mapped.Color
+}
+
 function Test-DockerInstalled {
     try {
         $null = Get-Command docker -ErrorAction Stop
@@ -147,7 +174,8 @@ function Invoke-Doctor {
 
     $status = Get-SystemStatus -BaseUrl $BackendUrl
     if ($status) {
-        Write-Check -Label "Cursos detectados" -Ok ($status.courses.count -gt 0) -Detail "$($status.courses.count) curso(s), diagnostico: $($status.courses.diagnostics)"
+        $coursesStatus = if ($status.courses.count -le 0) { "error" } else { $status.courses.diagnostics }
+        Write-StatusCheck -Label "Cursos detectados" -Status $coursesStatus -Detail "$($status.courses.count) curso(s), diagnostico: $($status.courses.diagnostics)"
         Write-Check -Label "Proveedor LLM" -Ok $true -Detail "$($status.llm.provider) - configured=$($status.llm.configured)"
         Write-Check -Label "Voz" -Ok $true -Detail "modo=$($status.voice.provider) neural_configured=$($status.voice.neural_configured)"
         Write-Check -Label "Cache escribible (system/status)" -Ok $status.cache_writable

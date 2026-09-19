@@ -75,7 +75,7 @@ solo informativo.
 
 | Variable | Default | Descripción |
 |---|---|---|
-| `APP_VERSION` | `1.0.0` | Versión mostrada en `GET /api/system/status` y en la pantalla de Configuración. Sin automatización de semver. |
+| `APP_VERSION` | `1.0.1` | Versión mostrada en `GET /api/system/status` y en la pantalla de Configuración. Sin automatización de semver. |
 
 ## Notas de seguridad
 

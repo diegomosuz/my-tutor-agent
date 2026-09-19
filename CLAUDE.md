@@ -821,6 +821,49 @@ Ver `docs/ROADMAP.md` para el detalle de fases futuras.
   consola); QA responsive en 5 resoluciones sin overflow. README
   reordenado (Requisitos antes de Quick Start) y con secciones nuevas de
   Troubleshooting/Desarrollo/Seguridad.
+- **v1.0.1** (release correctiva, sobre v1.0.0): resuelve un bug real
+  reproducido con un curso real multi-módulo ("preparar práctica de
+  certificación, curso completo, 5 preguntas" tardaba minutos y terminaba
+  en `502` engañoso). Causa raíz: `OpenAIProvider.generate_structured`
+  reclasificaba cualquier excepción no reconocida del SDK (incluidas
+  fallas de parseo/validación DESPUÉS de un HTTP 200 real) como
+  `LLMUpstreamError`; combinado con que `prepare_exam` generaba un
+  `QuestionBank` para TODOS los tópicos del scope antes de ensamblar, un
+  solo tópico con salida inválida abortaba toda la preparación. Fix:
+  - `certification_service.prepare_exam` ahora es incremental/
+    demand-driven: candidatos ordenados round-robin determinístico por
+    módulo (nunca `random`, nunca LLM), cache-first, con early stop en
+    cuanto hay cobertura (`min(requested_count, candidatos)` tópicos
+    distintos) y cantidad suficientes.
+  - Tolerancia a fallos por tópico: un tópico que falla se salta y la
+    preparación sigue con el próximo candidato; solo un error sistémico
+    (`LLMConfigurationError`/`LLMAuthError`) aborta de inmediato.
+  - `OpenAIProvider`: la excepción defensiva final ahora clasifica como
+    `LLMResponseError` (contrato/respuesta inválida), nunca
+    `LLMUpstreamError`; se agregó manejo explícito de
+    `LengthFinishReasonError`/`ContentFilterFinishReasonError`.
+  - Nueva `CertificationInsufficientQuestionsError` (→ `422`) para "el
+    proveedor respondió pero ningún tópico produjo contenido válido tras
+    agotar todos los candidatos" — nunca más un `502` falso cuando el
+    proveedor sí respondió.
+  - `course_diagnostics.py`: `duplicate_slug` bajó de `error` a `warning`
+    (un curso con slugs duplicados sigue funcionando de punta a punta —
+    `error` queda solo para tópicos ilegibles); corrige el
+    `doctor.ps1` contradictorio `[OK] ... diagnostico: error`.
+  - `conftest.py`: el fixture `client` ahora fija explícitamente
+    `llm_provider`/todas las credenciales — corrige una fuga real de
+    hermeticidad donde un `.env` local de desarrollo con una key real
+    filtraba hacia tests que debían ejercitar el path "sin credencial".
+  Validado con un smoke REAL contra el curso que originó el reporte
+  (`claude-foundations-certification`, 56 tópicos candidatos): la misma
+  preparación que antes fallaba con `502` ahora responde `200 OK` en
+  ~70s, tocando solo 5 de 56 tópicos (4 generaciones reales + 1 cache
+  hit, 51 saltados por early stop), con las 5 preguntas repartidas en 5
+  módulos distintos. 343 tests de backend (+17) pasando; 190 de frontend
+  sin cambios (ningún archivo de frontend se tocó). `APP_VERSION` 1.0.0 →
+  1.0.1. Cache keys sin cambios (caches de v1.0.0 se siguen reutilizando).
+  Sin cambios de arquitectura, sin features nuevas, sin dependencias
+  nuevas.
 
 Cualquier trabajo futuro debe respetar este documento y actualizar la
 sección correspondiente del roadmap al avanzar de fase.

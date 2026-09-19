@@ -5,6 +5,20 @@ curso individual tenga un problema: cada curso se diagnostica de forma
 aislada, y un error en uno no afecta el reporte de los demás (ver
 `app/routers/system.py`, que sigue exponiendo `GET /api/courses` con
 normalidad incluso si el diagnóstico marca error en algún curso).
+
+Severidad (v1.0.1 — bug real corregido, ver docs/RELEASE_NOTES_v1.0.1.md):
+`error` se reserva EXCLUSIVAMENTE para problemas que hacen que ESE tópico
+puntual no pueda leerse en absoluto (`invalid_utf8`, `invalid_frontmatter`
+— el archivo literalmente no se puede parsear). `duplicate_slug` (dos
+directorios/archivos que colisionan en el mismo slug tras quitar el
+prefijo numérico) es `warning`, no `error`: la resolución determinística
+por slug (`_resolve_by_slug`) siempre toma el primer match, así que el
+curso sigue funcionando de punta a punta (catálogo, aula, TTS,
+certificación) — el segundo archivo simplemente queda "sombreado", el
+mismo tipo de situación que un asset no soportado. Antes de este fix, un
+curso perfectamente funcional con una colisión de slugs se reportaba como
+`error`, y `doctor.ps1` mostraba el contradictorio "[OK] ... diagnostico:
+error".
 """
 from __future__ import annotations
 
@@ -139,7 +153,7 @@ def _diagnose_course(course_dir: Path) -> CourseDiagnosticReport:
             issues.append(
                 CourseDiagnosticIssue(
                     code="duplicate_slug",
-                    severity=DiagnosticSeverity.error,
+                    severity=DiagnosticSeverity.warning,
                     message=f"Slug de módulo duplicado: '{module_id}'.",
                     module_id=module_id,
                 )
@@ -164,7 +178,7 @@ def _diagnose_course(course_dir: Path) -> CourseDiagnosticReport:
                 issues.append(
                     CourseDiagnosticIssue(
                         code="duplicate_slug",
-                        severity=DiagnosticSeverity.error,
+                        severity=DiagnosticSeverity.warning,
                         message=f"Slug de tópico duplicado: '{topic_id}'.",
                         module_id=module_id,
                         topic_id=topic_id,
