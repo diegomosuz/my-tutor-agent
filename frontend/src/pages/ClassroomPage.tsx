@@ -493,59 +493,12 @@ export function ClassroomPage() {
               )}
             </div>
 
-            {lesson && !engine.isCompleted && engine.currentScene && (
-              <div className="narration-panel">
-                <h4>Narración</h4>
-                {engine.currentScene.narration.map((n, i) => (
-                  <p
-                    key={i}
-                    className={
-                      voiceEnabled && i === engine.currentNarrationIndex
-                        ? "narration-panel__chunk--active"
-                        : undefined
-                    }
-                  >
-                    {n.text}
-                  </p>
-                ))}
-              </div>
-            )}
-
-            {lesson &&
-              !engine.isCompleted &&
-              engine.currentScene?.interaction?.interaction_type === "comprehension_check" &&
-              courseId &&
-              moduleId &&
-              topicId && (
-                <CheckpointPanel
-                  courseId={courseId}
-                  moduleId={moduleId}
-                  topicId={topicId}
-                  scene={engine.currentScene}
-                  voiceEnabled={voiceEnabled}
-                  voiceRate={voiceSpeed}
-                  useNeuralVoice={useNeural}
-                />
-              )}
-
-            {lesson &&
-              !engine.isCompleted &&
-              engine.currentScene?.interaction?.interaction_type === "reflection" && (
-                <div className="checkpoint-panel checkpoint-panel--reflection">
-                  <h4 className="checkpoint-panel__title">Reflexión</h4>
-                  <p className="checkpoint-panel__question">
-                    {engine.currentScene.interaction.question.text}
-                  </p>
-                  <p className="checkpoint-panel__hint">
-                    Compartí tu reflexión con el tutor en el panel de abajo.
-                  </p>
-                </div>
-              )}
-
-            {/* Toolbar de la escena: pertenece visualmente a la slide, nunca
-                a "toda la página" — por eso vive DENTRO de .classroom-stage,
-                compartiendo su mismo ancho (columna izquierda). "Salir de la
-                clase" NO vive acá (ver .course-subheader, arriba). */}
+            {/* Toolbar de la escena: INMEDIATAMENTE debajo de la slide (nunca
+                después de narración/checkpoint) — pertenece visualmente a la
+                slide, nunca a "toda la página". Vive DENTRO de
+                .classroom-stage, compartiendo su mismo ancho (columna
+                izquierda). "Salir de la clase" NO vive acá (ver
+                .course-subheader, arriba). */}
             <div className="scene-controls" role="group" aria-label="Controles de la escena">
               <div className="scene-controls__side scene-controls__side--prev">
                 <button
@@ -648,6 +601,55 @@ export function ClassroomPage() {
                 </button>
               </div>
             )}
+
+            {lesson && !engine.isCompleted && engine.currentScene && (
+              <div className="narration-panel">
+                <h4>Narración</h4>
+                {engine.currentScene.narration.map((n, i) => (
+                  <p
+                    key={i}
+                    className={
+                      voiceEnabled && i === engine.currentNarrationIndex
+                        ? "narration-panel__chunk--active"
+                        : undefined
+                    }
+                  >
+                    {n.text}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            {lesson &&
+              !engine.isCompleted &&
+              engine.currentScene?.interaction?.interaction_type === "comprehension_check" &&
+              courseId &&
+              moduleId &&
+              topicId && (
+                <CheckpointPanel
+                  courseId={courseId}
+                  moduleId={moduleId}
+                  topicId={topicId}
+                  scene={engine.currentScene}
+                  voiceEnabled={voiceEnabled}
+                  voiceRate={voiceSpeed}
+                  useNeuralVoice={useNeural}
+                />
+              )}
+
+            {lesson &&
+              !engine.isCompleted &&
+              engine.currentScene?.interaction?.interaction_type === "reflection" && (
+                <div className="checkpoint-panel checkpoint-panel--reflection">
+                  <h4 className="checkpoint-panel__title">Reflexión</h4>
+                  <p className="checkpoint-panel__question">
+                    {engine.currentScene.interaction.question.text}
+                  </p>
+                  <p className="checkpoint-panel__hint">
+                    Compartí tu reflexión con el tutor en el panel de abajo.
+                  </p>
+                </div>
+              )}
 
             {courseId && moduleId && topicId && (
               <TutorPanel

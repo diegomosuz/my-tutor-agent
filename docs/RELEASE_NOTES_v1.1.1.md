@@ -16,28 +16,34 @@ quedaban desconectados de la diapositiva que en realidad controlan.
 ## Reorganización del Classroom
 
 - **Toolbar de escena** (Previo / Pausar·Repetir·Voz + indicador "Escena X
-  de Y" / Siguiente) ahora vive inmediatamente debajo de la diapositiva y
-  su narración, dentro de la misma columna izquierda — comparte
-  exactamente su ancho, nunca se extiende bajo el panel derecho de
-  contenido. Tres zonas: Previo (secundario) a la izquierda, Pausar/
-  Repetir/Voz (neutrales) + indicador de escena al centro, Siguiente
-  (botón primario PwC) a la derecha.
+  de Y" / Siguiente) es ahora el elemento INMEDIATAMENTE posterior a la
+  diapositiva en el DOM — literalmente pegado debajo, sin narración ni
+  ningún otro contenido en el medio —, dentro de la misma columna
+  izquierda: comparte exactamente su ancho, nunca se extiende bajo el
+  panel derecho de contenido. Tres zonas: Previo (secundario) a la
+  izquierda, Pausar/Repetir/Voz (neutrales) + indicador de escena al
+  centro, Siguiente (botón primario PwC) a la derecha.
 - **"Salir de la clase"** se movió al header de contexto del aula (arriba
   a la derecha, junto al selector de módulo), como una acción de
   navegación de nivel superior — ya no comparte la barra con los
   controles de reproducción. Estilo neutral, no el rojo de acciones
   destructivas (ese rojo sigue reservado para "Restablecer progreso" en
   Configuración).
-- **Secuencia visual**: diapositiva → controles de escena → "Preguntá al
-  tutor" (el panel del tutor se movió a la misma columna, justo debajo del
-  toolbar). El contenido completo del tema sigue visible en paralelo, en
-  el panel derecho, sin cambios.
+- **Secuencia visual completa**: diapositiva → controles de escena →
+  narración → checkpoint/reflexión (si la escena tiene uno) → "Preguntá
+  al tutor" (el panel del tutor se movió a la misma columna, después de
+  todo lo anterior). El checkpoint es contenido pedagógico de la escena,
+  no un control del reproductor — por eso va después de narración y
+  nunca debajo del toolbar. El contenido completo del tema sigue visible
+  en paralelo, en el panel derecho, sin cambios.
 - El indicador "Escena X de Y" se movió desde dentro de la diapositiva
   hacia el centro del nuevo toolbar; "↻ Regenerar clase con IA" queda
   como link secundario dentro de la diapositiva.
-- Checkpoint/Reflexión mantienen exactamente su posición anterior
-  (inmediatamente después de la narración, antes del toolbar) — ya
-  funcionaba bien asociado a la escena activa, no se tocó.
+- Checkpoint/Reflexión: en un primer paso quedaron antes del toolbar; un
+  ajuste posterior dentro del mismo bloque los reubicó después del
+  toolbar y de la narración (ver "Secuencia visual completa" arriba) —
+  siguen asociados a la escena activa, solo cambió su posición relativa
+  al toolbar recién movido.
 
 ## Responsive
 
@@ -77,8 +83,10 @@ del fix, y con un test de regresión nuevo.
 ## Validación
 
 - 389 tests de backend (sin cambios, cero archivos de backend tocados) y
-  330 de frontend (+15 nuevos: 14 del nuevo layout del Classroom + 1 de
-  regresión del bug de hooks) — sin fallas.
+  331 de frontend (+16 nuevos: 14 del nuevo layout del Classroom, 1 de
+  regresión del bug de hooks, y 1 de orden DOM exacto con checkpoint
+  agregado en el ajuste que movió el toolbar a pegado bajo la slide) —
+  sin fallas.
 - Build de producción del frontend limpio (`tsc && vite build`).
 - `docker compose build --no-cache` limpio; ambos containers healthy;
   `scripts/doctor.ps1` en verde (mismo `[WARN]` benigno preexistente de

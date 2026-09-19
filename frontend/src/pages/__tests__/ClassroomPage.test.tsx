@@ -223,7 +223,7 @@ describe("ClassroomPage — v1.1.0 UX de doble submit y mensajes de espera", () 
 // tocar ClassroomEngine/TutorService/Checkpoint/Learning Progress).
 // -------------------------------------------------------------------
 describe("ClassroomPage — v1.1.1 navegación del aula", () => {
-  it("A: los controles de escena aparecen inmediatamente después del área visual", async () => {
+  it("A: los controles de escena son el elemento INMEDIATAMENTE posterior a la slide (orden DOM exacto)", async () => {
     const { container } = await renderWithLesson();
 
     const stage = container.querySelector(".classroom-stage");
@@ -232,12 +232,19 @@ describe("ClassroomPage — v1.1.1 navegación del aula", () => {
 
     const slideIndex = children.findIndex((c) => c.includes("slide-panel"));
     const controlsIndex = children.findIndex((c) => c.includes("scene-controls"));
+    const narrationIndex = children.findIndex((c) => c.includes("narration-panel"));
     const tutorIndex = children.findIndex((c) => c.includes("tutor-panel"));
+    const topicNavIndex = children.findIndex((c) => c.includes("module-topic-nav"));
 
     expect(slideIndex).toBeGreaterThanOrEqual(0);
-    expect(controlsIndex).toBeGreaterThan(slideIndex);
-    // El toolbar de escena precede al tutor: Slide -> Controles -> Tutor.
-    expect(tutorIndex).toBeGreaterThan(controlsIndex);
+    // scene-controls debe ser el HERMANO SIGUIENTE de slide-panel — no
+    // alcanza con que "aparezca después"; no puede haber nada en el medio
+    // (nunca más narración/checkpoint entre la slide y los controles).
+    expect(controlsIndex).toBe(slideIndex + 1);
+    // Orden completo: Slide -> Controles -> Narración -> Tutor -> nav.
+    expect(narrationIndex).toBe(controlsIndex + 1);
+    expect(tutorIndex).toBeGreaterThan(narrationIndex);
+    expect(topicNavIndex).toBeGreaterThan(tutorIndex);
   });
 
   it("B: 'Salir de la clase' NO forma parte del toolbar de controles de la escena", async () => {
@@ -379,6 +386,27 @@ describe("ClassroomPage — v1.1.1 navegación del aula", () => {
     expect(mockEvaluateCheckpoint).toHaveBeenCalledTimes(1);
     // El expected_answer NUNCA debe llegar a pantalla.
     expect(screen.queryByText("SECRETO_NUNCA_VISIBLE")).not.toBeInTheDocument();
+  });
+
+  it("L2: con checkpoint, el orden DOM es Controles -> Narración -> Checkpoint -> Tutor", async () => {
+    const { container } = await renderWithLesson(checkpointLesson());
+
+    const stage = container.querySelector(".classroom-stage");
+    expect(stage).not.toBeNull();
+    const children = Array.from(stage!.children).map((el) => el.className);
+
+    const controlsIndex = children.findIndex((c) => c.includes("scene-controls"));
+    const narrationIndex = children.findIndex((c) => c.includes("narration-panel"));
+    const checkpointIndex = children.findIndex((c) => c.includes("checkpoint-panel"));
+    const tutorIndex = children.findIndex((c) => c.includes("tutor-panel"));
+
+    expect(controlsIndex).toBeGreaterThanOrEqual(0);
+    expect(narrationIndex).toBeGreaterThan(controlsIndex);
+    expect(checkpointIndex).toBeGreaterThan(narrationIndex);
+    expect(tutorIndex).toBeGreaterThan(checkpointIndex);
+    // El checkpoint es contenido pedagógico de la escena, no un control del
+    // player: nunca debe terminar debajo del toolbar de controles.
+    expect(checkpointIndex).toBeGreaterThan(controlsIndex);
   });
 
   it("M: navegar entre escenas no introduce requests duplicados de curso/tópico/lección", async () => {
