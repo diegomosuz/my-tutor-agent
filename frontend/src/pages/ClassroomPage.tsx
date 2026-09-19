@@ -451,6 +451,9 @@ export function ClassroomPage() {
                     scene={engine.currentScene}
                     canonical={topic?.canonical}
                     renderKey={engine.renderKey}
+                    courseId={courseId ?? ""}
+                    moduleId={moduleId ?? ""}
+                    topicId={topicId ?? ""}
                   />
                   <div className="slide-panel__scene-indicator">
                     Escena {engine.currentSceneIndex + 1} de {engine.totalScenes}
@@ -638,6 +641,8 @@ export function ClassroomPage() {
             canonical={topic.canonical}
             activeSceneId={engine.currentScene?.scene_id}
             activeSceneRefs={engine.currentScene ? collectSceneRefs(engine.currentScene) : undefined}
+            activeSceneType={engine.currentScene?.scene_type}
+            activeVisualType={engine.currentScene?.visual.visual_type}
           />
         )}
 

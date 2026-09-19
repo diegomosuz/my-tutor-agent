@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from app.models.lesson import GeneratedLessonBody, GroundedText, VisualType
+from app.models.lesson import GeneratedLessonBody, GroundedText, VisualPlan, VisualType
 from app.models.schemas import CanonicalTopicContent
 from app.services.canonical import validate_source_refs
 
@@ -103,6 +103,7 @@ def validate_lesson_body(
     # VisualPlan.source_refs también deben existir realmente (cuando
     # visual_type != "none"; Pydantic ya exige que no estén vacíos en ese
     # caso, ver VisualPlan._refs_required_unless_none).
+    block_type_by_ref = {block.source_ref: block.block_type for block in canonical.source_blocks}
     for scene in body.scenes:
         visual = scene.visual
         if visual.visual_type == VisualType.none:
@@ -112,6 +113,58 @@ def validate_lesson_body(
             problems.append(
                 f"{scene.scene_id}.visual: source_refs inexistentes {result.invalid_refs}."
             )
+            continue  # el resto de las validaciones de este visual no son confiables
+
+        problems.extend(_validate_visual_content(scene.scene_id, visual, block_type_by_ref))
 
     if problems:
         raise LessonValidationError(problems)
+
+
+# Rango práctico validado (la calidad "ideal" — 3-7 pasos, etc. — la guía
+# el prompt; acá solo se evita contenido estructuralmente absurdo, sin
+# forzar reintentos por casos legítimos en el borde del rango).
+_MIN_PROCESS_STEPS = 2
+_MIN_GRAPH_NODES = 2
+
+
+def _validate_visual_content(
+    scene_id: str, visual: VisualPlan, block_type_by_ref: dict[str, str]
+) -> list[str]:
+    """Valida que el contenido estructurado de `visual` (v1.1.0, bloque de
+    rendering pedagógico) sea coherente con su `visual_type` — determinístico,
+    sin LLM. Cada visual_type que requiere contenido estructurado (process,
+    comparison, architecture, concept_map, image) debe traerlo poblado; el
+    resto de los campos estructurados quedan vacíos/None (no se valida como
+    error, simplemente el renderer los ignora)."""
+    problems: list[str] = []
+
+    if visual.visual_type == VisualType.process:
+        if len(visual.process_steps) < _MIN_PROCESS_STEPS:
+            problems.append(
+                f"{scene_id}.visual: process requiere al menos {_MIN_PROCESS_STEPS} "
+                f"process_steps (recibidos {len(visual.process_steps)})."
+            )
+
+    elif visual.visual_type == VisualType.comparison:
+        if visual.comparison is None:
+            problems.append(f"{scene_id}.visual: comparison requiere el campo 'comparison' poblado.")
+
+    elif visual.visual_type in (VisualType.architecture, VisualType.concept_map):
+        if len(visual.nodes) < _MIN_GRAPH_NODES:
+            problems.append(
+                f"{scene_id}.visual: {visual.visual_type.value} requiere al menos "
+                f"{_MIN_GRAPH_NODES} nodes (recibidos {len(visual.nodes)})."
+            )
+
+    elif visual.visual_type == VisualType.image:
+        has_image_block = any(
+            block_type_by_ref.get(ref) == "image" for ref in visual.source_refs
+        )
+        if not has_image_block:
+            problems.append(
+                f"{scene_id}.visual: image requiere que al menos uno de sus source_refs "
+                "apunte a un SourceBlock de tipo 'image' del material autorizado."
+            )
+
+    return problems

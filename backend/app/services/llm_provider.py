@@ -51,7 +51,7 @@ from abc import ABC, abstractmethod
 from typing import TypeVar
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.config import Settings
 
@@ -349,6 +349,22 @@ class OpenAIProvider(LLMProvider):
             ) from exc
         except LLMProviderError:
             raise
+        except ValidationError as exc:
+            # v1.1.0 (bloque de rendering pedagógico) — bug real encontrado
+            # con generación real: cuando esto se reclasificaba como un
+            # LLMResponseError genérico (rama except Exception de abajo),
+            # el mensaje de corrección reenviado al modelo en el retry
+            # (ver app/services/lesson_generator.py::_generate_validated_body)
+            # era un string inútil ("... (ValidationError)."), sin decirle
+            # al modelo QUÉ campo estaba mal — el modelo no tenía forma de
+            # corregirse y los 3 intentos fallaban igual. `str(exc)` de un
+            # pydantic.ValidationError es seguro de reenviar: son paths de
+            # campo + los mensajes de nuestros propios validators, nunca la
+            # API key ni el prompt completo.
+            raise LLMResponseError(
+                "Proveedor 'openai': la respuesta no cumplió el contrato esperado "
+                f"tras el parseo estructurado: {exc}"
+            ) from exc
         except Exception as exc:
             # Fase 8 (v1.0.1), sección 6 — bug real corregido: cualquier
             # excepción no reconocida hasta acá ocurre DESPUÉS de que el

@@ -97,9 +97,14 @@ export function CourseDetailPage() {
               <span className="module-block__index">{index + 1}</span>
               <h3>{module.title}</h3>
             </div>
-            {module.topics.map((topic) => (
+            {module.topics.map((topic, topicIndex) => (
+              // topic.id no es necesariamente único dentro de un módulo
+              // (ver "duplicate_slug" en course_diagnostics.py, mismo caso
+              // real ya corregido en ClassroomPage.tsx/
+              // LearningProgressPage.tsx/CertificationSetupPage.tsx); se
+              // agrega el índice como desempate para la key de React.
               <Link
-                key={topic.id}
+                key={`${topic.id}-${topicIndex}`}
                 to={`/aula/${course.id}/${module.id}/${topic.id}`}
                 className="topic-row"
               >

@@ -8,6 +8,7 @@ import { ComparisonVisual } from "./visuals/ComparisonVisual";
 import { ConceptMapVisual } from "./visuals/ConceptMapVisual";
 import { HeroVisual } from "./visuals/HeroVisual";
 import { HierarchyVisual } from "./visuals/HierarchyVisual";
+import { ImageVisual } from "./visuals/ImageVisual";
 import { NoVisual } from "./visuals/NoVisual";
 import { ProcessVisual } from "./visuals/ProcessVisual";
 import { QuoteVisual } from "./visuals/QuoteVisual";
@@ -31,21 +32,42 @@ const VISUAL_RENDERERS: Record<VisualType, ComponentType<VisualComponentProps>> 
   table: TableVisual,
   code: CodeVisual,
   quote: QuoteVisual,
+  image: ImageVisual,
 };
 
 export interface SceneRendererProps {
   scene: LessonScene;
   canonical: CanonicalInfo | null | undefined;
   renderKey: number;
+  courseId: string;
+  moduleId: string;
+  topicId: string;
 }
 
-export function SceneRenderer({ scene, canonical, renderKey }: SceneRendererProps) {
+export function SceneRenderer({
+  scene,
+  canonical,
+  renderKey,
+  courseId,
+  moduleId,
+  topicId,
+}: SceneRendererProps) {
   const lookupSourceBlock = useMemo(() => buildSourceBlockLookup(canonical), [canonical]);
   const Visual = VISUAL_RENDERERS[scene.visual.visual_type] ?? NoVisual;
 
   return (
-    <div className="scene-renderer classroom-scene-enter" key={`${scene.scene_id}-${renderKey}`}>
-      <Visual scene={scene} lookupSourceBlock={lookupSourceBlock} renderKey={renderKey} />
+    <div
+      className={`scene-renderer classroom-scene-enter emphasis-${scene.visual.emphasis}`}
+      key={`${scene.scene_id}-${renderKey}`}
+    >
+      <Visual
+        scene={scene}
+        lookupSourceBlock={lookupSourceBlock}
+        renderKey={renderKey}
+        courseId={courseId}
+        moduleId={moduleId}
+        topicId={topicId}
+      />
     </div>
   );
 }

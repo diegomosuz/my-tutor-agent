@@ -1058,9 +1058,21 @@ p {
   justify-content: center;
 }
 
+.visual-process__label-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .visual-process__label {
   font-size: 13.5px;
   color: #ece5d8;
+  line-height: 1.4;
+}
+
+.visual-process__detail {
+  font-size: 12px;
+  color: #c9c1b5;
   line-height: 1.4;
 }
 
@@ -1116,6 +1128,51 @@ p {
   border-radius: 999px;
   padding: 1px 8px;
   margin-bottom: 8px;
+}
+
+.visual-comparison__card-points {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.visual-comparison__table-wrap {
+  overflow-x: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.visual-comparison__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.visual-comparison__table th,
+.visual-comparison__table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: #ece5d8;
+  white-space: nowrap;
+}
+
+.visual-comparison__table thead th {
+  background: rgba(255, 255, 255, 0.06);
+  font-weight: 700;
+  color: #fff;
+}
+
+.visual-comparison__table tbody th {
+  font-weight: 600;
+  color: var(--color-accent-yellow);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.visual-comparison__table tbody tr:last-child td,
+.visual-comparison__table tbody tr:last-child th {
+  border-bottom: none;
 }
 
 /* --- hierarchy --- */
@@ -1180,6 +1237,9 @@ p {
 }
 
 .visual-architecture__node {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: var(--radius-sm);
@@ -1187,6 +1247,64 @@ p {
   font-size: 13px;
   text-align: center;
   color: #ece5d8;
+}
+
+/* --- nodos/aristas (compartido entre architecture y concept_map) --- */
+
+.visual-graph__node-role {
+  align-self: center;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--color-accent-yellow);
+}
+
+.visual-graph__node-label {
+  font-weight: 600;
+}
+
+.visual-graph__node-desc {
+  font-size: 11.5px;
+  color: #c9c1b5;
+  line-height: 1.35;
+}
+
+.visual-graph__edges {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.visual-graph__edges li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #ece5d8;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+}
+
+.visual-graph__edge-from,
+.visual-graph__edge-to {
+  font-weight: 600;
+}
+
+.visual-graph__edge-arrow {
+  color: var(--color-accent-yellow);
+}
+
+.visual-graph__edge-label {
+  font-size: 11px;
+  color: #c9c1b5;
+  font-style: italic;
 }
 
 /* --- concept map --- */
@@ -1309,6 +1427,50 @@ p {
   font-style: italic;
   line-height: 1.45;
   color: #ffffff;
+}
+
+/* --- image --- */
+
+.visual-image__frame {
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.visual-image__frame img {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.visual-image__points {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #ece5d8;
+}
+
+/* --- emphasis (v1.1.0): mapeo fijo a tokens PwC, nunca un color
+   arbitrario del LLM — ver VisualEmphasis en app/models/lesson.py.
+   "neutral" no aplica ningún estilo adicional. Con moderación: un borde
+   de acento discreto, nunca un fondo saturado. --- */
+
+.emphasis-primary .visual {
+  border-left: 3px solid var(--color-primary);
+  padding-left: 14px;
+}
+
+.emphasis-secondary .visual {
+  border-left: 3px solid rgba(255, 255, 255, 0.25);
+  padding-left: 14px;
+}
+
+.emphasis-warning .visual {
+  border-left: 3px solid var(--color-accent-red);
+  padding-left: 14px;
 }
 
 /* --- none --- */

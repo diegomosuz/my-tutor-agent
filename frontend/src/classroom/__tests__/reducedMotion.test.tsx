@@ -30,7 +30,7 @@ describe("prefers-reduced-motion", () => {
   it("15. no rompe la UI: el contenido sigue siendo usable con reduced-motion activo", () => {
     mockReducedMotion(true);
     const scene = SAMPLE_LESSON.scenes[1];
-    render(<SceneRenderer scene={scene} canonical={CANONICAL_INFO} renderKey={0} />);
+    render(<SceneRenderer scene={scene} canonical={CANONICAL_INFO} renderKey={0} courseId="curso-demo" moduleId="modulo-demo" topicId="topico-demo" />);
 
     expect(screen.getByText(scene.title.text)).toBeInTheDocument();
     expect(window.matchMedia("(prefers-reduced-motion: reduce)").matches).toBe(true);
@@ -39,7 +39,7 @@ describe("prefers-reduced-motion", () => {
   it("renderiza igual cuando el usuario no pidió reduced-motion", () => {
     mockReducedMotion(false);
     const scene = SAMPLE_LESSON.scenes[1];
-    render(<SceneRenderer scene={scene} canonical={CANONICAL_INFO} renderKey={0} />);
+    render(<SceneRenderer scene={scene} canonical={CANONICAL_INFO} renderKey={0} courseId="curso-demo" moduleId="modulo-demo" topicId="topico-demo" />);
     expect(screen.getByText(scene.title.text)).toBeInTheDocument();
   });
 });

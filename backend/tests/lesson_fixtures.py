@@ -62,7 +62,7 @@ def valid_lesson_body_dict() -> dict:
         "scenes": [
             {
                 "scene_id": "SCENE-001",
-                "scene_type": "introduction",
+                "scene_type": "opening",
                 "title": {"text": "¿Qué es Kubernetes?", "source_refs": ["SRC-001"]},
                 "key_points": [
                     {

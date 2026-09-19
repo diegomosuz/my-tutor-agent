@@ -16,4 +16,11 @@ export interface VisualComponentProps {
   scene: LessonScene;
   lookupSourceBlock: SourceBlockLookup;
   renderKey: number;
+  /** Identidad del tópico activo — solo la necesita `ImageVisual` para
+   * resolver la URL segura del asset vía el mismo endpoint que ya usa
+   * SafeMarkdown en el panel de contenido (nunca una URL inventada por el
+   * LLM: siempre se resuelve un SourceBlock de tipo "image" real). */
+  courseId: string;
+  moduleId: string;
+  topicId: string;
 }

@@ -19,7 +19,7 @@ _LESSON_BODY_WITH_CHECKPOINT = {
     "scenes": [
         {
             "scene_id": "SCENE-001",
-            "scene_type": "introduction",
+            "scene_type": "opening",
             "title": {"text": "Introducción", "source_refs": ["SRC-001"]},
             "key_points": [
                 {

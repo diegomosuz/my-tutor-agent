@@ -1,4 +1,4 @@
-import type { CanonicalInfo, LessonPlan, LessonScene, SourceBlock } from "../../types/api";
+import type { CanonicalInfo, LessonPlan, LessonScene, SourceBlock, VisualPlan } from "../../types/api";
 
 function groundedText(text: string, refs: string[] = ["SRC-001"]) {
   return { text, source_refs: refs };
@@ -50,6 +50,15 @@ export const SOURCE_BLOCKS: SourceBlock[] = [
     start_line: 13,
     end_line: 13,
   },
+  {
+    source_ref: "SRC-006",
+    block_type: "image",
+    markdown: "![Diagrama de arquitectura](images/architecture.png)",
+    plain_text: "Diagrama de arquitectura",
+    heading_path: ["Kubernetes"],
+    start_line: 15,
+    end_line: 15,
+  },
 ];
 
 export const CANONICAL_INFO: CanonicalInfo = {
@@ -58,17 +67,32 @@ export const CANONICAL_INFO: CanonicalInfo = {
   source_blocks: SOURCE_BLOCKS,
 };
 
+function baseVisual(overrides: Partial<VisualPlan> = {}): VisualPlan {
+  return {
+    visual_type: "bullets",
+    layout_hint: "default",
+    source_refs: ["SRC-002"],
+    description: "",
+    emphasis: "neutral",
+    process_steps: [],
+    comparison: null,
+    nodes: [],
+    edges: [],
+    ...overrides,
+  };
+}
+
 function makeScene(overrides: Partial<LessonScene>): LessonScene {
   return {
     scene_id: "SCENE-001",
-    scene_type: "introduction",
+    scene_type: "opening",
     title: groundedText("Título de escena"),
     key_points: [groundedText("Primer punto clave", ["SRC-002"])],
     narration: [
       groundedText("Primera narración.", ["SRC-002"]),
       groundedText("Segunda narración.", ["SRC-002"]),
     ],
-    visual: { visual_type: "bullets", layout_hint: "default", source_refs: ["SRC-002"], description: "" },
+    visual: baseVisual(),
     interaction: null,
     ...overrides,
   };
@@ -88,9 +112,9 @@ export const SAMPLE_LESSON: LessonPlan = {
   scenes: [
     makeScene({
       scene_id: "SCENE-001",
-      scene_type: "introduction",
+      scene_type: "opening",
       title: groundedText("Introducción"),
-      visual: { visual_type: "hero", layout_hint: "centered", source_refs: ["SRC-002"], description: "hint" },
+      visual: baseVisual({ visual_type: "hero", layout_hint: "centered", description: "hint" }),
     }),
     makeScene({
       scene_id: "SCENE-002",
@@ -100,13 +124,13 @@ export const SAMPLE_LESSON: LessonPlan = {
         groundedText("Un Pod es la unidad mínima.", ["SRC-002"]),
         groundedText("Un Service expone Pods.", ["SRC-002"]),
       ],
-      visual: { visual_type: "bullets", layout_hint: "default", source_refs: ["SRC-002"], description: "" },
+      visual: baseVisual(),
     }),
     makeScene({
       scene_id: "SCENE-003",
       scene_type: "recap",
       title: groundedText("Resumen"),
-      visual: { visual_type: "none", layout_hint: "default", source_refs: [], description: "" },
+      visual: baseVisual({ visual_type: "none", source_refs: [] }),
     }),
   ],
   recap: [groundedText("Kubernetes orquesta contenedores.", ["SRC-002"])],
@@ -114,6 +138,19 @@ export const SAMPLE_LESSON: LessonPlan = {
   generated_at: "2026-01-01T00:00:00Z",
 };
 
-export function withVisual(scene: LessonScene, visualType: LessonScene["visual"]["visual_type"], refs: string[] = ["SRC-002"]): LessonScene {
-  return { ...scene, visual: { visual_type: visualType, layout_hint: "default", source_refs: refs, description: "irrelevant description" } };
+export function withVisual(
+  scene: LessonScene,
+  visualType: LessonScene["visual"]["visual_type"],
+  refs: string[] = ["SRC-002"],
+  overrides: Partial<VisualPlan> = {}
+): LessonScene {
+  return {
+    ...scene,
+    visual: baseVisual({
+      visual_type: visualType,
+      source_refs: refs,
+      description: "irrelevant description",
+      ...overrides,
+    }),
+  };
 }

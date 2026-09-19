@@ -87,7 +87,8 @@ export type VisualType =
   | "concept_map"
   | "table"
   | "code"
-  | "quote";
+  | "quote"
+  | "image";
 
 export type LayoutHint =
   | "default"
@@ -96,11 +97,59 @@ export type LayoutHint =
   | "two_column"
   | "centered";
 
+/** Énfasis visual controlado (v1.1.0): nunca un color arbitrario del LLM —
+ * el frontend mapea cada valor a un design token PwC fijo (ver global.css). */
+export type VisualEmphasis = "neutral" | "primary" | "secondary" | "warning";
+
+export interface ProcessStep {
+  label: string;
+  detail: string;
+}
+
+export interface ComparisonRow {
+  label: string;
+  values: string[];
+}
+
+export interface ComparisonPlan {
+  column_labels: string[];
+  rows: ComparisonRow[];
+}
+
+export type NodeRole = "component" | "service" | "datastore" | "external" | "actor" | "concept";
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  description: string;
+  role: NodeRole | null;
+}
+
+export type RelationType =
+  | "connects_to"
+  | "depends_on"
+  | "contains"
+  | "flows_to"
+  | "relates_to"
+  | "part_of";
+
+export interface GraphEdge {
+  from_id: string;
+  to_id: string;
+  label: string;
+  relation_type: RelationType;
+}
+
 export interface VisualPlan {
   visual_type: VisualType;
   layout_hint: LayoutHint;
   source_refs: string[];
   description: string;
+  emphasis: VisualEmphasis;
+  process_steps: ProcessStep[];
+  comparison: ComparisonPlan | null;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
 }
 
 export type InteractionType = "comprehension_check" | "reflection";
@@ -111,12 +160,19 @@ export interface InteractionPlan {
   expected_answer: GroundedText | null;
 }
 
+/** Rol pedagógico de la escena (v1.1.0) — decide composición visual,
+ * densidad y narración; nunca es contenido pedagógico en sí mismo. */
 export type SceneType =
-  | "introduction"
+  | "opening"
+  | "concept"
   | "explanation"
-  | "visual_explanation"
+  | "process"
+  | "comparison"
+  | "example"
+  | "architecture"
+  | "recap"
   | "checkpoint"
-  | "recap";
+  | "closing";
 
 export interface LessonScene {
   scene_id: string;

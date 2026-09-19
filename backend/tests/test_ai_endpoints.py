@@ -23,7 +23,7 @@ _LESSON_BODY_FOR_FIXTURE_TOPIC = {
     "scenes": [
         {
             "scene_id": "SCENE-001",
-            "scene_type": "introduction",
+            "scene_type": "opening",
             "title": {"text": "Introducción", "source_refs": ["SRC-001"]},
             "key_points": [
                 {
@@ -56,7 +56,7 @@ def test_ai_status_without_credential(client):
     body = response.json()
     assert body["configured"] is False
     assert body["provider"] == "pwc"
-    assert body["prompt_version"] == "lesson-v2"
+    assert body["prompt_version"] == "lesson-v3"
     assert "api_key" not in str(body).lower()
     assert "authorization" not in str(body).lower()
 

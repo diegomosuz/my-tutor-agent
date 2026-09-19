@@ -13,10 +13,16 @@ export function GroundingPanel({
   canonical,
   activeSceneId,
   activeSceneRefs,
+  activeSceneType,
+  activeVisualType,
 }: {
   canonical: CanonicalInfo;
   activeSceneId?: string | null;
   activeSceneRefs?: string[];
+  /** v1.1.0: rol pedagógico y visual_type de la escena activa — solo
+   * informativo, solo DEV, nunca visible al alumno. */
+  activeSceneType?: string | null;
+  activeVisualType?: string | null;
 }) {
   const [showBlocks, setShowBlocks] = useState(false);
   const [selectedRef, setSelectedRef] = useState<string | null>(null);
@@ -41,6 +47,22 @@ export function GroundingPanel({
           Modelo canónico determinístico derivado del Markdown de este tópico
           (Fase 2). No proviene de ningún LLM.
         </p>
+
+        {(activeSceneType || activeVisualType) && (
+          <p className="grounding-panel__hint">
+            {activeSceneType && (
+              <>
+                scene_type: <code>{activeSceneType}</code>
+              </>
+            )}
+            {activeSceneType && activeVisualType && " · "}
+            {activeVisualType && (
+              <>
+                visual_type: <code>{activeVisualType}</code>
+              </>
+            )}
+          </p>
+        )}
 
         {activeSceneRefs && activeSceneRefs.length > 0 && (
           <div className="grounding-panel__scene-refs">
