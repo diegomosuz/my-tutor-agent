@@ -130,7 +130,7 @@ describe("CertificationPracticePage", () => {
   it("seleccionar una opción llama a selectAnswer()", () => {
     renderPage();
     fireEvent.click(screen.getByLabelText(/Opción A/));
-    expect(mockSelectAnswer).toHaveBeenCalledWith("Q-001", ["A"]);
+    expect(mockSelectAnswer).toHaveBeenCalledWith("a".repeat(64), "Q-001", ["A"]);
   });
 
   it("el botón Comprobar está deshabilitado sin selección", () => {
@@ -139,7 +139,7 @@ describe("CertificationPracticePage", () => {
   });
 
   it("Comprobar llama a evaluateCurrentQuestion()", () => {
-    mockExamReturn.session = baseSession({ selections: { "Q-001": ["A"] } });
+    mockExamReturn.session = baseSession({ selections: { [`${QUESTION_1.bank_id}::Q-001`]: ["A"] } });
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: "Comprobar" }));
     expect(mockEvaluateCurrentQuestion).toHaveBeenCalledTimes(1);
@@ -147,9 +147,9 @@ describe("CertificationPracticePage", () => {
 
   it("muestra feedback grounded tras evaluar, y bloquea la pregunta", () => {
     mockExamReturn.session = baseSession({
-      selections: { "Q-001": ["A"] },
+      selections: { [`${QUESTION_1.bank_id}::Q-001`]: ["A"] },
       evaluations: {
-        "Q-001": {
+        [`${QUESTION_1.bank_id}::Q-001`]: {
           bank_id: "a".repeat(64),
           question_id: "Q-001",
           module_id: "modulo-demo",
@@ -173,9 +173,9 @@ describe("CertificationPracticePage", () => {
 
   it("Siguiente pregunta avanza el índice", () => {
     mockExamReturn.session = baseSession({
-      selections: { "Q-001": ["A"] },
+      selections: { [`${QUESTION_1.bank_id}::Q-001`]: ["A"] },
       evaluations: {
-        "Q-001": {
+        [`${QUESTION_1.bank_id}::Q-001`]: {
           bank_id: "a".repeat(64),
           question_id: "Q-001",
           module_id: "m",
@@ -198,9 +198,9 @@ describe("CertificationPracticePage", () => {
     mockSubmitExam.mockResolvedValue({ total_questions: 2 });
     mockExamReturn.session = baseSession({
       currentIndex: 1,
-      selections: { "Q-002": ["A"] },
+      selections: { [`${QUESTION_1.bank_id}::Q-002`]: ["A"] },
       evaluations: {
-        "Q-002": {
+        [`${QUESTION_1.bank_id}::Q-002`]: {
           bank_id: "a".repeat(64),
           question_id: "Q-002",
           module_id: "m",

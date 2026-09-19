@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { QuestionPlayer } from "../certification/QuestionPlayer";
+import { examAnswerKey } from "../certification/certificationStorage";
 import { useCertificationExam } from "../certification/useCertificationExam";
 import type { CourseDetail } from "../types/api";
 
@@ -64,8 +65,9 @@ export function CertificationPracticePage() {
   }
   const question = session.questions[session.currentIndex];
   const total = session.questions.length;
-  const selected = session.selections[question.question_id] ?? [];
-  const evaluation = session.evaluations[question.question_id] ?? null;
+  const answerKey = examAnswerKey(question.bank_id, question.question_id);
+  const selected = session.selections[answerKey] ?? [];
+  const evaluation = session.evaluations[answerKey] ?? null;
   const isLast = session.currentIndex === total - 1;
 
   async function handleCheck() {
@@ -95,7 +97,7 @@ export function CertificationPracticePage() {
         index={session.currentIndex}
         total={total}
         selectedOptionIds={selected}
-        onChange={(ids) => exam.selectAnswer(question.question_id, ids)}
+        onChange={(ids) => exam.selectAnswer(question.bank_id, question.question_id, ids)}
         disabled={!!evaluation}
       />
 

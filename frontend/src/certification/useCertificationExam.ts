@@ -9,11 +9,14 @@ import { describeCertificationError } from "./certificationErrors";
 import {
   clearCertificationResult,
   clearExamSession,
+  examAnswerKey,
   loadExamSession,
   saveCertificationResult,
   saveExamSession,
   type StoredExamSession,
 } from "./certificationStorage";
+import { buildAttemptSummary } from "../learning/certificationSummary";
+import { recordCertificationAttempt } from "../learning/learningProgressStore";
 
 // Nota de diseño: submitExam() NUNCA borra la sesión de examen (preguntas
 // + selections) al terminar — la deja en sessionStorage junto con el
@@ -28,7 +31,7 @@ export interface UseCertificationExamResult {
   /** Llama a /prepare (única vez que se invoca al LLM en todo este flujo:
    * ensamblar el examen y evaluarlo son 100% determinísticos, sin LLM). */
   prepare: (request: CertificationPrepareRequest) => Promise<boolean>;
-  selectAnswer: (questionId: string, optionIds: string[]) => void;
+  selectAnswer: (bankId: string, questionId: string, optionIds: string[]) => void;
   goToIndex: (index: number) => void;
   /** Solo Practice: evalúa la pregunta actual y guarda el resultado (con
    * answer key) en la sesión — recién ACÁ es correcto tener
@@ -97,11 +100,11 @@ export function useCertificationExam(courseId: string | undefined): UseCertifica
     }
   }
 
-  function selectAnswer(questionId: string, optionIds: string[]) {
+  function selectAnswer(bankId: string, questionId: string, optionIds: string[]) {
     if (!session) return;
     persist({
       ...session,
-      selections: { ...session.selections, [questionId]: optionIds },
+      selections: { ...session.selections, [examAnswerKey(bankId, questionId)]: optionIds },
     });
   }
 
@@ -115,12 +118,13 @@ export function useCertificationExam(courseId: string | undefined): UseCertifica
     if (!session || !courseId) return null;
     const question = session.questions[session.currentIndex];
     if (!question) return null;
-    if (session.evaluations[question.question_id]) {
+    const key = examAnswerKey(question.bank_id, question.question_id);
+    if (session.evaluations[key]) {
       // Ya evaluada: nunca se vuelve a llamar al backend para la misma
       // pregunta (evita doble envío / re-evaluación accidental).
-      return session.evaluations[question.question_id];
+      return session.evaluations[key];
     }
-    const selected = session.selections[question.question_id] ?? [];
+    const selected = session.selections[key] ?? [];
     setLoading(true);
     setError(null);
     try {
@@ -131,7 +135,7 @@ export function useCertificationExam(courseId: string | undefined): UseCertifica
       });
       persist({
         ...session,
-        evaluations: { ...session.evaluations, [question.question_id]: result },
+        evaluations: { ...session.evaluations, [key]: result },
       });
       return result;
     } catch (err) {
@@ -150,10 +154,16 @@ export function useCertificationExam(courseId: string | undefined): UseCertifica
       const answers = session.questions.map((q) => ({
         bank_id: q.bank_id,
         question_id: q.question_id,
-        selected_option_ids: session.selections[q.question_id] ?? [],
+        selected_option_ids: session.selections[examAnswerKey(q.bank_id, q.question_id)] ?? [],
       }));
       const result = await api.evaluateCertificationSimulation(courseId, { answers });
       saveCertificationResult(courseId, session.practiceId, result);
+      // v1.1.0: registra un resumen SEGURO (nunca answer key) en el
+      // historial local de "Mi aprendizaje" — ver
+      // learning/certificationSummary.ts. Nunca debe poder romper la
+      // entrega del examen: el resultado ya se devuelve igual si esto
+      // fallara (recordCertificationAttempt nunca lanza).
+      recordCertificationAttempt(courseId, buildAttemptSummary(session, result));
       return result;
     } catch (err) {
       setError(describeCertificationError(err));

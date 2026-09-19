@@ -1,14 +1,15 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../api/client", () => ({
-  api: { getSystemStatus: vi.fn() },
+  api: { getSystemStatus: vi.fn(), getCourses: vi.fn() },
 }));
 
 import { api } from "../../api/client";
 import { SettingsPage } from "../SettingsPage";
 
 const mockedGetStatus = api.getSystemStatus as unknown as ReturnType<typeof vi.fn>;
+const mockedGetCourses = api.getCourses as unknown as ReturnType<typeof vi.fn>;
 
 const STATUS = {
   app_version: "0.7.0",
@@ -26,6 +27,10 @@ const STATUS = {
 };
 
 describe("SettingsPage", () => {
+  beforeEach(() => {
+    mockedGetCourses.mockResolvedValue([]);
+  });
+
   it("muestra cursos/IA/voz/sistema sin exponer secretos", async () => {
     mockedGetStatus.mockResolvedValue(STATUS);
     const { container } = render(<SettingsPage />);
@@ -59,5 +64,19 @@ describe("SettingsPage", () => {
     await waitFor(() =>
       expect(screen.getByText("No pudimos cargar el estado del sistema")).toBeInTheDocument()
     );
+  });
+
+  it("v1.1.0: ofrece restablecer progreso por curso, nunca de forma inmediata sin confirmar", async () => {
+    mockedGetStatus.mockResolvedValue(STATUS);
+    mockedGetCourses.mockResolvedValue([{ id: "curso-demo", title: "Curso Demo" }]);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<SettingsPage />);
+    await waitFor(() => expect(screen.getByText("Restablecer mi progreso")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Restablecer mi progreso"));
+    // Sin progreso guardado para ese curso, ni siquiera se llega a pedir
+    // confirmación — se informa directamente que no hay nada que borrar.
+    expect(confirmSpy).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByText(/No hay progreso guardado/)).toBeInTheDocument());
+    confirmSpy.mockRestore();
   });
 });

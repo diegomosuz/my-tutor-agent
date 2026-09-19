@@ -121,7 +121,7 @@ describe("CertificationSimulationPage", () => {
   it("seleccionar una opción llama a selectAnswer()", () => {
     renderPage();
     fireEvent.click(screen.getByLabelText(/Opción B/));
-    expect(mockSelectAnswer).toHaveBeenCalledWith("Q-001", ["B"]);
+    expect(mockSelectAnswer).toHaveBeenCalledWith("a".repeat(64), "Q-001", ["B"]);
   });
 
   it("Anterior/Siguiente navegan libremente sin evaluar", () => {
@@ -131,7 +131,9 @@ describe("CertificationSimulationPage", () => {
   });
 
   it("muestra contador de respondidas/pendientes", () => {
-    mockExamReturn.session = baseSession({ selections: { "Q-001": ["A"] } });
+    mockExamReturn.session = baseSession({
+      selections: { [`${QUESTION_1.bank_id}::Q-001`]: ["A"] },
+    });
     renderPage();
     expect(screen.getByText(/1 respondidas/)).toBeInTheDocument();
     expect(screen.getByText(/1 pendientes/)).toBeInTheDocument();
@@ -169,7 +171,10 @@ describe("CertificationSimulationPage", () => {
     mockSubmitExam.mockResolvedValue({ total_questions: 2 });
     mockExamReturn.session = baseSession({
       currentIndex: 1,
-      selections: { "Q-001": ["A"], "Q-002": ["A"] },
+      selections: {
+        [`${QUESTION_1.bank_id}::Q-001`]: ["A"],
+        [`${QUESTION_2.bank_id}::Q-002`]: ["A"],
+      },
     });
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: /Entregar simulacro/ }));

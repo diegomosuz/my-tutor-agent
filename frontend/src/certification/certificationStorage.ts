@@ -38,12 +38,28 @@ export interface StoredExamSession {
   actualCount: number;
   questions: ExamQuestionView[];
   currentIndex: number;
-  /** question_id -> selected_option_ids elegidos por el alumno (borrador,
-   * nunca incluye el answer key). */
+  /** answerKey(bank_id, question_id) -> selected_option_ids elegidos por
+   * el alumno (borrador, nunca incluye el answer key). */
   selections: Record<string, string[]>;
-  /** Solo Practice: question_id -> QuestionEvaluation, completado
-   * únicamente DESPUÉS de llamar a evaluate-question para esa pregunta. */
+  /** Solo Practice: answerKey(bank_id, question_id) -> QuestionEvaluation,
+   * completado únicamente DESPUÉS de llamar a evaluate-question para esa
+   * pregunta. */
   evaluations: Record<string, QuestionEvaluation>;
+}
+
+/** `question_id` (p.ej. "Q-002") solo es único DENTRO de un QuestionBank:
+ * cada tópico numera su propio banco desde Q-001, así que un examen
+ * ensamblado con preguntas de varios tópicos (round-robin, ver
+ * `certification_service.py::_round_robin_select`) puede legítimamente
+ * repetir el mismo `question_id` para preguntas de bancos distintos. Toda
+ * estructura del frontend que identifique una pregunta DENTRO de un examen
+ * ya ensamblado (selections, evaluations, keys de listas, lookups) debe
+ * usar esta clave compuesta — nunca `question_id` solo — para no mezclar
+ * la respuesta/evaluación de dos preguntas distintas. El backend ya usa
+ * `bank_id + question_id` como clave compuesta en todos los endpoints de
+ * evaluación, así que esto no requiere ningún cambio de contrato/backend. */
+export function examAnswerKey(bankId: string, questionId: string): string {
+  return `${bankId}::${questionId}`;
 }
 
 function hasSessionStorage(): boolean {

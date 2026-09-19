@@ -44,11 +44,14 @@ export function QuestionPlayer({
     };
   }, []);
 
-  // Cancelar la lectura en curso al cambiar de pregunta.
+  // Cancelar la lectura en curso al cambiar de pregunta. question_id por
+  // sí solo no identifica una pregunta de forma única dentro de un examen
+  // (cada QuestionBank numera su propio Q-001, Q-002, ...), por eso se
+  // incluye bank_id en la dependencia.
   useEffect(() => {
     cancelReadRef.current?.();
     setIsReading(false);
-  }, [question.question_id]);
+  }, [question.bank_id, question.question_id]);
 
   function toggleOption(optionId: string) {
     if (disabled) return;
@@ -106,7 +109,7 @@ export function QuestionPlayer({
             >
               <input
                 type={isMultiple ? "checkbox" : "radio"}
-                name={`question-${question.question_id}`}
+                name={`question-${question.bank_id}-${question.question_id}`}
                 checked={checked}
                 disabled={disabled}
                 onChange={() => toggleOption(option.option_id)}

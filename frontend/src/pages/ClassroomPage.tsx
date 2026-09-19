@@ -25,6 +25,11 @@ import { cancelAllSpeech } from "../classroom/voicePlayback";
 import { useClassroomEngine } from "../classroom/useClassroomEngine";
 import { useClassroomVoice } from "../classroom/useClassroomVoice";
 import { useVoicePreference } from "../classroom/useVoicePreference";
+import {
+  getCourseLearningProgress,
+  markTopicCompleted,
+  markTopicStarted,
+} from "../learning/learningProgressStore";
 import type {
   AiStatusResponse,
   CourseDetail,
@@ -100,6 +105,29 @@ export function ClassroomPage() {
   // Fase 4: Classroom Engine — navegación determinística de escenas,
   // progreso local y estado de reproducción.
   const engine = useClassroomEngine({ lesson, courseId, moduleId, topicId });
+
+  // v1.1.0 — Learning Progress ("Mi aprendizaje"): capa ADITIVA e
+  // independiente de classroomStorage.ts (que sigue intacta). Nunca lee
+  // `engine.isCompleted` de forma continua (ese flag se resetea al
+  // navegar hacia atrás o repetir — ver useClassroomEngine.ts): reacciona
+  // solo al EVENTO de que pasó a `true`, y lo registra como un ratchet de
+  // una sola dirección en learningProgressStore, así "Previo"/"Repetir
+  // tema" nunca pueden borrar un `completed` ya alcanzado.
+  useEffect(() => {
+    if (!lesson || !courseId || !moduleId || !topicId) return;
+    markTopicStarted(courseId, moduleId, topicId, {
+      currentScene: engine.currentSceneIndex,
+      totalScenes: engine.totalScenes,
+      contentSha256: lesson.content_sha256,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lesson, courseId, moduleId, topicId, engine.currentSceneIndex, engine.totalScenes]);
+
+  useEffect(() => {
+    if (!engine.isCompleted || !courseId || !moduleId || !topicId) return;
+    markTopicCompleted(courseId, moduleId, topicId, lesson?.content_sha256);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine.isCompleted, courseId, moduleId, topicId]);
 
   useClassroomVoice({
     scene: engine.currentScene,
@@ -294,6 +322,18 @@ export function ClassroomPage() {
 
   const resourceLinks = topic ? extractMarkdownLinks(topic.content_markdown) : [];
 
+  // v1.1.0, PARTE 13: si el tópico fue completado y el Markdown cambió
+  // desde entonces (content_sha256 distinto), se muestra un aviso NO
+  // bloqueante — nunca se desmarca "completed" automáticamente, eso
+  // requeriría asumir que el cambio invalida el logro del alumno, lo cual
+  // no siempre es cierto (puede ser una corrección menor).
+  const contentUpdatedSinceCompletion = useMemo(() => {
+    if (!courseId || !moduleId || !topicId || !topic) return false;
+    const stored = getCourseLearningProgress(courseId)?.topics[`${moduleId}:${topicId}`];
+    if (!stored || stored.status !== "completed" || !stored.contentSha256) return false;
+    return stored.contentSha256 !== topic.canonical.content_sha256;
+  }, [courseId, moduleId, topicId, topic]);
+
   return (
     <>
       <div className="course-subheader">
@@ -332,6 +372,11 @@ export function ClassroomPage() {
       />
 
       <div className="page" style={{ paddingTop: 16 }}>
+        {contentUpdatedSinceCompletion && (
+          <div className="learning-content-updated-note" role="status">
+            Este contenido fue actualizado desde tu última visita.
+          </div>
+        )}
         {lesson && (
           <div className="classroom-progress" aria-hidden="true">
             <div className="classroom-progress__bar" style={{ width: `${engine.progressPercent}%` }} />
@@ -465,9 +510,19 @@ export function ClassroomPage() {
 
             {course && course.modules.length > 0 && (
               <div className="module-topic-nav">
-                {flatTopics.map((t) => (
+                {flatTopics.map((t, index) => (
                   <Link
-                    key={`${t.moduleId}-${t.topicId}`}
+                    // Bug real encontrado en QA v1.1.0: `moduleId-topicId` NO
+                    // es necesariamente único — un curso puede tener dos
+                    // archivos de tópico que colisionan en el mismo slug
+                    // (ver "duplicate_slug" en course_diagnostics.py, ya
+                    // reportado como warning). Se agrega el índice como
+                    // desempate para evitar una key de React duplicada;
+                    // ambos siguen siendo navegables, el curso sigue
+                    // funcionando — el diagnóstico de warning es lo que le
+                    // indica al dueño del curso que hay que corregir esa
+                    // colisión en el contenido.
+                    key={`${t.moduleId}-${t.topicId}-${index}`}
                     to={`/aula/${courseId}/${t.moduleId}/${t.topicId}`}
                     className={
                       t.moduleId === moduleId && t.topicId === topicId ? "active" : undefined

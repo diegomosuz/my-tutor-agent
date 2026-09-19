@@ -12,6 +12,7 @@ import { CertificationSetupPage } from "./pages/CertificationSetupPage";
 import { CertificationPracticePage } from "./pages/CertificationPracticePage";
 import { CertificationSimulationPage } from "./pages/CertificationSimulationPage";
 import { CertificationResultsPage } from "./pages/CertificationResultsPage";
+import { LearningProgressPage } from "./pages/LearningProgressPage";
 
 export function App() {
   return (
@@ -39,15 +40,7 @@ export function App() {
             path="/certificacion/:courseId/resultados"
             element={<CertificationResultsPage />}
           />
-          <Route
-            path="/mi-aprendizaje"
-            element={
-              <PlaceholderPage
-                title="Mi aprendizaje"
-                description="Acá vas a poder ver tu progreso guardado localmente en cada curso."
-              />
-            }
-          />
+          <Route path="/mi-aprendizaje" element={<LearningProgressPage />} />
           <Route
             path="/recursos"
             element={

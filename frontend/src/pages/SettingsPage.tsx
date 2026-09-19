@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { isSpeechSupported } from "../classroom/speech";
-import type { SystemStatusResponse } from "../types/api";
+import { getCourseLearningProgress, resetCourseProgress } from "../learning/learningProgressStore";
+import type { CourseSummary, SystemStatusResponse } from "../types/api";
 
 /** Pantalla "Configuración del sistema" (Fase 7, secciones 16/46).
  *
@@ -12,6 +13,9 @@ import type { SystemStatusResponse } from "../types/api";
 export function SettingsPage() {
   const [status, setStatus] = useState<SystemStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [courses, setCourses] = useState<CourseSummary[]>([]);
+  const [resetCourseId, setResetCourseId] = useState<string>("");
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -23,10 +27,38 @@ export function SettingsPage() {
       .catch(() => {
         if (!cancelled) setError("No se pudo conectar con el servidor.");
       });
+    api
+      .getCourses()
+      .then((data) => {
+        if (cancelled) return;
+        setCourses(data);
+        if (data.length > 0) setResetCourseId(data[0].id);
+      })
+      .catch(() => {
+        // Informativo: si falla, simplemente no se ofrece el selector de curso.
+      });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  function handleResetProgress() {
+    if (!resetCourseId) return;
+    const course = courses.find((c) => c.id === resetCourseId);
+    const hasProgress = getCourseLearningProgress(resetCourseId) !== null;
+    if (!hasProgress) {
+      setResetMessage(`No hay progreso guardado para "${course?.title ?? resetCourseId}".`);
+      return;
+    }
+    const confirmed = window.confirm(
+      `¿Restablecer tu progreso de "${course?.title ?? resetCourseId}"? Se van a borrar el ` +
+        "progreso de tópicos y el historial de prácticas/simulacros de este curso guardados " +
+        "en este navegador. Esta acción no se puede deshacer."
+    );
+    if (!confirmed) return;
+    resetCourseProgress(resetCourseId);
+    setResetMessage(`Progreso de "${course?.title ?? resetCourseId}" restablecido.`);
+  }
 
   return (
     <div className="page">
@@ -126,6 +158,38 @@ export function SettingsPage() {
           </section>
         </div>
       )}
+
+      <section className="settings-card settings-card--wide">
+        <h3>Datos de aprendizaje</h3>
+        <p className="learning-disclaimer" style={{ margin: "0 0 14px" }}>
+          El progreso y los resultados se guardan localmente en este navegador.
+        </p>
+        {courses.length === 0 ? (
+          <p className="learning-empty-note">No hay cursos disponibles.</p>
+        ) : (
+          <div className="settings-reset">
+            <label htmlFor="reset-course-select">Curso</label>
+            <select
+              id="reset-course-select"
+              value={resetCourseId}
+              onChange={(e) => {
+                setResetCourseId(e.target.value);
+                setResetMessage(null);
+              }}
+            >
+              {courses.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.title}
+                </option>
+              ))}
+            </select>
+            <button type="button" className="settings-reset__button" onClick={handleResetProgress}>
+              Restablecer mi progreso
+            </button>
+          </div>
+        )}
+        {resetMessage && <p className="learning-empty-note">{resetMessage}</p>}
+      </section>
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useCertificationExam } from "../certification/useCertificationExam";
-import { loadCertificationResult } from "../certification/certificationStorage";
+import { examAnswerKey, loadCertificationResult } from "../certification/certificationStorage";
 import type { CertificationPracticeResult, CourseDetail, ExamQuestionView } from "../types/api";
 
 const VERDICT_LABELS: Record<string, string> = {
@@ -45,8 +45,12 @@ export function CertificationResultsPage() {
     );
   }
 
+  // question_id por sí solo puede repetirse entre preguntas de tópicos
+  // distintos dentro del mismo examen ensamblado (cada QuestionBank
+  // numera su propio Q-001, Q-002, ...): la clave del lookup y de las
+  // filas de repaso siempre debe incluir bank_id (ver examAnswerKey).
   const questionsById = new Map<string, ExamQuestionView>(
-    (exam.session?.questions ?? []).map((q) => [q.question_id, q])
+    (exam.session?.questions ?? []).map((q) => [examAnswerKey(q.bank_id, q.question_id), q])
   );
 
   function handleNewPractice() {
@@ -161,9 +165,12 @@ export function CertificationResultsPage() {
         {showReview && (
           <div className="cert-review-list">
             {result.question_results.map((qr) => {
-              const question = questionsById.get(qr.question_id);
+              const question = questionsById.get(examAnswerKey(qr.bank_id, qr.question_id));
               return (
-                <div key={qr.question_id} className={`cert-review-item cert-review-item--${qr.verdict}`}>
+                <div
+                  key={examAnswerKey(qr.bank_id, qr.question_id)}
+                  className={`cert-review-item cert-review-item--${qr.verdict}`}
+                >
                   <span className="cert-feedback__verdict">{VERDICT_LABELS[qr.verdict]}</span>
                   {question && <p className="cert-question__stem">{question.stem}</p>}
                   <p>

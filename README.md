@@ -240,7 +240,22 @@ curl -X POST http://localhost:8000/api/courses/demo-curso-ia/certification/prepa
   y una lista de tópicos a reforzar con un link directo a la clase normal
   de ese tópico.
 - La sesión de la práctica vive en `sessionStorage` del navegador (nunca
-  `localStorage`); no hay historial de intentos persistido todavía.
+  `localStorage`); un resumen seguro de cada intento terminado (nunca el
+  answer key) se guarda en el historial de "Mi aprendizaje", ver abajo.
+
+## Mi aprendizaje (v1.1.0)
+
+Vista consolidada y **local-first** del progreso del alumno
+(`/mi-aprendizaje`): progreso general y por módulo, "Continuar
+aprendiendo" (regla determinística, sin LLM), historial de prácticas y
+simulacros de certificación, evolución de resultados y áreas a reforzar.
+Todo vive en una única key de `localStorage`
+(`pwc-tutor:learning-progress:v1`, documento versionado con migración
+idempotente desde progreso previo). Sin base de datos, sin backend
+persistence, sin usuarios/auth. Reset de progreso por curso disponible en
+Configuración, con confirmación explícita. Ver
+[`docs/LEARNING_PROGRESS.md`](./docs/LEARNING_PROGRESS.md) para el
+contrato completo de qué se persiste y qué nunca se persiste.
 
 ## Assets de curso (imágenes) y diagnóstico (Fase 7)
 
@@ -347,6 +362,7 @@ pwc-tutor-agent/
                             (navegador + neural), tutor conversacional,
                             checkpoints
             certification/  Práctica de certificación grounded (Fase 6)
+            learning/       Learning Progress / "Mi aprendizaje" (v1.1.0)
     courses/             Curso de demo (filesystem de cursos)
         demo-curso-ia/
     data/

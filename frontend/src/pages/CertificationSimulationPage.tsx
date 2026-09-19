@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { QuestionPlayer } from "../certification/QuestionPlayer";
+import { examAnswerKey } from "../certification/certificationStorage";
 import { useCertificationExam } from "../certification/useCertificationExam";
 import type { CourseDetail } from "../types/api";
 
@@ -56,10 +57,10 @@ export function CertificationSimulationPage() {
   }
   const question = session.questions[session.currentIndex];
   const total = session.questions.length;
-  const selected = session.selections[question.question_id] ?? [];
+  const selected = session.selections[examAnswerKey(question.bank_id, question.question_id)] ?? [];
   const isLast = session.currentIndex === total - 1;
   const answeredCount = session.questions.filter(
-    (q) => (session.selections[q.question_id] ?? []).length > 0
+    (q) => (session.selections[examAnswerKey(q.bank_id, q.question_id)] ?? []).length > 0
   ).length;
   const unansweredCount = total - answeredCount;
 
@@ -92,7 +93,7 @@ export function CertificationSimulationPage() {
         index={session.currentIndex}
         total={total}
         selectedOptionIds={selected}
-        onChange={(ids) => exam.selectAnswer(question.question_id, ids)}
+        onChange={(ids) => exam.selectAnswer(question.bank_id, question.question_id, ids)}
       />
 
       {exam.error && (
@@ -124,12 +125,17 @@ export function CertificationSimulationPage() {
       <div className="cert-question-dots">
         {session.questions.map((q, i) => (
           <button
-            key={q.question_id}
+            // bank_id + question_id: question_id por sí solo puede repetirse
+            // entre preguntas de tópicos distintos dentro del mismo examen
+            // ensamblado (ver examAnswerKey en certificationStorage.ts).
+            key={examAnswerKey(q.bank_id, q.question_id)}
             type="button"
             className={
               "cert-question-dots__dot" +
               (i === session.currentIndex ? " cert-question-dots__dot--active" : "") +
-              ((session.selections[q.question_id] ?? []).length > 0 ? " cert-question-dots__dot--answered" : "")
+              ((session.selections[examAnswerKey(q.bank_id, q.question_id)] ?? []).length > 0
+                ? " cert-question-dots__dot--answered"
+                : "")
             }
             onClick={() => exam.goToIndex(i)}
             aria-label={`Ir a la pregunta ${i + 1}`}

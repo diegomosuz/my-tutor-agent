@@ -21,7 +21,9 @@ vi.mock("../../api/client", () => {
 
 import { api, ApiError } from "../../api/client";
 import { useCertificationExam } from "../useCertificationExam";
-import { loadCertificationResult, loadExamSession } from "../certificationStorage";
+import { examAnswerKey, loadCertificationResult, loadExamSession } from "../certificationStorage";
+
+const BANK_ID = "a".repeat(64);
 
 const mockedPrepare = api.prepareCertification as unknown as ReturnType<typeof vi.fn>;
 const mockedEvaluateQuestion = api.evaluateCertificationQuestion as unknown as ReturnType<typeof vi.fn>;
@@ -121,10 +123,10 @@ describe("useCertificationExam", () => {
     });
 
     act(() => {
-      result.current.selectAnswer("Q-001", ["A"]);
+      result.current.selectAnswer(BANK_ID, "Q-001", ["A"]);
     });
 
-    expect(result.current.session?.selections["Q-001"]).toEqual(["A"]);
+    expect(result.current.session?.selections[examAnswerKey(BANK_ID, "Q-001")]).toEqual(["A"]);
     expect(JSON.stringify(result.current.session)).not.toContain("correct_option_ids");
   });
 
@@ -150,14 +152,14 @@ describe("useCertificationExam", () => {
         question_count: 2,
       });
     });
-    act(() => result.current.selectAnswer("Q-001", ["A"]));
+    act(() => result.current.selectAnswer(BANK_ID, "Q-001", ["A"]));
 
     await act(async () => {
       await result.current.evaluateCurrentQuestion();
     });
 
     expect(mockedEvaluateQuestion).toHaveBeenCalledTimes(1);
-    expect(result.current.session?.evaluations["Q-001"].verdict).toBe("correct");
+    expect(result.current.session?.evaluations[examAnswerKey(BANK_ID, "Q-001")].verdict).toBe("correct");
   });
 
   it("evaluateCurrentQuestion() no vuelve a llamar al backend si ya fue evaluada", async () => {
@@ -182,7 +184,7 @@ describe("useCertificationExam", () => {
         question_count: 2,
       });
     });
-    act(() => result.current.selectAnswer("Q-001", ["A"]));
+    act(() => result.current.selectAnswer(BANK_ID, "Q-001", ["A"]));
     await act(async () => {
       await result.current.evaluateCurrentQuestion();
     });
@@ -215,7 +217,7 @@ describe("useCertificationExam", () => {
         question_count: 2,
       });
     });
-    act(() => result.current.selectAnswer("Q-001", ["A"]));
+    act(() => result.current.selectAnswer(BANK_ID, "Q-001", ["A"]));
     // Q-002 queda sin responder deliberadamente.
 
     await act(async () => {

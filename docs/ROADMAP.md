@@ -286,12 +286,20 @@ exclusivamente en el material del curso".
   grounding estricto y dejando claro que seguiría sin ser un examen
   oficial.
 
-## Fase 10 — "Mi aprendizaje" y progreso del alumno
+## ✅ Fase 10 (v1.1.0) — "Mi aprendizaje" y progreso del alumno
 
-- El puntero de progreso por tópico ya existe desde Fase 4
-  (`classroomStorage.ts`, `localStorage`); esta fase construye la pantalla
-  "Mi aprendizaje" (hoy placeholder) que agrega y muestra ese progreso a
-  través de todos los cursos/módulos/tópicos, con historial real.
+Implementado: nuevo `frontend/src/learning/` (`learningProgressStore.ts`,
+`courseSummary.ts`, `certificationSummary.ts`) sobre una única key de
+`localStorage` (`pwc-tutor:learning-progress:v1`, documento versionado,
+migración idempotente desde el progreso legacy de `classroomStorage.ts`).
+Vista consolidada por curso: progreso general y por módulo, "Continuar
+aprendiendo" (regla determinística, sin LLM), historial de
+prácticas/simulacros de certificación (resumen seguro, nunca answer key),
+evolución de resultados y áreas a reforzar. Reset de progreso por curso
+en Configuración, con confirmación explícita. Ver
+`docs/LEARNING_PROGRESS.md` para el contrato completo. Sin base de datos,
+sin backend persistence, sin usuarios/auth — local-first como el resto de
+la aplicación.
 
 ## Principios que se mantienen en todas las fases futuras
 
