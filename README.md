@@ -7,14 +7,19 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **v1.0.0** — release candidate. Catálogo de cursos, aula virtual con
-> generación de clases grounded, tutor conversacional y checkpoints, voz
-> del navegador + voz neural opcional, práctica de certificación grounded,
-> assets de curso seguros, scripts de Windows, y una auditoría completa de
-> punta a punta (Fase 8: seguridad, coherencia, formato de curso,
-> proveedores LLM, caches, responsive, instalación limpia). Ver
-> [`docs/PRODUCT_AUDIT.md`](./docs/PRODUCT_AUDIT.md) y
-> [`docs/RELEASE_NOTES_v1.0.0.md`](./docs/RELEASE_NOTES_v1.0.0.md).
+> **v1.1.0** — release candidate. Sobre la base de v1.0.1 (catálogo,
+> aula virtual grounded, tutor conversacional y checkpoints, voz del
+> navegador + voz neural opcional, práctica de certificación grounded),
+> v1.1.0 agrega "Mi aprendizaje" (progreso local + historial de
+> prácticas/simulacros), generación de certificación con concurrencia
+> acotada y cache-first, una UX de operaciones de IA con mensajes de
+> espera honestos, escenas de lección con visuales estructurados
+> (`lesson-v3`) y una capa de recomendaciones de estudio 100%
+> determinística y local (sin LLM, sin backend nuevo). Ver
+> [`docs/RELEASE_NOTES_v1.1.0.md`](./docs/RELEASE_NOTES_v1.1.0.md) (y, para
+> el historial previo, [`docs/RELEASE_NOTES_v1.0.1.md`](./docs/RELEASE_NOTES_v1.0.1.md) /
+> [`docs/RELEASE_NOTES_v1.0.0.md`](./docs/RELEASE_NOTES_v1.0.0.md) /
+> [`docs/PRODUCT_AUDIT.md`](./docs/PRODUCT_AUDIT.md)).
 
 ## Requisitos
 

@@ -865,5 +865,63 @@ Ver `docs/ROADMAP.md` para el detalle de fases futuras.
   Sin cambios de arquitectura, sin features nuevas, sin dependencias
   nuevas.
 
+- **v1.1.0** (release candidate, sobre v1.0.1, rama de desarrollo
+  `feat/v1.1.0-*` → `release/v1.1.0-rc`): cuatro bloques funcionales más
+  un hardening final, sin cambios de arquitectura, sin dependencias
+  nuevas, sin backend nuevo para adaptación pedagógica (100% frontend).
+  1. **Learning Progress / "Mi aprendizaje"** (`frontend/src/learning/`):
+     progreso local por curso/tópico (`localStorage`,
+     `pwc-tutor:learning-progress:v1`), historial de intentos de
+     certificación con sus agregados públicos, "Continuar aprendiendo"
+     determinístico, migración idempotente desde el puntero legacy de
+     `classroomStorage.ts`, reset por curso, aislamiento multi-curso. Ver
+     `docs/LEARNING_PROGRESS.md`.
+  2. **Performance**: concurrencia acotada y determinística en
+     `certification_service.prepare_exam` (`CERTIFICATION_MAX_CONCURRENCY`,
+     1-4, default 2; barrido cache-only primero, waves de generación,
+     early stop, tolerancia a fallos por tópico), `singleflight.py`
+     (colapsa requests concurrentes idénticas — Lesson/QuestionBank/
+     Speech, process-local), y una UX de operaciones de IA con mensajes
+     de espera honestos (`AiOperationStatus`, sin porcentajes inventados).
+     Ver `docs/PERFORMANCE.md`.
+  3. **Lesson rendering pedagógico** (`lesson-v3`, `LESSON_PROMPT_VERSION`
+     lesson-v2 → lesson-v3): visuales estructurados nuevos/mejorados
+     (`ImageVisual`, `ComparisonVisual`, `ArchitectureVisual`,
+     `ProcessVisual`, `ConceptMapVisual`) con contratos Pydantic más
+     estrictos (`edges` solo referencian `nodes` existentes, `image` solo
+     cita un `SRC-XXX` real, sin URLs externas inventadas), narration
+     distinta del texto de la slide pero igual de grounded. Cache
+     distinta de lesson-v2 por diseño (misma dimensión de key:
+     `content_sha256+provider+model+prompt_version`). Ver
+     `docs/LESSON_RENDERING.md`.
+  4. **Adaptive Learning**: motor de recomendaciones determinístico y
+     100% local (`learningRecommendationEngine.ts` +
+     `topicLearningSignal.ts`, sin LLM, sin backend nuevo), sección
+     "Recomendado para vos" en Mi aprendizaje, preselección validada de
+     tópicos para práctica/simulacro vía query params, modo "Repaso"
+     puramente visual (misma `LessonPlan`, sin regenerar). Ver
+     `docs/ADAPTIVE_LEARNING.md`.
+  5. **Hardening / release candidate** (rama `release/v1.1.0-rc`, sin
+     features nuevas): auditoría del diff acumulado `v1.0.1..HEAD`.
+     Bug real encontrado y corregido: `CERTIFICATION_MAX_CONCURRENCY` y
+     el default correcto de `LESSON_PROMPT_VERSION` (`lesson-v3`) nunca
+     llegaban al container porque `docker-compose.yml` no los reenviaba
+     en el bloque `environment` del backend (el `.env` del host nunca se
+     copia a la imagen — `.dockerignore` lo excluye explícitamente — así
+     que la única vía de propagación es ese bloque); la app corría
+     siempre con `lesson-v2` y con concurrencia fija en 2 sin importar lo
+     que el alumno configurara. Corregido en `docker-compose.yml`,
+     `.env.example` y `docs/CONFIGURATION.md`. `APP_VERSION` 1.0.1 →
+     1.1.0 (`backend/app/config.py`, `docker-compose.yml`,
+     `.env.example`). Resto de la auditoría (identidad compuesta
+     `bank_id::question_id`, React keys compuestas para el
+     `duplicate_slug` real, superficie XSS, symlink/path traversal,
+     taxonomía de errores del proveedor, cache keys de
+     Lesson/QuestionBank/Speech, privacidad del motor adaptativo) sin
+     hallazgos nuevos — ya cerrada correctamente por bloques anteriores.
+     389 tests de backend / 315 de frontend, sin regresiones. Ver
+     `docs/RELEASE_NOTES_v1.1.0.md`. Sin push, sin tag `v1.1.0`, sin
+     merge a `master` — release gate pendiente, decisión separada.
+
 Cualquier trabajo futuro debe respetar este documento y actualizar la
 sección correspondiente del roadmap al avanzar de fase.
