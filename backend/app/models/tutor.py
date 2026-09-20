@@ -156,40 +156,150 @@ def _validate_tutor_reply_shape(
             )
 
 
+class TutorScopeRelation(str, Enum):
+    """Clasificación CERRADA (nunca texto libre) de a qué pertenece la
+    pregunta del alumno, en modo ampliado (v1.3.0, BLOQUE 6 segundo
+    gap-closure). Reemplaza a `relevance_reasoning` (texto libre,
+    `tutor-v3.2.1`): un campo de razonamiento libre podía "decir" la
+    conclusión correcta y aun así terminar en un `response_type`
+    inconsistente en el mismo objeto (observado en QA real con
+    "¿Qué es un LLM?": el propio texto reconocía relación con el dominio,
+    pero `response_type` igual era "unrelated") -- un ENUM cerrado, en
+    cambio, permite validar esa consistencia de forma determinística
+    (ver `_validate_expanded_scope_invariants`), convirtiendo una
+    inconsistencia silenciosa en un error de contrato rechazable y
+    reintentable."""
+
+    current_topic = "current_topic"
+    course_domain = "course_domain"
+    unrelated = "unrelated"
+
+
+class TutorTopicCoverage(str, Enum):
+    """Cuánto de la pregunta puede responderse con evidencia real de
+    AUTHORIZED SOURCE (el tópico actual, nunca otro) -- eje
+    INDEPENDIENTE de `scope_relation` (v1.3.0, BLOQUE 6 segundo
+    gap-closure). Existe para separar estructuralmente "¿pertenece al
+    dominio?" de "¿cuánto cubre el tópico actual?", en vez de que ambas
+    decisiones se mezclen dentro de un único `response_type`."""
+
+    sufficient = "sufficient"
+    partial = "partial"
+    insufficient = "insufficient"
+
+
+def _validate_expanded_scope_invariants(
+    *,
+    scope_relation: TutorScopeRelation,
+    topic_coverage: TutorTopicCoverage,
+    response_type: TutorResponseType,
+    answer_chunks: list[GroundedText],
+    general_knowledge_chunks: list[str],
+    general_knowledge_used: bool,
+) -> None:
+    """Invariantes deterministas que cruzan `scope_relation`/
+    `topic_coverage` con la forma de la respuesta -- exclusivas de
+    `ExpandedTutorReplyBody` (modo ampliado). Nunca evalúan contenido
+    semántico (no hay "semantic similarity score" ni nada equivalente):
+    solo consistencia estructural entre campos que el propio LLM ya
+    declaró en la MISMA respuesta."""
+    if response_type == TutorResponseType.clarification:
+        # REGLA 18 (pedir aclaración) es una salida ortogonal a la matriz
+        # scope/coverage, igual que antes de este gap-closure -- no se
+        # cruza con estas invariantes.
+        return
+
+    if scope_relation == TutorScopeRelation.unrelated:
+        if response_type != TutorResponseType.unrelated:
+            raise ValueError(
+                "scope_relation='unrelated' exige response_type='unrelated' "
+                f"(recibido '{response_type.value}')."
+            )
+        return  # topic_coverage no aplica cuando scope_relation=unrelated
+
+    # scope_relation in (current_topic, course_domain): en modo ampliado
+    # la única salida válida es "answer" -- "not_covered" fue reemplazado
+    # por general_knowledge_chunks, "unrelated" ya se descartó arriba.
+    if response_type != TutorResponseType.answer:
+        raise ValueError(
+            f"scope_relation='{scope_relation.value}' exige response_type='answer' en modo "
+            f"ampliado (nunca 'not_covered' ni 'unrelated') -- recibido '{response_type.value}'."
+        )
+
+    if topic_coverage == TutorTopicCoverage.sufficient:
+        if general_knowledge_chunks or general_knowledge_used:
+            raise ValueError(
+                "topic_coverage='sufficient' no debe usar conocimiento general -- "
+                "general_knowledge_chunks debe estar vacío y general_knowledge_used=false."
+            )
+        if not answer_chunks:
+            raise ValueError(
+                "topic_coverage='sufficient' requiere al menos un answer_chunk grounded."
+            )
+    elif topic_coverage == TutorTopicCoverage.insufficient:
+        if answer_chunks:
+            raise ValueError(
+                "topic_coverage='insufficient' no debe incluir answer_chunks -- si AUTHORIZED "
+                "SOURCE no sostiene realmente la respuesta, esa parte va en "
+                "general_knowledge_chunks, nunca forzada como answer_chunk con una cita débil "
+                "(esto bloquea weak attribution mediante un invariante estructural, sin "
+                "validador semántico)."
+            )
+    # topic_coverage='partial': sin restricción adicional -- answer_chunks
+    # y general_knowledge_chunks pueden convivir (evidencia parcial real +
+    # conocimiento general completando el resto).
+
+
 class ExpandedTutorReplyBody(BaseModel):
     """Modelo INTERNO usado ÚNICAMENTE como `response_model` de la llamada
     LLM cuando `allow_general_knowledge=True` (v1.3.0, BLOQUE 6
     gap-closure) -- NUNCA se expone en la API pública (el router sigue
     declarando `response_model=TutorReplyBody`; `tutor_service.ask_tutor`
     convierte el resultado a `TutorReplyBody` antes de devolverlo, ver
-    `_to_tutor_reply_body`).
+    `to_tutor_reply_body`).
 
-    Causa raíz que motiva este modelo: con OpenAI Structured Outputs
+    Causa raíz que motiva este modelo (`tutor-v3.2.1`, primer
+    gap-closure): con OpenAI Structured Outputs
     (`response_format=<PydanticModel>`) y `temperature=0`, el modelo debe
-    comprometerse con `response_type` como el PRIMER campo generado, sin
-    ningún espacio para razonar -- una comparación real (mismo prompt,
-    mismo modelo) mostró que en texto libre el modelo SÍ concluía
-    correctamente "relevante, cobertura insuficiente" para preguntas como
-    "¿Qué es una skill?" en un curso de AI-assisted development, pero en
-    modo estructurado igual devolvía "unrelated" 3/3 veces. Anteponer un
-    campo de razonamiento (`relevance_reasoning`) ANTES de `response_type`
-    en el orden de campos del schema le da al modelo el mismo espacio de
-    razonamiento dentro de la MISMA llamada estructurada -- sin agregar un
-    segundo LLM call, sin agregar ningún campo nuevo al contrato público
-    (`TutorReplyBody`), sin exponer `answer_mode`/`relevance` como campo de
-    API. `relevance_reasoning` se descarta siempre, nunca se loguea (podría
-    parafrasear la pregunta del alumno) y nunca llega al alumno."""
+    comprometerse con `response_type` como uno de los primeros campos
+    generados -- anteponer alguna forma de "juicio de alcance" en el
+    orden de campos del schema le da al modelo el mismo espacio de
+    decisión dentro de la MISMA llamada estructurada.
 
-    relevance_reasoning: str = Field(
-        min_length=1,
-        max_length=600,
+    Segundo gap-closure (`tutor-v3.3`): la primera versión de este modelo
+    usaba un campo de texto libre (`relevance_reasoning`). QA real mostró
+    que un campo de texto libre podía "razonar bien" y aun así terminar en
+    un `response_type` inconsistente con su propio texto -- el texto no
+    se valida estructuralmente. Se reemplaza por dos ENUMs cerrados,
+    `scope_relation` (current_topic/course_domain/unrelated) y
+    `topic_coverage` (sufficient/partial/insufficient), en ese orden,
+    ANTES de `response_type` -- una clasificación estructurada, no una
+    explicación. Esto permite validar determinísticamente la consistencia
+    entre "a qué pertenece la pregunta", "cuánto cubre el tópico actual" y
+    "cómo se armó la respuesta" (`_validate_expanded_scope_invariants`),
+    algo que un campo de texto libre no permitía verificar sin un
+    validador semántico. Ninguno de los dos campos se expone en la API
+    pública ni se persiste/loguea (podrían correlacionar con la pregunta
+    del alumno)."""
+
+    scope_relation: TutorScopeRelation = Field(
         description=(
-            "Razonamiento interno breve (1-3 oraciones, NUNCA se muestra al "
-            "alumno, NUNCA se persiste): qué categoría de REGLA 20 punto 1 "
-            "(a-f) aplica a esta pregunta, o por qué es CLARAMENTE ajena al "
-            "dominio educativo del curso si concluís unrelated. Completá "
-            "este campo ANTES de decidir response_type."
-        ),
+            "Clasificación cerrada (NO explicación): 'current_topic' si la pregunta es "
+            "sobre el tema de AUTHORIZED SOURCE; 'course_domain' si no es del tópico actual "
+            "pero pertenece razonablemente al dominio educativo amplio del curso "
+            "(fundamentos, conceptos adyacentes, herramientas/ecosistema, técnicas, "
+            "prácticas -- ver REGLA 20/22); 'unrelated' solo si es CLARAMENTE ajena a "
+            "ambos. Completá este campo PRIMERO, antes de cualquier otro campo."
+        )
+    )
+    topic_coverage: TutorTopicCoverage = Field(
+        description=(
+            "Clasificación cerrada de cuánto cubre AUTHORIZED SOURCE (el tópico actual, "
+            "nunca otro) la respuesta: 'sufficient' si alcanza por completo; 'partial' si "
+            "alcanza para una parte real; 'insufficient' si no alcanza o alcanza solo de "
+            "forma tangencial/superficial (una mención de pasada NO cuenta como coverage). "
+            "Completá este campo SEGUNDO, antes de response_type."
+        )
     )
     response_type: TutorResponseType
     answer_chunks: list[GroundedText] = Field(default_factory=list)
@@ -199,6 +309,27 @@ class ExpandedTutorReplyBody(BaseModel):
 
     @model_validator(mode="after")
     def _validate_shape_by_response_type(self) -> "ExpandedTutorReplyBody":
+        # Orden importa para la CALIDAD del mensaje de corrección (no solo
+        # para la validación en sí): `_validate_expanded_scope_invariants`
+        # corre PRIMERO porque detecta la causa raíz real de una
+        # inconsistencia (scope_relation vs. response_type) -- QA real
+        # mostró que, cuando el orden era al revés, un caso real
+        # (scope_relation="course_domain" + response_type="unrelated" +
+        # general_knowledge_chunks poblado) disparaba primero el error
+        # genérico de forma ("'unrelated' no debe incluir
+        # general_knowledge_chunks"), y el modelo "corregía" vaciando los
+        # chunks en vez de arreglar la contradicción real -- terminaba
+        # convergiendo en "unrelated" limpio pero SEMÁNTICAMENTE
+        # incorrecto. Detectar y nombrar la causa raíz primero evita que
+        # el reintento converja hacia el síntoma más fácil de corregir.
+        _validate_expanded_scope_invariants(
+            scope_relation=self.scope_relation,
+            topic_coverage=self.topic_coverage,
+            response_type=self.response_type,
+            answer_chunks=self.answer_chunks,
+            general_knowledge_chunks=self.general_knowledge_chunks,
+            general_knowledge_used=self.general_knowledge_used,
+        )
         _validate_tutor_reply_shape(
             response_type=self.response_type,
             answer_chunks=self.answer_chunks,
@@ -209,8 +340,8 @@ class ExpandedTutorReplyBody(BaseModel):
         return self
 
     def to_tutor_reply_body(self) -> "TutorReplyBody":
-        """Descarta `relevance_reasoning` -- nunca cruza hacia el contrato
-        público ni hacia los logs."""
+        """Descarta `scope_relation`/`topic_coverage` -- nunca cruzan
+        hacia el contrato público ni hacia los logs."""
         return TutorReplyBody(
             response_type=self.response_type,
             answer_chunks=self.answer_chunks,

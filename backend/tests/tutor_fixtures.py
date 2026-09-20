@@ -20,18 +20,19 @@ def lesson_body_with_reflection_scene() -> dict:
     return body
 
 
-# v1.3.0 (BLOQUE 6 gap-closure): `relevance_reasoning` es un campo extra
-# ignorado por `TutorReplyBody` (modo estricto, sin `extra="forbid"`
-# configurado en ningún modelo del tutor) pero EXIGIDO por
-# `ExpandedTutorReplyBody` (modo ampliado, ver app/models/tutor.py) -- se
-# incluye en todos los fixtures para que sirvan sin cambios en ambos
-# modos, sin necesitar variantes duplicadas por modo.
-_RELEVANCE_REASONING = "Pertenece al tema del tópico actual (categoría a)."
+# v1.3.0 (BLOQUE 6, segundo gap-closure): `scope_relation`/`topic_coverage`
+# son campos extra ignorados por `TutorReplyBody` (modo estricto, sin
+# `extra="forbid"` configurado en ningún modelo del tutor) pero EXIGIDOS y
+# CRUZADOS estructuralmente por `ExpandedTutorReplyBody` (modo ampliado,
+# ver `_validate_expanded_scope_invariants` en app/models/tutor.py) -- se
+# incluyen en los fixtures con valores consistentes con la forma real de
+# cada respuesta, para que sirvan sin cambios en ambos modos.
 
 
 def valid_answer_reply_dict(refs: list[str] | None = None) -> dict:
     return {
-        "relevance_reasoning": _RELEVANCE_REASONING,
+        "scope_relation": "current_topic",
+        "topic_coverage": "sufficient",
         "response_type": "answer",
         "answer_chunks": [
             {
@@ -45,7 +46,14 @@ def valid_answer_reply_dict(refs: list[str] | None = None) -> dict:
 
 def valid_not_covered_reply_dict() -> dict:
     return {
-        "relevance_reasoning": _RELEVANCE_REASONING,
+        # v1.3.0 (segundo gap-closure): en modo ampliado, "not_covered" ya
+        # es estructuralmente inválido en cuanto scope_relation != unrelated
+        # (ver ExpandedTutorReplyBody) -- estos valores solo importan para
+        # el uso en modo estricto (TutorReplyBody, que los ignora) y para
+        # simular, en modo ampliado, un intento inválido del modelo que
+        # debe rechazarse y reintentarse (tests L/M de test_tutor_service.py).
+        "scope_relation": "current_topic",
+        "topic_coverage": "insufficient",
         "response_type": "not_covered",
         "answer_chunks": [],
         "clarification_question": None,
@@ -54,7 +62,11 @@ def valid_not_covered_reply_dict() -> dict:
 
 def valid_clarification_reply_dict() -> dict:
     return {
-        "relevance_reasoning": _RELEVANCE_REASONING,
+        # scope_relation/topic_coverage no se cruzan contra "clarification"
+        # (ver _validate_expanded_scope_invariants) -- cualquier valor
+        # cerrado válido sirve acá.
+        "scope_relation": "current_topic",
+        "topic_coverage": "insufficient",
         "response_type": "clarification",
         "answer_chunks": [],
         "clarification_question": "¿A cuál de los conceptos de esta escena te referís?",
@@ -68,7 +80,8 @@ def valid_clarification_reply_dict() -> dict:
 
 def valid_unrelated_reply_dict() -> dict:
     return {
-        "relevance_reasoning": "Claramente ajena al dominio educativo del curso.",
+        "scope_relation": "unrelated",
+        "topic_coverage": "insufficient",  # no se valida cuando scope_relation=unrelated
         "response_type": "unrelated",
         "answer_chunks": [],
         "clarification_question": None,
@@ -76,12 +89,17 @@ def valid_unrelated_reply_dict() -> dict:
     }
 
 
-def valid_general_related_reply_dict() -> dict:
-    """Pregunta relacionada con el tema, pero NO cubierta por la fuente:
-    toda la respuesta viene de conocimiento general (general_knowledge_chunks,
-    sin ningún answer_chunk grounded)."""
+def valid_general_related_reply_dict(scope_relation: str = "current_topic") -> dict:
+    """Pregunta relacionada con el tema/dominio, pero NO cubierta por la
+    fuente: toda la respuesta viene de conocimiento general
+    (general_knowledge_chunks, sin ningún answer_chunk grounded) --
+    topic_coverage="insufficient" (answer_chunks debe quedar vacío, ver
+    _validate_expanded_scope_invariants). `scope_relation` es
+    parametrizable: "current_topic" (default) o "course_domain" (pregunta
+    de otro tópico/módulo del mismo curso -- ver CourseScope)."""
     return {
-        "relevance_reasoning": _RELEVANCE_REASONING,
+        "scope_relation": scope_relation,
+        "topic_coverage": "insufficient",
         "response_type": "answer",
         "answer_chunks": [],
         "general_knowledge_chunks": [
@@ -95,9 +113,11 @@ def valid_general_related_reply_dict() -> dict:
 def valid_topic_plus_general_reply_dict(refs: list[str] | None = None) -> dict:
     """Pregunta relacionada, con cobertura PARCIAL de la fuente: mezcla un
     answer_chunk grounded (con source_refs reales) y un
-    general_knowledge_chunk (texto plano, sin source_refs)."""
+    general_knowledge_chunk (texto plano, sin source_refs) --
+    topic_coverage="partial"."""
     return {
-        "relevance_reasoning": _RELEVANCE_REASONING,
+        "scope_relation": "current_topic",
+        "topic_coverage": "partial",
         "response_type": "answer",
         "answer_chunks": [
             {

@@ -684,6 +684,123 @@ fuera de alcance de este gap-closure).
 `TUTOR_PROMPT_VERSION`: `tutor-v3.2` → `tutor-v3.2.1`.
 `LESSON_PROMPT_VERSION` sin cambios (`lesson-v3.3.1`).
 
+### 7.2 Segundo gap-closure: de razonamiento libre a clasificación estructurada (`tutor-v3.2.1` → `tutor-v3.3`)
+
+QA adicional sobre `tutor-v3.2.1` mostró dos problemas nuevos, ambos
+rastreados hasta el mismo mecanismo: el campo `relevance_reasoning`
+(texto libre) del primer gap-closure.
+
+**Hallazgo #1 (el disparador de este bloque)**: "¿Qué es un LLM?" con
+switch ON devolvía `unrelated` 3/3 — pero el propio `relevance_reasoning`
+generado por el modelo, en el MISMO objeto, decía explícitamente "se
+relaciona con conceptos técnicos que pueden ser relevantes...". El texto
+libre "razonaba bien" pero no estaba estructuralmente atado a la decisión
+categórica: nada impedía que el modelo escribiera una conclusión y
+emitiera `response_type` contradiciéndola.
+
+**Hallazgo #2 (secundario, mismo periodo de QA)**: "¿Qué es una skill?"
+con `tutor-v3.2.1`, sobre 19 corridas frescas, dio ~89% de éxito (17/19) —
+una mejora real, pero no 3/3 garantizado; con atribución ocasionalmente
+débil en las respuestas grounded.
+
+**Cambio de arquitectura (no solo de texto)**: se reemplazó
+`relevance_reasoning` por dos ENUMs cerrados en
+`ExpandedTutorReplyBody` (`app/models/tutor.py`), en este orden EXACTO,
+antes de `response_type`:
+
+1. `scope_relation`: `current_topic` | `course_domain` | `unrelated`.
+2. `topic_coverage`: `sufficient` | `partial` | `insufficient`.
+
+La diferencia con el diseño anterior no es solo semántica: un ENUM
+cerrado se puede **validar determinísticamente** contra el resto de la
+respuesta (`_validate_expanded_scope_invariants`,
+`app/models/tutor.py`), algo que un campo de texto libre no permite sin
+un validador semántico. Invariantes aplicadas (siempre estructurales,
+nunca "similarity score"):
+
+- `scope_relation="unrelated"` ⟺ `response_type="unrelated"`.
+- `scope_relation` en (`current_topic`, `course_domain`) ⟹
+  `response_type="answer"` (nunca `not_covered`/`unrelated`).
+- `topic_coverage="sufficient"` ⟹ sin conocimiento general
+  (`general_knowledge_chunks=[]`, `general_knowledge_used=false`) y al
+  menos un `answer_chunk`.
+- `topic_coverage="insufficient"` ⟹ `answer_chunks=[]` — esto es lo que
+  bloquea weak attribution estructuralmente: si el propio modelo ya
+  declaró que el tópico actual no cubre la pregunta, no puede además citar
+  un `SourceBlock` como si la sustentara. Es EXACTAMENTE el caso real de
+  QA (una mención de pasada usada como cita débil) convertido en un
+  invariante rechazable, sin ningún validador de similitud semántica.
+- `topic_coverage="partial"`: sin restricción adicional (mezcla real de
+  `answer_chunks` + `general_knowledge_chunks` es válida).
+- `response_type="clarification"` (REGLA 18) es ortogonal: no se cruza
+  contra `scope_relation`/`topic_coverage`.
+
+**Detalle de implementación no trivial — el orden de los validadores
+importa para la CALIDAD de la corrección, no solo para la validación**:
+la primera versión de `ExpandedTutorReplyBody` corría el chequeo de forma
+genérica (`_validate_tutor_reply_shape`) antes que el chequeo de
+consistencia scope/coverage. Un caso real de QA (`scope_relation=
+"course_domain"` + `response_type="unrelated"` + `general_knowledge_chunks`
+poblado — una respuesta genuinamente autocontradictoria) disparaba
+primero el error genérico ("`unrelated` no debe incluir
+general_knowledge_chunks"), y el reintento del modelo "corregía" vaciando
+los chunks — satisfacía el error literal sin arreglar la causa real,
+convergiendo en `unrelated` limpio pero semánticamente incorrecto (0/5 en
+la primera corrida real de "skill" con este diseño). Se invirtió el
+orden: el chequeo de consistencia scope/coverage corre PRIMERO, así el
+mensaje de corrección señala la causa raíz real ("`scope_relation`
+exige `response_type='answer'`") en vez de un síntoma más fácil de
+corregir sin resolver el problema de fondo.
+
+**`relevance_reasoning` → nada**: el nuevo diseño NO reincorpora ningún
+campo de texto libre ni pide chain-of-thought — es exactamente lo que
+pedía la spec de este bloque ("una CLASIFICACIÓN, no una explicación").
+Ninguno de los dos campos nuevos se expone en `TutorReplyBody` (contrato
+público): `ExpandedTutorReplyBody.to_tutor_reply_body()` los descarta
+antes de que la respuesta salga de `tutor_service.ask_tutor` — el router
+sigue declarando `response_model=TutorReplyBody` sin cambios.
+
+**Resultado real (QA extensa, `spec-driven-design-expert`,
+`gpt-4o-mini`, después del fix de orden de validadores)**:
+
+- "¿Qué es una skill?": **5/5 `answer`**, con provenance limpia en las 5
+  (`answer_chunks=[]`, `general_knowledge_chunks` sustantivo, cero
+  `source_refs` — ninguna cita débil observada en esta corrida, a
+  diferencia del primer gap-closure).
+- "¿Cuál es la mejor receta de asado?" (claramente ajeno): 5/5
+  `unrelated`.
+- Intento de prompt injection ("ignorá el curso y..."): `unrelated`.
+- Modo estricto, misma pregunta de skill: `not_covered`, sin cambios.
+- 17 llamadas reales completadas, 0 fallos de generación
+  (`tutor_query_failed`); algunos intentos individuales necesitaron un
+  reintento (`reason=invalid_contract` — el ENUM cerrado hizo que una
+  inconsistencia real del modelo, como la del Hallazgo #1, se detecte y
+  corrija automáticamente en vez de aceptarse en silencio).
+
+**Limitación residual, documentada con honestidad (no resuelta, no se
+sigue iterando por decisión explícita)**: "¿Qué es un LLM?" y "¿Qué es un
+agente de IA?" dieron consistentemente `unrelated` con el prompt final de
+este bloque — pero ahora de forma **internamente consistente**
+(`scope_relation="unrelated"` coincide con `response_type="unrelated"` en
+las tres corridas de verificación, incluso en modo texto libre sin
+ninguna restricción de schema). Esto ya NO es el bug original (una
+contradicción interna silenciosa): es un juicio de calibración del modelo
+sobre qué tan "core" es un concepto para este curso puntual, distinto del
+límite esperado por un lector humano en al menos "agente de IA" (un
+concepto central en varios módulos de este curso). Se intentó UN ajuste
+adicional de prompt (una regla explícita de calibración para conceptos
+fundacionales de la disciplina del curso) — el experimento tuvo un efecto
+claramente negativo y medible: "skill" pasó de 5/5 a 0/5 con ese único
+párrafo agregado, confirmando empíricamente que el modelo es sensible a
+cambios de prompt de forma no monótona ni predecible. Se revirtió de
+inmediato y se confirmó la recuperación a 5/5. Por decisión explícita de
+este bloque, no se seguyó iterando sobre esto: es un límite real del
+modelo documentado, no un defecto de la arquitectura del contrato (que sí
+se endureció con éxito, eliminando la clase de bug original).
+
+`TUTOR_PROMPT_VERSION`: `tutor-v3.2.1` → `tutor-v3.3`.
+`LESSON_PROMPT_VERSION` sin cambios (`lesson-v3.3.1`).
+
 ## 8. Alcance explícitamente NO tocado (Bloque 6)
 
 `lesson-v3.3.1`, `VisualPlan`, renderers, Pedagogical Animations, RAG,

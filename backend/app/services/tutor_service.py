@@ -243,14 +243,17 @@ def ask_tutor(
         # ValidationFailure explícitas de acá arriba).
         log_event(logger, "tutor_query_retry", **log_context, attempt=attempt, reason=reason)
 
-    # v1.3.0 (BLOQUE 6 gap-closure): en modo ampliado, el `response_model`
-    # real pasado al provider es `ExpandedTutorReplyBody`, no
-    # `TutorReplyBody` -- ver su docstring en app/models/tutor.py para la
-    # causa raíz exacta (Structured Outputs + temperature=0 obligan a
-    # comprometerse con response_type sin espacio de razonamiento; un
-    # campo de razonamiento ANTES de response_type en el orden del schema
-    # resuelve esto dentro de la MISMA llamada). El modo estricto no
-    # cambia en absoluto: sigue usando `TutorReplyBody` tal cual.
+    # v1.3.0 (BLOQUE 6, dos gap-closures): en modo ampliado, el
+    # `response_model` real pasado al provider es `ExpandedTutorReplyBody`,
+    # no `TutorReplyBody` -- ver su docstring en app/models/tutor.py para
+    # la causa raíz exacta (Structured Outputs + temperature=0 obligan a
+    # comprometerse con response_type muy temprano; `scope_relation` +
+    # `topic_coverage`, ANTES de response_type en el orden del schema, le
+    # dan al modelo el mismo espacio de decisión estructurada dentro de la
+    # MISMA llamada -- y permiten validar determinísticamente que
+    # response_type sea consistente con esa clasificación, ver
+    # `_validate_expanded_scope_invariants`). El modo estricto no cambia en
+    # absoluto: sigue usando `TutorReplyBody` tal cual.
     response_model = ExpandedTutorReplyBody if allow_general_knowledge else TutorReplyBody
 
     try:
@@ -273,9 +276,16 @@ def ask_tutor(
         )
         raise
 
-    # `relevance_reasoning` (si existe) nunca cruza hacia el contrato
-    # público ni hacia los logs -- se descarta acá, antes de cualquier
-    # otro uso de `body`.
+    # `scope_relation`/`topic_coverage` (si existen) nunca cruzan hacia el
+    # contrato público -- se leen acá SOLO para el log seguro de abajo
+    # (categorías cerradas, nunca la pregunta/respuesta), y se descartan
+    # antes de cualquier otro uso de `body`.
+    scope_log_fields: dict[str, str] = {}
+    if isinstance(raw_body, ExpandedTutorReplyBody):
+        scope_log_fields = {
+            "scope_relation": raw_body.scope_relation.value,
+            "topic_coverage": raw_body.topic_coverage.value,
+        }
     body: TutorReplyBody = (
         raw_body.to_tutor_reply_body()
         if isinstance(raw_body, ExpandedTutorReplyBody)
@@ -287,6 +297,7 @@ def ask_tutor(
         logger,
         "tutor_query_completed",
         **log_context,
+        **scope_log_fields,
         duration_ms=duration_ms,
         response_type=body.response_type.value,
         general_knowledge_used=body.general_knowledge_used,

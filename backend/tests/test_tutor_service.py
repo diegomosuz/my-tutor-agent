@@ -471,6 +471,10 @@ def test_K_logs_never_contain_question_or_answer_text(tmp_path, caplog):
     assert "allow_general_knowledge=True" in caplog.text
     assert "response_type=answer" in caplog.text
     assert "general_knowledge_used=True" in caplog.text
+    # v1.3.0 (segundo gap-closure, PARTE 23): scope_relation/topic_coverage
+    # -- categorías cerradas, nunca texto libre -- también se loguean.
+    assert "scope_relation=current_topic" in caplog.text
+    assert "topic_coverage=insufficient" in caplog.text
     # Nunca la pregunta del alumno ni el texto de la respuesta.
     assert secret_question not in caplog.text
     assert reply.general_knowledge_chunks[0] not in caplog.text
@@ -526,6 +530,14 @@ def test_N_not_covered_still_valid_in_strict_mode_even_when_related(tmp_path):
 
 
 def test_O_retry_reason_code_logged_never_question_or_answer_text(tmp_path, caplog):
+    # v1.3.0 (segundo gap-closure): "not_covered" en modo ampliado ahora
+    # es estructuralmente inválido a nivel Pydantic (scope_relation !=
+    # unrelated exige response_type="answer", ver
+    # _validate_expanded_scope_invariants) -- el primer intento inválido
+    # se rechaza como "invalid_contract" (ValidationError de Pydantic),
+    # nunca llega siquiera a tutor_validation.validate_tutor_reply
+    # ("grounding_invalid"). El mecanismo de reintento y el resultado
+    # final siguen siendo los mismos.
     settings = _settings(tmp_path)
     provider = FakeLLMProvider(
         responses=[valid_not_covered_reply_dict(), valid_general_related_reply_dict()]
@@ -536,7 +548,7 @@ def test_O_retry_reason_code_logged_never_question_or_answer_text(tmp_path, capl
 
     assert "tutor_query_retry" in caplog.text
     assert "attempt=1" in caplog.text
-    assert "reason=grounding_invalid" in caplog.text
+    assert "reason=invalid_contract" in caplog.text
     assert secret_question not in caplog.text
 
 
@@ -742,4 +754,4 @@ def test_expanded_E_existing_reply_fixtures_still_valid_with_course_scope_presen
 
 
 def test_expanded_F_tutor_prompt_version_bumped_for_course_scope():
-    assert TUTOR_PROMPT_VERSION == "tutor-v3.2.1"
+    assert TUTOR_PROMPT_VERSION == "tutor-v3.3"
