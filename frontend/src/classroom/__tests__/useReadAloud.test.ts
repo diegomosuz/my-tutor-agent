@@ -238,4 +238,125 @@ describe("useReadAloud", () => {
     expect(result.current.hasReadableContent).toBe(false);
     expect(result.current.disabled).toBe(true);
   });
+
+  it("12 (PARTE 23, crítico -- bug real corregido): Stop nunca inutiliza el Reader -- 'Leer nuevamente' arranca una sesión nueva desde el segmento 0", async () => {
+    // Un único segmento a propósito: aísla la aserción de la mecánica de
+    // prefetch-ahead (que también sintetiza el/los próximos segmentos por
+    // adelantado, ver PARTE 27) -- acá solo interesa que la SEGUNDA
+    // reproducción genere audio nuevo de verdad, no cuántas llamadas hace
+    // el prefetch.
+    const containerRef = makeContainer("<p>Única frase para reiniciar.</p>");
+    const { result } = renderHook(() =>
+      useReadAloud({
+        containerRef,
+        active: true,
+        topicKey: "curso:modulo:topico",
+        useNeural: true,
+        aiAudioSessionActive: false,
+      })
+    );
+    act(() => result.current.play());
+    await waitFor(() => expect(result.current.state).toBe("playing"));
+    const callsAfterFirstPlay = mockedSynthesize.mock.calls.length;
+    expect(callsAfterFirstPlay).toBeGreaterThan(0);
+
+    act(() => result.current.stop());
+    expect(result.current.state).toBe("idle");
+
+    // Antes del fix: `segmentsRef` quedaba vacío tras Stop, así que este
+    // play() nunca llegaba a "playing" -- `playAt(0)` se topaba con
+    // `segments.length === 0` y saltaba directo a "completed" sin
+    // sintetizar ni reproducir nada ("click -> no sucede nada").
+    act(() => result.current.play());
+    await waitFor(() => expect(result.current.state).toBe("playing"));
+    // La sesión nueva vuelve a sintetizar/reproducir de verdad (nunca
+    // reutiliza un resultado/estado de la sesión anterior ya destruida).
+    expect(mockedSynthesize.mock.calls.length).toBeGreaterThan(callsAfterFirstPlay);
+  });
+
+  it("13: al completar naturalmente, 'Leer nuevamente' también arranca una sesión nueva desde el segmento 0", async () => {
+    const containerRef = makeContainer("<p>Única frase.</p>");
+    const { result } = renderHook(() =>
+      useReadAloud({
+        containerRef,
+        active: true,
+        topicKey: "curso:modulo:topico",
+        useNeural: true,
+        aiAudioSessionActive: false,
+      })
+    );
+    act(() => result.current.play());
+    await waitFor(() => expect(result.current.state).toBe("playing"));
+    act(() => lastMockAudio?.onended?.());
+    await waitFor(() => expect(result.current.state).toBe("completed"));
+
+    act(() => result.current.play());
+    await waitFor(() => expect(result.current.state).toBe("playing"));
+    expect(mockedSynthesize).toHaveBeenCalledTimes(2);
+  });
+
+  it("14: Pause seguido de Stop también permite iniciar una sesión nueva con 'Leer nuevamente'", async () => {
+    const containerRef = makeContainer("<p>Primera.</p><p>Segunda.</p>");
+    const { result } = renderHook(() =>
+      useReadAloud({
+        containerRef,
+        active: true,
+        topicKey: "curso:modulo:topico",
+        useNeural: true,
+        aiAudioSessionActive: false,
+      })
+    );
+    act(() => result.current.play());
+    await waitFor(() => expect(result.current.state).toBe("playing"));
+    act(() => result.current.pause());
+    expect(result.current.state).toBe("paused");
+    act(() => result.current.stop());
+    expect(result.current.state).toBe("idle");
+    act(() => result.current.play());
+    await waitFor(() => expect(result.current.state).toBe("playing"));
+  });
+
+  it("15: tras una interrupción de prioridad de IA, el Reader puede iniciar una sesión nueva (sin segmentos/DOM tags obsoletos)", async () => {
+    const containerRef = makeContainer("<p>Frase que se interrumpe.</p>");
+    const { result } = renderHook(() =>
+      useReadAloud({
+        containerRef,
+        active: true,
+        topicKey: "curso:modulo:topico",
+        useNeural: true,
+        aiAudioSessionActive: false,
+      })
+    );
+    act(() => result.current.play());
+    await waitFor(() => expect(result.current.state).toBe("playing"));
+    act(() => claimAiAudioPriority());
+    expect(result.current.state).toBe("idle");
+
+    act(() => result.current.play());
+    await waitFor(() => expect(result.current.state).toBe("playing"));
+  });
+
+  it("16: triple ciclo Stop -> Read Again siempre reproduce, sin degradarse (sin crecimiento de recursos ni estados atascados)", async () => {
+    const containerRef = makeContainer("<p>Única frase para el stress test.</p>");
+    const { result } = renderHook(() =>
+      useReadAloud({
+        containerRef,
+        active: true,
+        topicKey: "curso:modulo:topico",
+        useNeural: true,
+        aiAudioSessionActive: false,
+      })
+    );
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      const callsBefore = mockedSynthesize.mock.calls.length;
+      act(() => result.current.play());
+      await waitFor(() => expect(result.current.state).toBe("playing"));
+      // Cada ciclo sintetiza/reproduce de verdad -- nunca queda "atascado"
+      // reutilizando el resultado (o la ausencia de resultado) de una
+      // sesión anterior ya destruida por Stop.
+      expect(mockedSynthesize.mock.calls.length).toBeGreaterThan(callsBefore);
+      act(() => result.current.stop());
+      expect(result.current.state).toBe("idle");
+    }
+  });
 });

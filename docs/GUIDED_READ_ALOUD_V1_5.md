@@ -354,6 +354,56 @@ inmediato desde cualquier estado, siempre. `error` es alcanzable desde
 `loading` (fallo de síntesis) y se recupera reintentando desde el
 segmento actual (nunca reinicia desde 0, a diferencia de `completed`).
 
+### 11.1 Pause vs. Stop vs. Read Again -- y el bug real que los confundía
+
+Tres operaciones muy distintas, que **nunca** deben compartir
+implementación:
+
+- **Pause** (`pauseActiveSegment`): conserva sesión, audio, posición y
+  highlight tal cual están -- `resume()` simplemente continúa el mismo
+  `<audio>`/utterance.
+- **Stop** (`stopPlaybackSession` en `useReadAloud.ts`): destruye la
+  SESIÓN DE REPRODUCCIÓN actual -- audio activo, fetches/prefetch en
+  vuelo (vía `stopReadAloudPlayer()`, que incrementa el `epoch` interno
+  del player y aborta cada `AbortController` de prefetch), highlight, e
+  índice (vuelve a 0). Pero **nunca** debe inutilizar al Reader: los
+  `SpeechSegment` ya construidos y el marcado `data-read-aloud-block`
+  del DOM siguen siendo válidos (mismo tópico, mismo Markdown ya
+  renderizado) y deben sobrevivir intactos para que una sesión nueva
+  pueda arrancar de inmediato.
+- **Read Again / Leer tema** (después de Stop o de `completed`):
+  `play()` fuerza `startIndex = 0` para cualquier estado que no sea
+  `error` -- una sesión genuinamente NUEVA, nunca un `resume()`.
+
+**Bug real encontrado y corregido**: la función `clearAll()` usada por
+`hardStop()` (el helper interno detrás de `stop()` Y del listener de
+prioridad de IA) hacía las tres cosas de golpe: paraba la sesión de
+reproducción, **y además** vaciaba `segmentsRef.current = []` **y**
+llamaba a `clearReadAloudBlockAttrs(root)` (borra todos los
+`data-read-aloud-block` del DOM). Esto era correcto únicamente para un
+cambio de tópico/desmontaje (donde los segmentos SÍ deben invalidarse,
+porque el `root` está por reemplazarse o dejar de existir), pero
+`stop()` y el listener de `onAiAudioPriority` reutilizaban exactamente
+la misma función. Consecuencia observable: después de Stop (o después
+de que la IA reclamara prioridad, p. ej. al generar una clase), el
+Reader quedaba con `hasReadableContent` todavía en `true` (ese flag
+nunca se tocaba) -- el botón se veía habilitado -- pero `playAt(0)` se
+topaba con `segments.length === 0` y saltaba directo a `completed` sin
+sintetizar ni reproducir nada: clickear "Leer tema"/"Leer nuevamente"
+no hacía absolutamente nada perceptible.
+
+**Fix**: se separó `clearAll()` en dos funciones. `stopPlaybackSession()`
+(nueva) hace solo lo que Stop/prioridad de IA deben hacer -- para el
+player, limpia el highlight, resetea el índice -- y es lo único que
+`hardStop()` llama ahora. `clearAll()` sigue existiendo tal cual (para
+el efecto de cambio de tópico y el cleanup de unmount, los únicos dos
+casos donde invalidar segmentos/DOM tags es realmente correcto) pero ya
+no es invocada por Stop ni por la prioridad de IA. Ver
+`frontend/src/classroom/__tests__/useReadAloud.test.ts` tests 12-16
+(el test 12 reproduce exactamente "Play → Stop → Read Again" y falla
+contra el código anterior al fix) y
+`readAloudPlayer.test.ts` (test "Stop durante una síntesis pendiente...").
+
 ## 12. QA real (`spec-driven-design-expert`, voz neural configurada, Playwright)
 
 - **Flujo completo**: Play → 3 requests reales a `/api/speech`

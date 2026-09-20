@@ -103,22 +103,39 @@ export function useReadAloud({
     setReadAloudRate(rate);
   }, [rate]);
 
-  const clearAll = useCallback(() => {
+  // Detiene la SESIÓN DE REPRODUCCIÓN actual (audio, prefetch, highlight,
+  // epoch) y vuelve el índice a 0 -- exactamente lo que Stop y la
+  // prioridad de IA deben hacer. Nunca toca `segmentsRef` ni el marcado
+  // `data-read-aloud-block` del DOM: los SpeechSegments siguen siendo
+  // válidos (mismo Markdown, mismo tópico) y una sesión NUEVA debe poder
+  // arrancar de inmediato a partir de ellos -- Stop destruye la sesión de
+  // reproducción, nunca inutiliza el Reader (bug real corregido, ver
+  // docs/GUIDED_READ_ALOUD_V1_5.md).
+  const stopPlaybackSession = useCallback(() => {
     stopReadAloudPlayer();
     clearReadAloudHighlight();
+    currentIndexRef.current = 0;
+  }, []);
+
+  // Reset completo: además de lo anterior, invalida los SpeechSegments y
+  // su marcado en el DOM -- exclusivo de un cambio de tópico/desmontaje,
+  // donde el root actual ya no es válido o está por reconstruirse desde
+  // cero (nunca de Stop/prioridad de IA, que sí deben preservar la
+  // capacidad de iniciar una sesión nueva sobre el mismo tópico).
+  const clearAll = useCallback(() => {
+    stopPlaybackSession();
     const root = containerRef.current;
     if (root) clearReadAloudBlockAttrs(root);
     segmentsRef.current = [];
-    currentIndexRef.current = 0;
-  }, [containerRef]);
+  }, [containerRef, stopPlaybackSession]);
 
   const hardStop = useCallback(
     (nextState: ReadAloudState = "idle") => {
-      clearAll();
+      stopPlaybackSession();
       setErrorMessage(null);
       setState(nextState);
     },
-    [clearAll]
+    [stopPlaybackSession]
   );
 
   // Reconstruye la lista de segmentos legibles cada vez que cambia el
@@ -127,11 +144,13 @@ export function useReadAloud({
   useEffect(() => {
     hardStop("idle");
     if (!active) {
+      segmentsRef.current = [];
       setHasReadableContent(false);
       return;
     }
     const root = containerRef.current;
     if (!root) {
+      segmentsRef.current = [];
       setHasReadableContent(false);
       return;
     }

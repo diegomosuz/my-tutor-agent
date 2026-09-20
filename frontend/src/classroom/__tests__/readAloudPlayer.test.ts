@@ -138,6 +138,33 @@ describe("readAloudPlayer (backend neural)", () => {
     expect(onStart).not.toHaveBeenCalled();
   });
 
+  it("Stop durante una síntesis pendiente, seguido de un restart: la respuesta vieja llega tarde y se ignora, la nueva sesión reproduce normalmente (PARTE 26)", async () => {
+    let resolveStale!: (blob: Blob) => void;
+    const staleFetch = new Promise<Blob>((resolve) => {
+      resolveStale = resolve;
+    });
+    mockedSynthesize.mockReturnValueOnce(staleFetch);
+
+    const onStartStale = vi.fn();
+    const staleCall = playSegment(0, "texto obsoleto", { onStart: onStartStale });
+    stopReadAloudPlayer(); // Stop mientras el fetch todavía está en vuelo.
+
+    // Nueva sesión: síntesis fresca para el mismo id (nunca reutiliza el
+    // fetch/AbortController ya abortado de la sesión anterior).
+    mockedSynthesize.mockResolvedValueOnce(new Blob(["audio nuevo"], { type: "audio/mpeg" }));
+    const onStartFresh = vi.fn();
+    const freshCall = playSegment(0, "texto obsoleto", { onStart: onStartFresh });
+
+    // La respuesta vieja llega recién ahora (tarde) -- nunca debe disparar
+    // onStart ni interferir con la sesión nueva.
+    resolveStale(new Blob(["audio viejo"], { type: "audio/mpeg" }));
+    await staleCall;
+    await freshCall;
+
+    expect(onStartStale).not.toHaveBeenCalled();
+    expect(onStartFresh).toHaveBeenCalledTimes(1);
+  });
+
   it("reproducir un segmento nuevo cancela/limpia el audio anterior (nunca dos a la vez)", async () => {
     mockedSynthesize.mockResolvedValue(new Blob(["audio"], { type: "audio/mpeg" }));
     await playSegment(0, "primero", {});
