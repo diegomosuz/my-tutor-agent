@@ -549,4 +549,4 @@ def test_P_lesson_prompt_version_untouched_by_tutor_prompt_change():
     # importable desde acá, no que el Bloque 1 (tutor) la haya modificado.
     from app.prompts.lesson import LESSON_PROMPT_VERSION
 
-    assert LESSON_PROMPT_VERSION == "lesson-v3.3"
+    assert LESSON_PROMPT_VERSION == "lesson-v3.3.1"

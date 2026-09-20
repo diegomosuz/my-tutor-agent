@@ -18,7 +18,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       LESSON_CACHE_DIR: /app/data/lesson-cache
-      LESSON_PROMPT_VERSION: ${LESSON_PROMPT_VERSION:-lesson-v3.3}
+      LESSON_PROMPT_VERSION: ${LESSON_PROMPT_VERSION:-lesson-v3.3.1}
       CERTIFICATION_CACHE_DIR: /app/data/certification-cache
       CERTIFICATION_PROMPT_VERSION: ${CERTIFICATION_PROMPT_VERSION:-certification-v1}
       CERTIFICATION_ITEMS_PER_TOPIC: ${CERTIFICATION_ITEMS_PER_TOPIC:-6}
@@ -49,6 +49,20 @@ services:
       - type: bind
         source: ./data
         target: /app/data
+      # v1.3.0 (Bloque 4, PARTE 28): mounts de solo lectura para que
+      # tests/test_config_version_consistency.py pueda confirmar en CI que
+      # LESSON_PROMPT_VERSION no diverge silenciosamente entre el default
+      # de Python (Settings), .env.example y este mismo archivo -- el bug
+      # concreto que ya se reprodujo dos veces (v1.1.0 y Bloque 3 de
+      # v1.3.0). Nunca se escriben, solo se leen desde el test.
+      - type: bind
+        source: ./.env.example
+        target: /app/.env.example
+        read_only: true
+      - type: bind
+        source: ./docker-compose.yml
+        target: /app/docker-compose.yml
+        read_only: true
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 10s

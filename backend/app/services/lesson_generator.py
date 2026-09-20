@@ -217,6 +217,11 @@ def _grounding_reason_codes(problems: list[str]) -> str:
             # — el mensaje sugiere "comparison" como corrección posible,
             # no reporta un problema de contenido faltante en comparison.
             code = "visual_semantic_mismatch_hierarchy_relation"
+        elif "[process_without_sequence_evidence]" in problem:
+            # v1.3.0 (Bloque 4): debe ir ANTES que la rama genérica de
+            # "process_steps" — el mensaje sugiere "bullets"/"comparison"/
+            # "hierarchy" como corrección, no reporta cantidad insuficiente.
+            code = "process_without_sequence_evidence"
         elif "process_steps" in problem:
             code = "process_steps_insufficient"
         elif "comparison" in problem:
@@ -229,6 +234,46 @@ def _grounding_reason_codes(problems: list[str]) -> str:
             code = "other"
         codes.append(code)
     return ",".join(codes)
+
+
+# v1.3.0 (Bloque 4, "Lesson Generation Reliability", PARTE 3/5/22): el
+# texto de `exc` acá es SIEMPRE generado por Pydantic (nombres de campo,
+# conteos, nunca texto libre del LLM) -- igual de seguro para logging que
+# `_grounding_reason_codes` de arriba. Antes de este bloque, cualquier
+# fallo en esta rama se logueaba genéricamente como "invalid_contract";
+# un diagnóstico real (7 generaciones del caso crítico de tabla, Bloque 3)
+# encontró que la enorme mayoría de estos fallos eran el mismo patrón
+# específico (ComparisonPlan.rows con longitud inconsistente) — separarlo
+# en su propio reason_code permite medir en logs si sigue ocurriendo sin
+# tener que releer el texto crudo del error.
+def _invalid_contract_reason_code(error_text: str) -> str:
+    if "ComparisonPlan.rows" in error_text or "ComparisonPlan.columns" in error_text:
+        return "comparison_contract_invalid"
+    if "VisualPlan" in error_text:
+        return "visual_contract_invalid"
+    if "source_refs" in error_text.lower():
+        return "source_refs_invalid"
+    return "pydantic_contract_invalid"
+
+
+# PARTE 5: el mensaje crudo de Pydantic ya es específico (incluye el
+# campo, la cantidad recibida y la esperada), pero QA real mostró que
+# reenviarlo tal cual no bastaba para que el modelo corrigiera de forma
+# confiable un ComparisonPlan.rows inconsistente -- seguía intentando
+# arreglar la transposición en vez de usar la salida más simple ya
+# disponible. Esta función AGREGA (nunca reemplaza) una sugerencia
+# concreta y accionable cuando el patrón es reconocible con certeza,
+# sin reenviar el tópico completo ni inventar contenido nuevo.
+def _augment_contract_correction(error_text: str) -> list[str]:
+    problems = [error_text]
+    if "ComparisonPlan.rows" in error_text:
+        problems.append(
+            "Si no podés garantizar que cada elemento de 'rows' tenga exactamente la misma "
+            "cantidad de valores que 'column_labels' (ni más ni menos), cambiá visual_type a "
+            "'table' en esa escena en su lugar -- preserva la misma información citando el "
+            "mismo source_ref, sin este riesgo de contrato."
+        )
+    return problems
 
 
 def _visual_types_for_log(body: GeneratedLessonBody) -> str:
@@ -300,12 +345,20 @@ def _generate_validated_body(
             continue
         except (LLMResponseError, ValidationError) as exc:
             last_error = exc
+            error_text = str(exc)
             if attempt >= MAX_GENERATION_ATTEMPTS:
                 raise LessonGenerationError(
                     f"El proveedor no devolvió una respuesta válida tras {attempt} intentos."
                 ) from exc
-            attempt_messages = attempt_messages + [build_correction_message([str(exc)])]
-            _log_event("lesson_generation_retry", attempt=attempt, reason="invalid_contract")
+            attempt_messages = attempt_messages + [
+                build_correction_message(_augment_contract_correction(error_text))
+            ]
+            _log_event(
+                "lesson_generation_retry",
+                attempt=attempt,
+                reason="invalid_contract",
+                reason_code=_invalid_contract_reason_code(error_text),
+            )
             continue
 
         # PARTE 20 (v1.2.0): metadata segura del intento que SÍ logró

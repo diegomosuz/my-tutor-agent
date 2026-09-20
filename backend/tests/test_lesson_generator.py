@@ -276,14 +276,14 @@ def test_H_default_lesson_prompt_version_is_not_lesson_v3():
     settings = Settings()
     assert settings.lesson_prompt_version != "lesson-v3"
     # v1.3.0 (Bloque 3, "Structure-Aware Lesson Generation"): avanzó a v3.3.
-    assert settings.lesson_prompt_version == "lesson-v3.3"
+    assert settings.lesson_prompt_version == "lesson-v3.3.1"
 
 
 def test_I_real_default_prompt_version_produces_lesson_plan_with_new_version(tmp_path):
     settings = _settings(tmp_path)
     provider = FakeLLMProvider(responses=[valid_lesson_body_dict()])
     plan = _generate(settings, provider)
-    assert plan.prompt_version == "lesson-v3.3"
+    assert plan.prompt_version == "lesson-v3.3.1"
 
 
 # --------------------------------------------------------------------------
@@ -567,3 +567,172 @@ def test_concurrent_requests_same_topic_call_provider_once(tmp_path):
     assert not errors
     assert len(provider.calls) == 1
     assert len(results) == 4
+
+
+# --------------------------------------------------------------------------
+# v1.3.0 (Bloque 4, "Lesson Generation Reliability"), PARTE 27: process
+# guard determinístico (PARTE 7-10) + correction messages mejorados
+# (PARTE 5) + reason_code taxonomy más específico (PARTE 3/22).
+# --------------------------------------------------------------------------
+
+_PARALLEL_LIST_TOPIC_MARKDOWN = (
+    "# Principios de diseño\n"
+    "\n"
+    "## Fundamentos\n"
+    "\n"
+    "- Principio independiente A.\n"
+    "- Principio independiente B.\n"
+    "- Principio independiente C.\n"
+)
+# SRC-001 heading "Principios de diseño"
+# SRC-002 heading "Fundamentos"
+# SRC-003 list (unordered) con los 3 principios
+
+
+def _process_visual_citing(ref: str) -> dict:
+    return {
+        "visual_type": "process",
+        "layout_hint": "default",
+        "source_refs": [ref],
+        "description": "",
+        "process_steps": [
+            {"label": "Principio A", "detail": ""},
+            {"label": "Principio B", "detail": ""},
+        ],
+    }
+
+
+def _single_scene_body(*, title_ref: str, content_ref: str, visual: dict) -> dict:
+    """Cuerpo mínimo de una escena, reutilizando el patrón ya establecido
+    por `test_small_topic_can_produce_a_single_scene` -- evita reconstruir
+    a mano las 2 escenas completas de `valid_lesson_body_dict()` (con
+    source_refs que no existen en el markdown custom de estos tests)."""
+    return {
+        "lesson_title": {"text": "Título", "source_refs": [title_ref]},
+        "learning_objectives": [{"text": "Objetivo.", "source_refs": [title_ref]}],
+        "scenes": [
+            {
+                "scene_id": "SCENE-001",
+                "scene_type": "concept",
+                "title": {"text": "Escena", "source_refs": [title_ref]},
+                "key_points": [{"text": "Punto clave.", "source_refs": [content_ref]}],
+                "narration": [{"text": "Narración.", "source_refs": [content_ref]}],
+                "visual": visual,
+                "interaction": None,
+            }
+        ],
+        "recap": [{"text": "Recapitulación.", "source_refs": [title_ref]}],
+    }
+
+
+def test_M_process_over_unordered_list_only_is_rejected_and_retried(tmp_path, caplog):
+    content_dir = _make_content_dir(tmp_path, _PARALLEL_LIST_TOPIC_MARKDOWN)
+    settings = _settings(tmp_path, content_dir)
+
+    bad_body = _single_scene_body(
+        title_ref="SRC-001", content_ref="SRC-003", visual=_process_visual_citing("SRC-003")
+    )
+    good_body = copy.deepcopy(bad_body)
+    good_body["scenes"][0]["visual"] = {
+        "visual_type": "bullets",
+        "layout_hint": "default",
+        "source_refs": ["SRC-003"],
+        "description": "",
+    }
+
+    provider = FakeLLMProvider(responses=[bad_body, good_body])
+
+    with caplog.at_level(logging.INFO, logger="pwc_tutor.lesson"):
+        plan = _generate(settings, provider)
+
+    assert len(provider.calls) == 2  # el primer intento (process) se rechazó
+    assert plan.scenes[0].visual.visual_type.value == "bullets"
+    assert "reason_codes=process_without_sequence_evidence" in caplog.text
+    # Nunca el contenido real de la lista ni del Grounding Packet.
+    assert "Principio independiente A" not in caplog.text
+    assert "AUTHORIZED SOURCE" not in caplog.text
+
+
+def test_N_process_over_ordered_list_is_never_rejected_by_the_guard(tmp_path):
+    # PARTE 16: el guard nunca debe matar un proceso genuino respaldado
+    # por una lista explícitamente ORDENADA (list_kind="ordered") -- señal
+    # fuerte de secuencia real, lo opuesto exacto del caso rechazado arriba.
+    ordered_markdown = (
+        "# Flujo de despliegue\n"
+        "\n"
+        "## Pasos\n"
+        "\n"
+        "1. Compilar el artefacto.\n"
+        "2. Ejecutar las pruebas.\n"
+        "3. Publicar a producción.\n"
+    )
+    content_dir = _make_content_dir(tmp_path, ordered_markdown)
+    settings = _settings(tmp_path, content_dir)
+
+    body = _single_scene_body(
+        title_ref="SRC-001", content_ref="SRC-003", visual=_process_visual_citing("SRC-003")
+    )
+
+    provider = FakeLLMProvider(responses=[body])
+
+    plan = _generate(settings, provider)
+
+    assert len(provider.calls) == 1  # nunca se rechazó: proceso genuino
+    assert plan.scenes[0].visual.visual_type.value == "process"
+
+
+def test_O_process_over_prose_paragraph_is_never_rejected_by_the_guard(tmp_path):
+    # PARTE 10: el guard NUNCA debe aplicarse a evidencia en prosa
+    # (paragraph) -- muchos procesos reales se explican en párrafos, y no
+    # hay señal determinística para distinguir ahí secuencia de paralelismo.
+    settings = _settings(tmp_path)  # usa SAMPLE_TOPIC_MARKDOWN (solo headings/paragraphs)
+
+    body = _single_scene_body(
+        title_ref="SRC-001", content_ref="SRC-002", visual=_process_visual_citing("SRC-002")
+    )  # SRC-002 es un paragraph
+
+    provider = FakeLLMProvider(responses=[body])
+
+    plan = _generate(settings, provider)
+
+    assert len(provider.calls) == 1  # nunca se rechazó: evidencia en prosa, ambigua
+    assert plan.scenes[0].visual.visual_type.value == "process"
+
+
+def test_P_comparison_contract_error_gets_augmented_correction_and_specific_reason_code(
+    tmp_path, caplog
+):
+    # PARTE 5/22: un ComparisonPlan.rows con longitud inconsistente (el
+    # patrón real encontrado en QA, Bloque 3) debe: (a) recibir una
+    # sugerencia concreta de usar "table" en el mensaje de corrección, y
+    # (b) loguearse con el reason_code específico, nunca el genérico
+    # "invalid_contract" sin desglosar.
+    settings = _settings(tmp_path)
+    bad_body_raw = copy.deepcopy(valid_lesson_body_dict())
+    bad_body_raw["scenes"][0]["visual"] = {
+        "visual_type": "comparison",
+        "layout_hint": "default",
+        "source_refs": ["SRC-002"],
+        "description": "",
+        "comparison": {
+            "column_labels": ["A", "B", "C"],
+            "rows": [{"label": "Fila 1", "values": ["x", "y"]}],  # 2 valores, se esperan 3
+        },
+    }
+    provider = FakeLLMProvider(responses=[bad_body_raw, valid_lesson_body_dict()])
+
+    with caplog.at_level(logging.INFO, logger="pwc_tutor.lesson"):
+        plan = _generate(settings, provider)
+
+    assert len(provider.calls) == 2
+    assert len(plan.scenes) == 2
+    assert "reason=invalid_contract" in caplog.text
+    assert "reason_code=comparison_contract_invalid" in caplog.text
+
+    # El mensaje de corrección efectivamente enviado al modelo incluye la
+    # sugerencia accionable de usar "table".
+    second_call_messages = provider.calls[1]
+    correction_text = " ".join(
+        m["content"] for m in second_call_messages if m["role"] == "user"
+    )
+    assert "cambiá visual_type a 'table'" in correction_text

@@ -23,8 +23,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from app.models.lesson import GeneratedLessonBody, GroundedText, RelationType, VisualPlan, VisualType
-from app.models.schemas import CanonicalTopicContent
-from app.services.canonical import validate_source_refs
+from app.models.schemas import CanonicalTopicContent, SourceBlock
+from app.services.canonical import _detect_list_kind, validate_source_refs
 
 
 class LessonValidationError(Exception):
@@ -103,7 +103,7 @@ def validate_lesson_body(
     # VisualPlan.source_refs también deben existir realmente (cuando
     # visual_type != "none"; Pydantic ya exige que no estén vacíos en ese
     # caso, ver VisualPlan._refs_required_unless_none).
-    block_type_by_ref = {block.source_ref: block.block_type for block in canonical.source_blocks}
+    blocks_by_ref = {block.source_ref: block for block in canonical.source_blocks}
     for scene in body.scenes:
         visual = scene.visual
         if visual.visual_type == VisualType.none:
@@ -115,7 +115,7 @@ def validate_lesson_body(
             )
             continue  # el resto de las validaciones de este visual no son confiables
 
-        problems.extend(_validate_visual_content(scene.scene_id, visual, block_type_by_ref))
+        problems.extend(_validate_visual_content(scene.scene_id, visual, blocks_by_ref))
 
     if problems:
         raise LessonValidationError(problems)
@@ -174,23 +174,76 @@ def _lacks_containment_edges(edges: list) -> bool:
     return not any(edge.relation_type in _HIERARCHY_CONTAINMENT_RELATIONS for edge in edges)
 
 
+# v1.3.0 (Bloque 4, "Lesson Generation Reliability", PARTE 7-10): guard
+# deliberadamente CONSERVADOR contra "process" fabricado sobre elementos
+# paralelos. Reutiliza `canonical.py::_detect_list_kind` (la misma lógica
+# 100% determinística ya usada para serializar `list_kind` en el Grounding
+# Packet, Bloque 3) -- nunca un análisis nuevo, nunca NLP, nunca inferencia
+# de causalidad. Deliberadamente NO se aplica a evidencia en prosa
+# (paragraph/heading/blockquote): un proceso real frecuentemente se
+# explica en párrafos, y no existe una señal estructural determinística
+# que distinga ahí una secuencia real de una enumeración paralela -- esa
+# ambigüedad se resuelve únicamente por prompt (REGLA 21), nunca por
+# rechazo duro. La regla solo dispara cuando TODA la evidencia citada es,
+# sin excepción, un bloque `list` con `list_kind="unordered"`: la señal
+# estructural más fuerte posible de que el material presenta elementos
+# PARALELOS (nunca ordenados, nunca checklist) y nada más respalda la
+# escena.
+def _process_lacks_sequence_evidence(
+    source_refs: list[str], blocks_by_ref: dict[str, SourceBlock]
+) -> bool:
+    cited_blocks = [blocks_by_ref[ref] for ref in source_refs if ref in blocks_by_ref]
+    if not cited_blocks:
+        return False  # sin bloques resolubles: ya reportado aparte como source_refs inexistentes
+    if any(block.block_type != "list" for block in cited_blocks):
+        # Hay al menos un bloque que no es lista (heading/paragraph/etc.):
+        # podría sostener una secuencia real en prosa -- ambigüedad, nunca
+        # se marca mismatch por esto solo.
+        return False
+    return all(_detect_list_kind(block.markdown) == "unordered" for block in cited_blocks)
+
+
 def _validate_visual_content(
-    scene_id: str, visual: VisualPlan, block_type_by_ref: dict[str, str]
+    scene_id: str, visual: VisualPlan, blocks_by_ref: dict[str, SourceBlock]
 ) -> list[str]:
     """Valida que el contenido estructurado de `visual` (v1.1.0, bloque de
     rendering pedagógico; extendido en v1.2.0 con chequeos de consistencia
-    semántica interna) sea coherente con su `visual_type` — determinístico,
-    sin LLM. Cada visual_type que requiere contenido estructurado (process,
-    comparison, architecture, concept_map, image) debe traerlo poblado; el
-    resto de los campos estructurados quedan vacíos/None (no se valida como
-    error, simplemente el renderer los ignora)."""
+    semántica interna; extendido en v1.3.0 Bloque 4 con el guard de
+    "process" sin evidencia de secuencia) sea coherente con su
+    `visual_type` — determinístico, sin LLM. Cada visual_type que requiere
+    contenido estructurado (process, comparison, architecture, concept_map,
+    image) debe traerlo poblado; el resto de los campos estructurados
+    quedan vacíos/None (no se valida como error, simplemente el renderer
+    los ignora)."""
     problems: list[str] = []
+    block_type_by_ref = {ref: block.block_type for ref, block in blocks_by_ref.items()}
 
     if visual.visual_type == VisualType.process:
         if len(visual.process_steps) < _MIN_PROCESS_STEPS:
             problems.append(
                 f"{scene_id}.visual: process requiere al menos {_MIN_PROCESS_STEPS} "
                 f"process_steps (recibidos {len(visual.process_steps)})."
+            )
+        elif _process_lacks_sequence_evidence(visual.source_refs, blocks_by_ref):
+            # v1.3.0 (Bloque 4, "Lesson Generation Reliability", PARTE 9):
+            # regla CONSERVADORA -- solo se aplica cuando TODA la evidencia
+            # citada es una lista Markdown explícitamente no ordenada (sin
+            # ningún bloque de otro tipo entre los source_refs). Nunca se
+            # aplica a evidencia en prosa (paragraph/heading/blockquote):
+            # ahí no hay forma determinística de distinguir una secuencia
+            # real de una enumeración paralela sin interpretar semántica,
+            # y esa ambigüedad se resuelve por prompt, nunca por rechazo
+            # duro (ver docs/STRUCTURE_AWARE_LESSONS.md, sección
+            # "Generation Reliability").
+            problems.append(
+                f"{scene_id}.visual: declarado como 'process' pero TODA la evidencia citada en "
+                "source_refs es una lista Markdown explícitamente no ordenada (list_kind="
+                "'unordered'), sin ninguna otra señal estructural de orden temporal (numeración, "
+                "'flows_to', o contenido en prosa que pudiera sostener una secuencia). "
+                "[process_without_sequence_evidence] Estos elementos son PARALELOS, no una "
+                "secuencia: cambiá visual_type a 'bullets', 'comparison' o 'hierarchy' según "
+                "corresponda al contenido real (REGLA 14), y quitá 'process_steps' -- nunca "
+                "inventes un orden 1→2→3 que la fuente no establece."
             )
 
     elif visual.visual_type == VisualType.comparison:

@@ -21,7 +21,7 @@ def test_lesson_prompt_version_is_v3_2_1():
     # v1.3.0 (Bloque 3): la versión efectiva avanzó a "lesson-v3.3" (ver
     # test_lesson_prompt_v3_3_is_effective_cache_version más abajo, y
     # tests/test_structure_aware_lesson_prompt.py para la guía nueva).
-    assert LESSON_PROMPT_VERSION == "lesson-v3.3"
+    assert LESSON_PROMPT_VERSION == "lesson-v3.3.1"
 
 
 def test_system_prompt_mentions_comprehension_check_guidance():

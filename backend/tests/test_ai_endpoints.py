@@ -56,7 +56,7 @@ def test_ai_status_without_credential(client):
     body = response.json()
     assert body["configured"] is False
     assert body["provider"] == "pwc"
-    assert body["prompt_version"] == "lesson-v3.3"
+    assert body["prompt_version"] == "lesson-v3.3.1"
     assert "api_key" not in str(body).lower()
     assert "authorization" not in str(body).lower()
 

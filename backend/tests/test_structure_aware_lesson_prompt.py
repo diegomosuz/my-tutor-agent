@@ -106,7 +106,7 @@ def test_no_hardcoded_course_specific_names_in_new_guidance():
 
 
 def test_I_lesson_prompt_v3_3_is_effective():
-    assert LESSON_PROMPT_VERSION == "lesson-v3.3"
+    assert LESSON_PROMPT_VERSION == "lesson-v3.3.1"
 
 
 def test_J_cache_key_changes_with_new_prompt_version():
