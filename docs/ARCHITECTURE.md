@@ -364,7 +364,7 @@ ninguna respuesta de error):
 `GET /api/ai/status` (no sensible, nunca incluye la credencial):
 
 ```json
-{ "provider": "pwc", "model": "openai.gpt-4o-2024-11-20", "configured": false, "prompt_version": "lesson-v3.2.1" }
+{ "provider": "pwc", "model": "openai.gpt-4o-2024-11-20", "configured": false, "prompt_version": "lesson-v3.3.1" }
 ```
 
 Funciona siempre, incluso sin ninguna credencial configurada — la app

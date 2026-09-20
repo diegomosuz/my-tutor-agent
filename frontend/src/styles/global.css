@@ -742,6 +742,21 @@ p {
   display: flex;
   flex-direction: column;
   max-height: calc(100vh - var(--header-height) - var(--subheader-height) - 40px);
+  /* v1.3.0 (hardening): bug real de overflow horizontal en mobile,
+     encontrado con Playwright a 390px (scrollWidth 506 vs clientWidth
+     390). .classroom-grid usa "grid-template-columns: 1fr" por debajo de
+     960px, que por default de CSS Grid equivale a "minmax(auto, 1fr)":
+     el ancho MÍNIMO de esa columna compartida lo determina el mayor
+     min-content de CUALQUIER item en esa columna -- una imagen ancha
+     embebida en el Markdown (.content-panel__body img ya tiene
+     max-width:100%, pero eso no anula el cálculo de min-content usado
+     para dimensionar el track del grid) empujaba la columna entera más
+     allá del viewport. .classroom-stage ya tenía min-width:0 (fix
+     anterior), pero .content-panel no -- como ambos comparten la misma
+     columna en mobile, .classroom-stage terminaba igual de ancho que
+     .content-panel por el stretch por defecto del grid, pese a su propio
+     min-width:0. Mismo fix que .classroom-stage, mismo motivo. */
+  min-width: 0;
 }
 
 .content-panel__header {

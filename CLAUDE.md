@@ -982,8 +982,86 @@ Ver `docs/ROADMAP.md` para el detalle de fases futuras.
      cache sin cambios, regresión de Classroom/Learning Progress/
      Certification) sin hallazgos nuevos — ya cerrada correctamente por
      los bloques anteriores. Ver `docs/RELEASE_NOTES_v1.2.0.md`. Sin
-     push, sin tag `v1.2.0`, sin merge a `master` — release gate
-     pendiente, decisión separada.
+     push, sin tag `v1.2.0`, sin merge a `master` en el momento en que se
+     escribió este bloque — **publicado posteriormente**: `master`/
+     `origin/master`/tag `v1.2.0` apuntan hoy a
+     `71dbaaf4dc840543161c0a08eae59c229ced42fa` (el mismo commit de
+     `chore: prepare v1.2.0 release candidate`, sin cambios adicionales
+     entre el RC y el release).
+
+- **v1.3.0** (release candidate, sobre v1.2.0, rama de desarrollo
+  `feat/v1.3.0-*` → `release/v1.3.0-rc`): cuatro bloques funcionales
+  (Classroom Navigation + Voice Lifecycle, Structure-Aware Lesson
+  Generation, Lesson Generation Reliability, Content-Panel Navigation +
+  Course-Scoped Expanded Tutor — este último con dos gap-closures reales
+  encontrados en QA) más un hardening final. Sin cambios de arquitectura,
+  sin dependencias nuevas, sin RAG, sin embeddings, sin una segunda
+  llamada LLM en ningún punto.
+  1. **Voice lifecycle**: invariante de reproducción única reafirmada en
+     todos los puntos de navegación; protección de respuesta TTS neural
+     obsoleta (`AbortController` + `playbackToken`) ante navegación
+     durante una síntesis en vuelo.
+  2. **Navegación**: `.scene-controls` (escena) y navegación de tópico
+     (siempre distintas) se mantienen; la navegación de tópico se
+     reubicó del área debajo del Tutor al panel de Markdown, como fila
+     fija entre las tabs y el cuerpo con scroll (sin `position: sticky`,
+     la estructura del panel ya la deja fuera del contenedor con
+     scroll). Una sola instancia en el DOM.
+  3. **Structure-Aware Lesson Generation** (`lesson-v3.2.1` →
+     `lesson-v3.3` → `lesson-v3.3.1`): el Grounding Packet de generación
+     de lecciones antepone metadata determinística por bloque
+     (`type`/`list_kind`/`lang`/`heading_path`) antes del Markdown
+     literal completo, exclusivo de ese consumidor (opt-in); guardas de
+     fiabilidad contra `process` sin evidencia real de secuencia y
+     mensajes de corrección más específicos. Ver
+     `docs/STRUCTURE_AWARE_LESSONS.md`.
+  4. **Tutor ampliado a nivel de curso** (`tutor-v3.1` → `tutor-v3.2` →
+     `tutor-v3.2.1` → `tutor-v3.3`): nuevo `CourseScope` determinístico
+     (título/descripción/módulos/tópicos del curso, resuelto server-side
+     desde el repositorio seguro existente, nunca Markdown completo) que
+     amplía la relevancia del modo ampliado del tutor más allá del
+     tópico actual, sin RAG ni segunda llamada LLM. Contrato estructurado
+     interno (`ExpandedTutorReplyBody`, nunca expuesto en la API
+     pública): `scope_relation` (`current_topic`/`course_domain`/
+     `unrelated`) y `topic_coverage` (`sufficient`/`partial`/
+     `insufficient`), en ese orden, antes de `response_type` —
+     reemplazó a un primer diseño con un campo de texto libre
+     (`relevance_reasoning`, `tutor-v3.2.1`) después de que QA real
+     encontrara que el texto libre podía "razonar correctamente" y aun
+     así producir un `response_type` contradictorio en el mismo objeto;
+     los ENUMs cerrados permiten validar esa consistencia
+     determinísticamente. La invariante `topic_coverage="insufficient"`
+     ⟹ `answer_chunks=[]` bloquea estructuralmente una cita débil (un
+     `SourceBlock` citado sin sostener realmente la afirmación), sin
+     ningún validador semántico nuevo. `TutorReplyBody` (contrato
+     público) no gana ningún campo. Ver `docs/CLASSROOM_UX_V1_3.md`
+     secciones 7.1-7.2 (incluye la causa raíz completa de ambos
+     gap-closures y el hallazgo de que un ajuste de prompt adicional tuvo
+     efecto negativo medible y se revirtió).
+  5. **Hardening / release candidate** (rama `release/v1.3.0-rc`, sin
+     features nuevas): auditoría del diff acumulado `v1.2.0..HEAD`. Bug
+     real encontrado y corregido: overflow horizontal en mobile (390px)
+     con un tópico real con imagen ancha embebida — `.classroom-grid`
+     colapsa a `grid-template-columns: 1fr` por debajo de 960px, que por
+     default de CSS Grid equivale a `minmax(auto, 1fr)`; el ancho mínimo
+     de la columna compartida lo determina el mayor min-content de
+     cualquier item en ella, y una imagen ancha contribuye su ancho
+     intrínseco a ese cálculo pese a tener `max-width: 100%` para su
+     tamaño renderizado. `.classroom-stage` ya tenía `min-width: 0` (fix
+     de una fase anterior) pero `.content-panel` no — como comparten la
+     misma columna en mobile, `.classroom-stage` terminaba igual de
+     ancho por el stretch por defecto del grid pese a su propio
+     `min-width: 0`. Corregido agregando el mismo `min-width: 0` a
+     `.content-panel`; confirmado con Playwright (scrollWidth vuelve a
+     coincidir con clientWidth) en los tópicos con imágenes probados.
+     `APP_VERSION` 1.2.0 → 1.3.0. Resto de la auditoría (contrato del
+     tutor, invariantes scope/coverage, seguridad de diagramas/SVG,
+     privacidad, secret scan del diff completo, regresión de
+     Certification/Learning Progress/animaciones pedagógicas/StrictMode)
+     sin hallazgos nuevos. 525 tests de backend / 420 de frontend, sin
+     regresiones. Ver `docs/RELEASE_NOTES_v1.3.0.md`. Sin push, sin tag
+     `v1.3.0`, sin merge a `master` — release gate pendiente, decisión
+     separada.
 
 Cualquier trabajo futuro debe respetar este documento y actualizar la
 sección correspondiente del roadmap al avanzar de fase.

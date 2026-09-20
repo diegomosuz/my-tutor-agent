@@ -7,20 +7,24 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **v1.1.1** publicado (`master`/`origin/master`). **v1.2.0** está
-> preparado como release candidate local (`release/v1.2.0-rc`, sin push/
+> **v1.2.0** publicado (`master`/`origin/master`). **v1.3.0** está
+> preparado como release candidate local (`release/v1.3.0-rc`, sin push/
 > tag/merge todavía — release gate pendiente, decisión separada). Sobre
-> la base de v1.1.1 (catálogo, aula virtual grounded, tutor conversacional
-> y checkpoints, voz del navegador + voz neural opcional, práctica de
-> certificación grounded, "Mi aprendizaje" con recomendaciones
-> deterministas), v1.2.0 agrega fidelidad visual real de diagramas/
-> jerarquías (`DiagramCanvas`, conectores SVG geométricos reales),
-> selección de `visual_type` más confiable (`lesson-v3.2.1`) y animación
-> pedagógica determinística 100% frontend (progresión real de
-> pasos/nodos/comparaciones, derivada del `VisualPlan` ya validado, nunca
-> generada por IA). Ver
-> [`docs/RELEASE_NOTES_v1.2.0.md`](./docs/RELEASE_NOTES_v1.2.0.md) (y,
+> la base de v1.2.0 (fidelidad visual real de diagramas/jerarquías,
+> selección de `visual_type` más confiable, animación pedagógica
+> determinística), v1.3.0 agrega navegación de tópico reubicada junto al
+> panel de Markdown, lifecycle de voz endurecido (invariante de
+> reproducción única, protección de respuesta TTS obsoleta), generación
+> de lecciones consciente de la estructura del Markdown fuente
+> (`lesson-v3.3.1`, tablas/código/listas preservados con mayor
+> confiabilidad) y un modo ampliado del tutor conversacional que cubre el
+> dominio educativo del curso completo, no solo el tópico actual
+> (`tutor-v3.3`, contrato estructurado `scope_relation`/`topic_coverage`
+> que separa a qué pertenece la pregunta de cuánto la cubre el tópico
+> actual, sin RAG ni una segunda llamada al modelo). Ver
+> [`docs/RELEASE_NOTES_v1.3.0.md`](./docs/RELEASE_NOTES_v1.3.0.md) (y,
 > para el historial previo,
+> [`docs/RELEASE_NOTES_v1.2.0.md`](./docs/RELEASE_NOTES_v1.2.0.md) /
 > [`docs/RELEASE_NOTES_v1.1.1.md`](./docs/RELEASE_NOTES_v1.1.1.md) /
 > [`docs/RELEASE_NOTES_v1.1.0.md`](./docs/RELEASE_NOTES_v1.1.0.md) /
 > [`docs/RELEASE_NOTES_v1.0.1.md`](./docs/RELEASE_NOTES_v1.0.1.md) /
