@@ -709,6 +709,9 @@ export function ClassroomPage() {
                 onInterrupt={handleTutorInterrupt}
                 onContinueClass={handleContinueClass}
                 onInspectRef={import.meta.env.DEV ? setInspectedTutorRef : undefined}
+                onNavigateToTopic={(targetModuleId, targetTopicId) =>
+                  goToTopic({ moduleId: targetModuleId, topicId: targetTopicId })
+                }
               />
             )}
 

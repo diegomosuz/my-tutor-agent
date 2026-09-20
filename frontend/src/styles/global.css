@@ -2087,16 +2087,120 @@ p {
   gap: 6px;
 }
 
-.tutor-message__general-knowledge-badge {
+/* v1.4.0 (Bloque 3, "Provenance UX + Related Topic Navigation"): una
+   respuesta "answer" del tutor se muestra como grupos separados por
+   origen (tópico actual / resto del curso / conocimiento general, en ese
+   orden) -- reemplaza al badge único `tutor-message__general-knowledge-badge`
+   de v1.3.0, que solo indicaba "se usó conocimiento general" sin
+   distinguir el canal de curso (introducido en el Bloque 2). Visible pero
+   NO invasivo (PARTE 3): la respuesta sigue siendo protagonista, el label
+   es un texto pequeño en mayúsculas, nunca un botón ni un color
+   estridente. */
+.tutor-message__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tutor-provenance-group:not(:first-child) {
+  padding-top: 2px;
+}
+
+.tutor-provenance-label {
   display: inline-block;
-  margin-top: 6px;
+  margin-bottom: 4px;
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 10.5px;
-  font-style: italic;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
   color: var(--color-text-faint);
   background: var(--color-bg-subtle);
   border: 1px solid var(--color-border-strong);
+}
+
+/* "Basado en el curso" se distingue con el color primario -- es la única
+   señal de que la respuesta cruzó a otro tópico, sin abusar del color
+   (PARTE 24: nunca colores excesivos). */
+.tutor-provenance-label--course {
+  color: var(--color-primary-dark);
+  background: var(--color-primary-subtle);
+  border-color: var(--color-primary);
+}
+
+.tutor-provenance-label--general {
+  font-style: italic;
+}
+
+/* "Temas relacionados": compacto, agrupado por tópico (ya deduplicado en
+   frontend, ver courseSources.ts), nunca una card pesada por fuente. */
+.tutor-related-topics {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+}
+
+.tutor-related-topics__title {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--color-text-faint);
+  margin-bottom: 6px;
+}
+
+.tutor-related-topic {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 5px 0;
+}
+
+.tutor-related-topic + .tutor-related-topic {
+  border-top: 1px solid var(--color-border);
+}
+
+.tutor-related-topic__info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tutor-related-topic__module {
+  font-size: 10px;
+  color: var(--color-text-faint);
+  overflow-wrap: break-word;
+}
+
+.tutor-related-topic__topic {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: break-word;
+}
+
+/* Debe parecer un CTA/link, nunca un botón pesado (PARTE 24). */
+.tutor-related-topic__cta {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-primary);
+  text-decoration: underline;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tutor-related-topic__cta:hover {
+  color: var(--color-primary-dark);
 }
 
 .tutor-panel__loading {
@@ -2669,7 +2773,8 @@ p {
 .grounding-panel__ref-chip:focus-visible,
 .slide-panel__cta:focus-visible,
 .topic-nav button:focus-visible,
-.topic-completion-cta__button:focus-visible {
+.topic-completion-cta__button:focus-visible,
+.tutor-related-topic__cta:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }

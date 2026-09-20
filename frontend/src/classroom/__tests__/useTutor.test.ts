@@ -167,6 +167,147 @@ describe("useTutor", () => {
     expect(result.current.error).toBeNull();
   });
 
+  // --------------------------------------------------------------------
+  // v1.4.0 (Bloque 3 -- "Provenance UX + Related Topic Navigation")
+  // --------------------------------------------------------------------
+
+  it("16. respuesta legacy (v1.3.0, sin course_answer_chunks/course_sources) se normaliza sin romper", async () => {
+    mockedAskTutor.mockResolvedValue({
+      response_type: "answer",
+      answer_chunks: [{ text: "Un Pod agrupa contenedores.", source_refs: ["SRC-002"] }],
+      general_knowledge_chunks: [],
+      clarification_question: null,
+      general_knowledge_used: false,
+    });
+    const { result } = renderHook(() => useTutor({ ...IDS, sceneId: null }));
+
+    await act(async () => {
+      await result.current.sendMessage("¿Qué es un Pod?");
+    });
+
+    const assistantMessage = result.current.messages[1];
+    expect(assistantMessage.content).toBe("Un Pod agrupa contenedores.");
+    expect(assistantMessage.provenance).toEqual({
+      currentTopicTexts: ["Un Pod agrupa contenedores."],
+      courseTexts: [],
+      generalTexts: [],
+      courseSources: [],
+    });
+  });
+
+  it("17. course_answer_chunks se separa de answer_chunks/general_knowledge_chunks en provenance", async () => {
+    mockedAskTutor.mockResolvedValue({
+      response_type: "answer",
+      answer_chunks: [],
+      course_answer_chunks: [
+        { text: "Evolucioná una API sin romper clientes viejos.", source_refs: ["COURSE-SRC-001"] },
+      ],
+      course_sources: [
+        {
+          ref: "COURSE-SRC-001",
+          module_id: "diseno-tecnico-especificado",
+          module_title: "Diseño Técnico Especificado",
+          topic_id: "diseno-de-apis-y-contratos-evolutivos",
+          topic_title: "Diseño de APIs y contratos evolutivos",
+          original_source_ref: "SRC-017",
+          heading_path: ["Diseño de APIs y contratos evolutivos", "Práctica guiada"],
+        },
+      ],
+      general_knowledge_chunks: [],
+      clarification_question: null,
+      general_knowledge_used: false,
+    });
+    const { result } = renderHook(() => useTutor({ ...IDS, sceneId: null }));
+
+    await act(async () => {
+      await result.current.sendMessage("¿Cómo se diseñan contratos de API evolutivos?");
+    });
+
+    const assistantMessage = result.current.messages[1];
+    expect(assistantMessage.provenance?.currentTopicTexts).toEqual([]);
+    expect(assistantMessage.provenance?.courseTexts).toEqual([
+      "Evolucioná una API sin romper clientes viejos.",
+    ]);
+    expect(assistantMessage.provenance?.courseSources).toHaveLength(1);
+    expect(assistantMessage.provenance?.courseSources[0].topic_id).toBe(
+      "diseno-de-apis-y-contratos-evolutivos"
+    );
+    // Nunca filtra por SRC-XXX del tópico actual -- sourceRefs (para el
+    // panel de grounding en desarrollo) sigue vacío porque answer_chunks
+    // está vacío, aunque haya course_answer_chunks.
+    expect(assistantMessage.sourceRefs).toEqual([]);
+  });
+
+  it("18. dos course_sources del mismo tópico se deduplican en provenance.courseSources", async () => {
+    mockedAskTutor.mockResolvedValue({
+      response_type: "answer",
+      answer_chunks: [],
+      course_answer_chunks: [
+        { text: "Primera afirmación.", source_refs: ["COURSE-SRC-001"] },
+        { text: "Segunda afirmación.", source_refs: ["COURSE-SRC-002"] },
+      ],
+      course_sources: [
+        {
+          ref: "COURSE-SRC-001",
+          module_id: "modulo-x",
+          module_title: "Módulo X",
+          topic_id: "topico-x",
+          topic_title: "Tópico X",
+          original_source_ref: "SRC-001",
+          heading_path: [],
+        },
+        {
+          ref: "COURSE-SRC-002",
+          module_id: "modulo-x",
+          module_title: "Módulo X",
+          topic_id: "topico-x",
+          topic_title: "Tópico X",
+          original_source_ref: "SRC-004",
+          heading_path: [],
+        },
+      ],
+      general_knowledge_chunks: [],
+      clarification_question: null,
+      general_knowledge_used: false,
+    });
+    const { result } = renderHook(() => useTutor({ ...IDS, sceneId: null }));
+
+    await act(async () => {
+      await result.current.sendMessage("pregunta");
+    });
+
+    expect(result.current.messages[1].provenance?.courseSources).toHaveLength(1);
+  });
+
+  it("19. course_sources sin course_answer_chunks (respuesta inconsistente) nunca produce related topics fantasma", async () => {
+    mockedAskTutor.mockResolvedValue({
+      response_type: "answer",
+      answer_chunks: [{ text: "Texto del tópico actual.", source_refs: ["SRC-002"] }],
+      course_answer_chunks: [],
+      course_sources: [
+        {
+          ref: "COURSE-SRC-001",
+          module_id: "modulo-x",
+          module_title: "Módulo X",
+          topic_id: "topico-x",
+          topic_title: "Tópico X",
+          original_source_ref: "SRC-001",
+          heading_path: [],
+        },
+      ],
+      general_knowledge_chunks: [],
+      clarification_question: null,
+      general_knowledge_used: false,
+    });
+    const { result } = renderHook(() => useTutor({ ...IDS, sceneId: null }));
+
+    await act(async () => {
+      await result.current.sendMessage("pregunta");
+    });
+
+    expect(result.current.messages[1].provenance?.courseSources).toEqual([]);
+  });
+
   it("no envía una solicitud si ya hay una en curso (evita doble envío)", async () => {
     let resolvePromise!: (value: unknown) => void;
     mockedAskTutor.mockReturnValue(

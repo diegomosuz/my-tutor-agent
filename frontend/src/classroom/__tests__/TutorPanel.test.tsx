@@ -304,32 +304,42 @@ describe("TutorPanel", () => {
     expect(screen.getByRole("checkbox", { name: "Ampliar con conocimiento general" })).toBeChecked();
   });
 
-  it("E: una respuesta con general_knowledge_used=true muestra el badge de transparencia", () => {
+  it("E: una respuesta con general_knowledge_chunks muestra el label de conocimiento general", () => {
     mockUseTutorReturn.messages = [
       {
         id: "1",
         role: "assistant",
         content: "Respuesta ampliada.",
         responseType: "answer",
-        generalKnowledgeUsed: true,
+        provenance: {
+          currentTopicTexts: [],
+          courseTexts: [],
+          generalTexts: ["Respuesta ampliada."],
+          courseSources: [],
+        },
       },
     ];
     render(<TutorPanel {...baseProps()} />);
-    expect(screen.getByText("Respuesta ampliada con conocimiento general")).toBeInTheDocument();
+    expect(screen.getByText("Ampliado con conocimiento general")).toBeInTheDocument();
   });
 
-  it("F: una respuesta grounded normal (general_knowledge_used=false) no muestra el badge", () => {
+  it("F: una respuesta grounded normal (solo tópico actual) no muestra el label de conocimiento general", () => {
     mockUseTutorReturn.messages = [
       {
         id: "1",
         role: "assistant",
         content: "Un Pod agrupa contenedores.",
         responseType: "answer",
-        generalKnowledgeUsed: false,
+        provenance: {
+          currentTopicTexts: ["Un Pod agrupa contenedores."],
+          courseTexts: [],
+          generalTexts: [],
+          courseSources: [],
+        },
       },
     ];
     render(<TutorPanel {...baseProps()} />);
-    expect(screen.queryByText("Respuesta ampliada con conocimiento general")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ampliado con conocimiento general")).not.toBeInTheDocument();
   });
 
   it("G: response_type='unrelated' muestra el mensaje fijo de tema no relacionado", async () => {
@@ -357,9 +367,340 @@ describe("TutorPanel", () => {
   it("H: el texto de ayuda del switch nunca sugiere web/internet/búsqueda", () => {
     render(<TutorPanel {...baseProps()} />);
     const help = screen.getByText(
-      "Permite complementar con conocimiento general de IA, pero solo para preguntas relacionadas con este tema o con el ámbito del curso"
+      "Permite complementar las respuestas con conocimiento general cuando el contenido del curso no es suficiente."
     );
     const text = help.textContent?.toLowerCase() ?? "";
     expect(text).not.toMatch(/web|internet|búsqueda|actualizad/);
+  });
+
+  // --------------------------------------------------------------------
+  // v1.4.0 (Bloque 3 -- "Provenance UX + Related Topic Navigation"),
+  // PARTE 30-38
+  // --------------------------------------------------------------------
+
+  it("no sugiere que el switch apagado limite el tutor a un solo tema", () => {
+    render(<TutorPanel {...baseProps()} />);
+    const hint = screen.getByText(/El tutor responde únicamente con contenido demostrado/);
+    // v1.4.0 (Bloque 3, PARTE 21): la afirmación vieja era literalmente
+    // "El tutor responde únicamente en base al contenido de este tema." --
+    // ya no debe existir tal cual (el nuevo texto SÍ menciona "este tema"
+    // como uno de dos orígenes posibles, nunca como el único).
+    expect(hint.textContent).not.toBe(
+      "El tutor responde únicamente en base al contenido de este tema."
+    );
+    expect(hint.textContent).toMatch(/curso/i);
+  });
+
+  it("PARTE 30: respuesta solo de tópico actual muestra 'Basado en este tema' y ningún otro label", () => {
+    mockUseTutorReturn.messages = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Un Pod agrupa contenedores.",
+        responseType: "answer",
+        provenance: {
+          currentTopicTexts: ["Un Pod agrupa contenedores."],
+          courseTexts: [],
+          generalTexts: [],
+          courseSources: [],
+        },
+      },
+    ];
+    render(<TutorPanel {...baseProps()} />);
+    expect(screen.getByText("Basado en este tema")).toBeInTheDocument();
+    expect(screen.queryByText("Basado en el curso")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ampliado con conocimiento general")).not.toBeInTheDocument();
+  });
+
+  it("PARTE 31: respuesta de curso muestra 'Basado en el curso' + Temas relacionados + CTA, sin label general", () => {
+    mockUseTutorReturn.messages = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Evolucioná una API sin romper clientes viejos.",
+        responseType: "answer",
+        provenance: {
+          currentTopicTexts: [],
+          courseTexts: ["Evolucioná una API sin romper clientes viejos."],
+          generalTexts: [],
+          courseSources: [
+            {
+              ref: "COURSE-SRC-001",
+              module_id: "diseno-tecnico-especificado",
+              module_title: "Diseño Técnico Especificado",
+              topic_id: "diseno-de-apis-y-contratos-evolutivos",
+              topic_title: "Diseño de APIs y contratos evolutivos",
+              original_source_ref: "SRC-017",
+              heading_path: [],
+            },
+          ],
+        },
+      },
+    ];
+    render(<TutorPanel {...baseProps()} />);
+    expect(screen.getByText("Basado en el curso")).toBeInTheDocument();
+    expect(screen.queryByText("Basado en este tema")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ampliado con conocimiento general")).not.toBeInTheDocument();
+    expect(screen.getByText("Temas relacionados")).toBeInTheDocument();
+    expect(screen.getByText("Diseño de APIs y contratos evolutivos")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Ver tema relacionado: Diseño de APIs y contratos evolutivos",
+      })
+    ).toBeInTheDocument();
+  });
+
+  it("PARTE 32: respuesta solo de conocimiento general no muestra label de tema/curso ni Temas relacionados", () => {
+    mockUseTutorReturn.messages = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "En general, suele considerarse que...",
+        responseType: "answer",
+        provenance: {
+          currentTopicTexts: [],
+          courseTexts: [],
+          generalTexts: ["En general, suele considerarse que..."],
+          courseSources: [],
+        },
+      },
+    ];
+    render(<TutorPanel {...baseProps()} />);
+    expect(screen.getByText("Ampliado con conocimiento general")).toBeInTheDocument();
+    expect(screen.queryByText("Basado en este tema")).not.toBeInTheDocument();
+    expect(screen.queryByText("Basado en el curso")).not.toBeInTheDocument();
+    expect(screen.queryByText("Temas relacionados")).not.toBeInTheDocument();
+  });
+
+  it("PARTE 33: mezcla tópico actual + curso muestra ambos labels, sin mezclar el contenido", () => {
+    mockUseTutorReturn.messages = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Texto del tópico actual.\n\nTexto de otro tópico.",
+        responseType: "answer",
+        provenance: {
+          currentTopicTexts: ["Texto del tópico actual."],
+          courseTexts: ["Texto de otro tópico."],
+          generalTexts: [],
+          courseSources: [
+            {
+              ref: "COURSE-SRC-001",
+              module_id: "modulo-x",
+              module_title: "Módulo X",
+              topic_id: "topico-x",
+              topic_title: "Tópico X",
+              original_source_ref: "SRC-001",
+              heading_path: [],
+            },
+          ],
+        },
+      },
+    ];
+    render(<TutorPanel {...baseProps()} />);
+    expect(screen.getByText("Basado en este tema")).toBeInTheDocument();
+    expect(screen.getByText("Basado en el curso")).toBeInTheDocument();
+    expect(screen.getByText("Texto del tópico actual.")).toBeInTheDocument();
+    expect(screen.getByText("Texto de otro tópico.")).toBeInTheDocument();
+  });
+
+  it("PARTE 34: mezcla curso + conocimiento general -- el general no hereda course_sources", () => {
+    mockUseTutorReturn.messages = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Texto del curso.\n\nTexto general.",
+        responseType: "answer",
+        provenance: {
+          currentTopicTexts: [],
+          courseTexts: ["Texto del curso."],
+          generalTexts: ["Texto general."],
+          courseSources: [
+            {
+              ref: "COURSE-SRC-001",
+              module_id: "modulo-x",
+              module_title: "Módulo X",
+              topic_id: "topico-x",
+              topic_title: "Tópico X",
+              original_source_ref: "SRC-001",
+              heading_path: [],
+            },
+          ],
+        },
+      },
+    ];
+    render(<TutorPanel {...baseProps()} />);
+    expect(screen.getByText("Basado en el curso")).toBeInTheDocument();
+    expect(screen.getByText("Ampliado con conocimiento general")).toBeInTheDocument();
+    expect(screen.getAllByText("Temas relacionados")).toHaveLength(1);
+  });
+
+  it("PARTE 35: triple mezcla (tópico + curso + general) renderiza los tres niveles", () => {
+    mockUseTutorReturn.messages = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "A.\n\nB.\n\nC.",
+        responseType: "answer",
+        provenance: {
+          currentTopicTexts: ["A."],
+          courseTexts: ["B."],
+          generalTexts: ["C."],
+          courseSources: [
+            {
+              ref: "COURSE-SRC-001",
+              module_id: "modulo-x",
+              module_title: "Módulo X",
+              topic_id: "topico-x",
+              topic_title: "Tópico X",
+              original_source_ref: "SRC-001",
+              heading_path: [],
+            },
+          ],
+        },
+      },
+    ];
+    render(<TutorPanel {...baseProps()} />);
+    expect(screen.getByText("Basado en este tema")).toBeInTheDocument();
+    expect(screen.getByText("Basado en el curso")).toBeInTheDocument();
+    expect(screen.getByText("Ampliado con conocimiento general")).toBeInTheDocument();
+    expect(screen.getByText("A.")).toBeInTheDocument();
+    expect(screen.getByText("B.")).toBeInTheDocument();
+    expect(screen.getByText("C.")).toBeInTheDocument();
+  });
+
+  // PARTE 36 (dedup por tópico) se prueba a nivel de `useTutor` (tests 17
+  // y 18 de useTutor.test.ts, con la función real de dedup contra la
+  // forma real de una respuesta del backend) -- acá, en TutorPanel,
+  // `useTutor` está mockeado, así que un test acá solo podría verificar
+  // que TutorConversation renderiza fielmente lo que recibe, no que
+  // dedupliqué correctamente (esa garantía ya la da la capa de datos).
+
+  it("PARTE 37: course_sources de dos tópicos distintos muestra dos items, en orden de primera aparición", () => {
+    mockUseTutorReturn.messages = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Texto de curso.",
+        responseType: "answer",
+        provenance: {
+          currentTopicTexts: [],
+          courseTexts: ["Texto de curso."],
+          generalTexts: [],
+          courseSources: [
+            {
+              ref: "COURSE-SRC-001",
+              module_id: "modulo-b",
+              module_title: "Módulo B",
+              topic_id: "topico-b",
+              topic_title: "Tópico B (más relevante)",
+              original_source_ref: "SRC-001",
+              heading_path: [],
+            },
+            {
+              ref: "COURSE-SRC-002",
+              module_id: "modulo-a",
+              module_title: "Módulo A",
+              topic_id: "topico-a",
+              topic_title: "Tópico A (menos relevante)",
+              original_source_ref: "SRC-002",
+              heading_path: [],
+            },
+          ],
+        },
+      },
+    ];
+    render(<TutorPanel {...baseProps()} />);
+    const items = screen.getAllByText(/Tópico (A|B) \(/);
+    expect(items.map((el) => el.textContent)).toEqual([
+      "Tópico B (más relevante)",
+      "Tópico A (menos relevante)",
+    ]);
+  });
+
+  it("PARTE 38: click en 'Ver tema relacionado' llama a onNavigateToTopic con module/topic correctos", () => {
+    const onNavigateToTopic = vi.fn();
+    mockUseTutorReturn.messages = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Texto de curso.",
+        responseType: "answer",
+        provenance: {
+          currentTopicTexts: [],
+          courseTexts: ["Texto de curso."],
+          generalTexts: [],
+          courseSources: [
+            {
+              ref: "COURSE-SRC-001",
+              module_id: "diseno-tecnico-especificado",
+              module_title: "Diseño Técnico Especificado",
+              topic_id: "diseno-de-apis-y-contratos-evolutivos",
+              topic_title: "Diseño de APIs y contratos evolutivos",
+              original_source_ref: "SRC-017",
+              heading_path: [],
+            },
+          ],
+        },
+      },
+    ];
+    const props = baseProps();
+    render(<TutorPanel {...props} onNavigateToTopic={onNavigateToTopic} />);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Ver tema relacionado: Diseño de APIs y contratos evolutivos",
+      })
+    );
+    expect(onNavigateToTopic).toHaveBeenCalledWith(
+      "diseno-tecnico-especificado",
+      "diseno-de-apis-y-contratos-evolutivos"
+    );
+  });
+
+  it("PARTE 22: sin course_answer_chunks ni course_sources, no muestra 'Temas relacionados'", () => {
+    mockUseTutorReturn.messages = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Un Pod agrupa contenedores.",
+        responseType: "answer",
+        provenance: {
+          currentTopicTexts: ["Un Pod agrupa contenedores."],
+          courseTexts: [],
+          generalTexts: [],
+          courseSources: [],
+        },
+      },
+    ];
+    render(<TutorPanel {...baseProps()} />);
+    expect(screen.queryByText("Temas relacionados")).not.toBeInTheDocument();
+  });
+
+  it("PARTE 39: voz incluye course_answer_chunks (antes quedaba en silencio total si answer_chunks estaba vacío)", async () => {
+    mockSendMessage.mockResolvedValue({
+      response_type: "answer",
+      answer_chunks: [],
+      course_answer_chunks: [
+        { text: "Evolucioná una API sin romper clientes viejos.", source_refs: ["COURSE-SRC-001"] },
+      ],
+      course_sources: [],
+      general_knowledge_chunks: [],
+      clarification_question: null,
+      general_knowledge_used: false,
+    });
+    const props = baseProps();
+    props.voiceEnabled = true;
+    render(<TutorPanel {...props} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Escribí tu pregunta sobre este tema…"), {
+      target: { value: "¿Cómo se diseñan contratos de API evolutivos?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    await waitFor(() => expect(mockSpeakSequence).toHaveBeenCalledTimes(1));
+    expect(mockSpeakSequence).toHaveBeenCalledWith(
+      ["Evolucioná una API sin romper clientes viejos."],
+      expect.objectContaining({ rate: 1 })
+    );
   });
 });

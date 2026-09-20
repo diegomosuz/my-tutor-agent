@@ -758,13 +758,310 @@ mock/fixture de test existente necesitó tocarse. Ningún componente
 todavía: este bloque es backend + contrato de respuesta, el diseño de
 "Ver tema relacionado" queda para un bloque futuro (sección 13).
 
-## 24. Próximos pasos (fuera de alcance de este bloque)
+## 24. Próximos pasos identificados al cierre del Bloque 2 (resueltos en el Bloque 3, sección 25 en adelante)
 
-- Diseño de UX de "Ver tema relacionado" en el frontend, usando
-  `course_sources` para un deep-link hacia el aula del tópico origen.
+- ~~Diseño de UX de "Ver tema relacionado"~~ → sección 26.
 - Persistencia opcional de qué tópicos fueron citados como evidencia
   cross-topic (analítica de qué tan conectado está el contenido de un
-  curso) — nunca se guardó nada de esto en este bloque.
-- Hardening/release de v1.4.0 (bloques posteriores, siguiendo el mismo
-  patrón que v1.1.0/v1.2.0/v1.3.0: auditoría del diff acumulado, sin
-  features nuevas).
+  curso): sigue fuera de alcance — el Bloque 3 es 100% frontend efímero
+  (conversación en memoria React, nunca persistida, mismo criterio que
+  Fase 5), nada nuevo se guarda en ningún lado.
+- Hardening/release de v1.4.0: sigue pendiente, un bloque futuro.
+
+---
+
+# Bloque 3 — Provenance UX + Related Topic Navigation
+
+## 25. Objetivo
+
+El Bloque 2 dejó tres canales grounded en el contrato (`answer_chunks`/
+`course_answer_chunks`/`general_knowledge_chunks`) y la metadata de
+navegación (`course_sources`), pero el frontend los ignoraba por
+completo: `useTutor.ts` aplanaba los tres en un único string y
+`course_sources` nunca se leía. Este bloque construye la experiencia
+pedagógica encima de ese contrato — el alumno debe poder distinguir de un
+vistazo "esto está en este tema" / "esto está en otra parte del curso" /
+"esto es conocimiento adicional del modelo", y navegar directamente al
+tema de origen cuando corresponda.
+
+100% frontend. No se tocó `course_retrieval.py`, `course_grounding.py`,
+el prompt del tutor (`TUTOR_PROMPT_VERSION` sigue en `tutor-v4`) ni
+`tutor_service.py` — el contrato público ya traía toda la metadata
+necesaria (confirmado leyendo `TutorReplyBody`/`CourseGroundedText`/
+`TutorCourseSource` antes de escribir una sola línea de UI, sección 2 de
+la especificación de este bloque).
+
+## 26. Provenance estructurada (`useTutor.ts`)
+
+v1.3.0 acumulaba una respuesta "answer" en un solo string
+(`answer_chunks` + `general_knowledge_chunks` unidos con `\n\n`) y un
+flag booleano `generalKnowledgeUsed`. Eso ya no alcanza con un tercer
+canal: `TutorConversationMessage` ahora lleva un campo `provenance`
+opcional (presente solo en mensajes `response_type="answer"`):
+
+```typescript
+export interface TutorAnswerProvenance {
+  currentTopicTexts: string[];   // de answer_chunks
+  courseTexts: string[];         // de course_answer_chunks
+  generalTexts: string[];        // de general_knowledge_chunks
+  courseSources: TutorCourseSource[];  // deduplicado, ver sección 27
+}
+```
+
+`content` (el string plano) se sigue calculando igual que antes —
+concatenando los tres canales — pero pasa a usarse SOLO como historial
+enviado al backend (`buildRecentHistory`) y como fallback de render para
+mensajes sin `provenance` (mensajes del alumno, `clarification`,
+`unrelated`, `not_covered`, y cualquier respuesta legacy sin el campo).
+Nunca se usa `content` para renderizar una respuesta "answer": eso ahora
+lo hace `TutorConversation.tsx` a partir de `provenance` (sección 28).
+
+`course_answer_chunks`/`course_sources` se leen con `?? []` (siguen
+siendo opcionales en el tipo desde el Bloque 2, backward compatible con
+cualquier mock/fixture de test anterior a este bloque).
+
+## 27. Deduplicación por tópico (`courseSources.ts`, nuevo)
+
+`course_sources` puede traer varios `SourceBlock`s del MISMO tópico (dos
+`COURSE-SRC-XXX` con igual `module_id`/`topic_id`, distinto
+`original_source_ref` — ver QA real en la sección 30). Mostrar una card
+"Temas relacionados" por CADA `SourceBlock` duplicaría el mismo tópico
+varias veces, así que `dedupeCourseSourcesByTopic` (función pura, sin
+estado) colapsa por `module_id + topic_id`, preservando el orden de
+PRIMERA aparición — nunca alfabético, eso destruiría el orden de
+relevancia real que ya decidió el retrieval determinístico del Bloque 1.
+Se aplica en `useTutor.ts::replyToMessage`, una sola vez, antes de que el
+mensaje llegue a cualquier componente de render — resuelto enteramente en
+frontend, sin tocar el backend (PARTE 11/49 de la especificación de este
+bloque: preferencia fuerte por no tocar backend si el contrato ya alcanza,
+y acá alcanzaba).
+
+## 28. Render: tres grupos + "Temas relacionados" (`TutorConversation.tsx`)
+
+Cuando un mensaje trae `provenance`, `TutorConversation` renderiza hasta
+tres grupos, EN ESTE ORDEN, cada uno solo si su lista de textos no está
+vacía:
+
+```
+A. answer_chunks       -> label "Basado en este tema"
+B. course_answer_chunks -> label "Basado en el curso" + "Temas relacionados"
+C. general_knowledge_chunks -> label "Ampliado con conocimiento general"
+```
+
+Ningún grupo mezcla contenido de otro canal ni hereda sus fuentes: el
+grupo de conocimiento general, en particular, NUNCA muestra
+`course_sources` (aunque la misma respuesta también tenga evidencia de
+curso en otro grupo) — ver test dedicado
+`useTutor.test.ts::"course_sources sin course_answer_chunks (respuesta
+inconsistente) nunca produce related topics fantasma"` y el test PARTE 34
+de `TutorPanel.test.tsx`.
+
+Labels (español, sin jerga técnica — nunca "RAG", "retrieval",
+"grounding" ni `SRC-XXX`/`COURSE-SRC-XXX` visibles al alumno):
+
+| Label | Condición | Estilo |
+|---|---|---|
+| "Basado en este tema" | `currentTopicTexts.length > 0` | badge neutro (mismo estilo que v1.3.0) |
+| "Basado en el curso" | `courseTexts.length > 0` | badge con el color primario (`--color-primary`, único acento nuevo, reutiliza la paleta PwC existente — nunca un hue nuevo) |
+| "Ampliado con conocimiento general" | `generalTexts.length > 0` | badge neutro itálico (reemplaza 1:1 al badge único `tutor-message__general-knowledge-badge` de v1.3.0, que ya no distinguía el canal de curso) |
+
+Sin `course_answer_chunks`/`course_sources` (respuesta v1.3.0 legacy o
+solo tópico actual/general), la sección "Temas relacionados" simplemente
+no se renderiza — nunca un placeholder vacío (PARTE 22).
+
+## 29. "Ver tema relacionado": reutiliza la navegación curricular existente
+
+`RelatedTopics` (dentro de `TutorConversation.tsx`) renderiza un CTA por
+tópico deduplicado, con `aria-label="Ver tema relacionado: {topic_title}"`
+(nombre accesible completo, no solo el texto visible "Ver tema
+relacionado →"). El handler (`onNavigateToTopic`, prop nueva de
+`TutorPanel`/`TutorConversation`) se conecta en `ClassroomPage.tsx`
+directamente a `goToTopic({ moduleId, topicId })` — la MISMA función que
+ya usan "Tema anterior"/"Tema siguiente" (`content-panel__topic-nav`).
+**Cero sistema de routing nuevo.**
+
+Como `goToTopic` es una navegación de tópico normal (`navigate()` de
+react-router, sin `replace`), toda la limpieza que YA disparaba cualquier
+cambio de tópico corre automáticamente, sin código nuevo:
+
+- el `useEffect` de `ClassroomPage` keyed en `[courseId, moduleId,
+  topicId]` resetea `lesson`/`tutorInterrupting`/`inspectedTutorRef` y
+  llama `cancelAllSpeech()` (corta narración de clase Y voz del tutor,
+  incluida la neural vía `AbortController`/`playbackToken` de v1.3.0);
+- `TutorPanel` se remonta con una `key` nueva (`${courseId}-${moduleId}-${topicId}`),
+  así que su conversación y el switch "Ampliar con conocimiento general"
+  vuelven a su estado inicial (switch en OFF) sin lógica adicional;
+- ningún `SceneRenderer`/animación pedagógica sigue vivo (la LessonPlan
+  se resetea a `null` antes de cargar la del tópico nuevo);
+- `markTopicCompleted` NUNCA se dispara por esta navegación: solo lo hace
+  el `useEffect` atado a `engine.isCompleted`, que solo se vuelve `true`
+  vía `engine.nextScene()` en la última escena
+  (`handleCompleteTopic`) — "Ver tema relacionado" nunca llama a esa
+  función. Confirmado con QA real (sección 30): `localStorage` de
+  Learning Progress queda exactamente igual antes y después del click.
+- browser Back funciona nativo (misma pila de historial de
+  react-router, sin implementación custom) — confirmado con QA real.
+
+Validación de destino "stale" (PARTE 17): si `course_sources` apuntara a
+un tópico que ya no existe, `goToTopic` navega igual y el `useEffect` de
+carga de tópico existente maneja el 404 con el mismo patrón de error ya
+usado en toda la app (`"Este tópico no existe o no está disponible..."`)
+— no hace falta ninguna validación nueva, el camino de error ya cubre
+este caso.
+
+## 30. QA real (`spec-driven-design-expert`, proveedor OpenAI `gpt-4o-mini`, Playwright headless)
+
+Todas las corridas de esta sección son contra la app real levantada con
+`docker compose up`, sin mocks — HTTP real al backend, LLM real, browser
+real (Chromium headless vía Playwright, screenshots descartados al
+terminar la QA, nunca commiteados).
+
+### 30.1 Caso central (criterio A/B/C): cross-topic, switch OFF
+
+Mismo caso que el Bloque 2 (sección 21.1): tópico actual
+`subagentes-y-paralelismo-seguro`, pregunta sobre contratos de API,
+switch OFF. Respuesta real cruda:
+
+```json
+{
+  "response_type": "answer",
+  "answer_chunks": [],
+  "course_answer_chunks": [
+    { "text": "Evolucioná una API v1...", "source_refs": ["COURSE-SRC-005"] },
+    { "text": "Especificar contratos antes de consumidores.", "source_refs": ["COURSE-SRC-006"] },
+    { "text": "Planificar evolución compatible.", "source_refs": ["COURSE-SRC-006"] }
+  ],
+  "course_sources": [
+    { "ref": "COURSE-SRC-005", "topic_id": "diseno-de-apis-y-contratos-evolutivos", ... },
+    { "ref": "COURSE-SRC-006", "topic_id": "diseno-de-apis-y-contratos-evolutivos", ... }
+  ]
+}
+```
+
+`course_sources` trae DOS entradas (`COURSE-SRC-005`/`006`) del MISMO
+tópico -- caso real de deduplicación, no un fixture inventado. La UI
+muestra exactamente UN item "Temas relacionados" ("Diseño de APIs y
+contratos evolutivos"), con el CTA `aria-label="Ver tema relacionado:
+Diseño de APIs y contratos evolutivos"`. Click → navega a
+`/aula/spec-driven-design-expert/diseno-tecnico-especificado/diseno-de-apis-y-contratos-evolutivos`
+(URL real, módulo/tópico correctos, confirmado por `page.waitForURL`).
+
+### 30.2 Skill (criterio A, regresión de v1.3.0 mejorada)
+
+Repite el caso de v1.3.0 BLOQUE 6 (sección 21.3 del Bloque 2): "¿Qué es
+una skill?", switch OFF. UI real: "Basado en el curso" (nunca "Ampliado
+con conocimiento general" — no hizo falta), CTA "Ver tema relacionado:
+Skills, MCP y fuentes de contexto". Ver captura de pantalla real
+integrada en el reporte de este bloque (no commiteada).
+
+### 30.3 Fallback a conocimiento general (criterio G)
+
+De 4 preguntas candidatas probadas con switch ON contra el mismo tópico
+("deuda técnica", "feature flags", "circuit breaker", "observabilidad en
+sistemas distribuidos"), dos resultaron naturalmente en `not_covered`/
+`unrelated` según juicio del LLM, dos en `course_covered=true` (el curso
+sí las cubre, resuelto por evidencia real sin necesitar conocimiento
+general) y una — "¿Qué es la observabilidad en sistemas distribuidos?"
+— en el caso buscado: `course_covered=false`, `general_knowledge_used=true`.
+UI real: únicamente "Ampliado con conocimiento general" (itálico, badge
+neutro), sin "Basado en este tema", sin "Basado en el curso", sin
+"Temas relacionados" — nunca contenido curricular ficticio junto a
+conocimiento general.
+
+### 30.4 No completion / switch reset / Learning Progress (criterios D)
+
+Con el switch activado manualmente y una respuesta cross-topic real
+visible, se midió `localStorage["pwc-tutor:learning-progress:v1"]` antes
+y después del click en "Ver tema relacionado": `{"courses": {}}` en
+ambos casos (ningún lesson se había generado, caso más estricto posible
+-- cero side effects). El switch, que estaba en ON antes del click, quedó
+en OFF al llegar al tópico destino (remount de `TutorPanel`, sin lógica
+especial).
+
+### 30.5 Responsive y accesibilidad (criterios I)
+
+`document.documentElement.scrollWidth === clientWidth` exacto (0
+overflow) en 1366×768, 768×1024 y 390×844, con una respuesta
+course-grounded + "Temas relacionados" visible en los tres. Navegación
+100% por teclado: `cta.focus()` + `Enter` disparó la misma navegación que
+un click real, confirmado por URL final. 0 errores de consola en las tres
+resoluciones.
+
+## 31. Copy corregido (PARTE 20-21 de la especificación de este bloque)
+
+v1.3.0 tenía dos textos que ya no eran ciertos tras el Bloque 2 (que el
+switch en OFF significaba "el tutor solo conoce este tema"):
+
+- `TutorPanel.tsx`, hint del switch en OFF: **"El tutor responde
+  únicamente en base al contenido de este tema."** →
+  **"El tutor responde únicamente con contenido demostrado por el curso
+  (este tema u otros temas relacionados), sin conocimiento general."**
+- `useTutor.ts`, `NOT_COVERED_MESSAGE`: **"...Podés preguntarme sobre el
+  contenido visible de este tema."** → **"...Podés preguntarme sobre el
+  contenido del curso."**
+- Texto de ayuda del switch (checkbox): actualizado al copy sugerido por
+  la especificación: "Permite complementar las respuestas con
+  conocimiento general cuando el contenido del curso no es suficiente."
+
+`UNRELATED_MESSAGE` (v1.3.0 BLOQUE 6) ya mencionaba "el resto del curso"
+explícitamente — no necesitó cambios.
+
+## 32. Bug real encontrado durante la inspección (no era parte del pedido, pero quedaba en el área)
+
+Leyendo `TutorPanel.tsx` completo (PARTE 2 de la especificación: "voice
+cleanup") se encontró que la secuencia de texto leída por voz
+(`handleSubmit`) solo incluía `answer_chunks` + `general_knowledge_chunks`
+— nunca `course_answer_chunks`. Una respuesta cross-topic pura (como la
+de la sección 30.1, `answer_chunks=[]`) quedaba en **silencio total** con
+la voz activada, pese a mostrar contenido real en pantalla. Corregido
+agregando `course_answer_chunks` a la secuencia (mismo criterio que los
+otros dos canales: se lee tal cual, sin reformular). Test de regresión:
+`TutorPanel.test.tsx::"PARTE 39: voz incluye course_answer_chunks..."`.
+
+## 33. Tests nuevos
+
+- `frontend/src/classroom/courseSources.ts` (nuevo, pura, sin tests
+  dedicados propios -- ejercitada indirectamente por los tests 16-19 de
+  `useTutor.test.ts`, que verifican el comportamiento observable).
+- `useTutor.test.ts`: +4 tests (16-19) -- normalización de respuesta
+  legacy, separación de `course_answer_chunks` en `provenance`, dedup
+  real por tópico, guard contra `course_sources` sin
+  `course_answer_chunks`.
+- `TutorConversation.test.tsx`: +4 tests -- render de grupos desde
+  `provenance`, nombre accesible del CTA, robustez sin
+  `onNavigateToTopic`, ningún `SRC-XXX`/`COURSE-SRC-XXX` visible como
+  texto.
+- `TutorPanel.test.tsx`: reescritos los tests E/F/H (badge único ->
+  labels de provenance, copy actualizado) + ~20 tests nuevos cubriendo
+  PARTE 30-39 de la especificación (labels por combinación de canales,
+  triple mezcla, dedup/multi-topic, navegación, voz con
+  `course_answer_chunks`).
+- 439 tests de frontend (+19 vs. Bloque 2) y 585 de backend (sin cambios,
+  cero archivos backend tocados en este bloque) pasando.
+
+## 34. Frontend (resumen de archivos)
+
+```
+frontend/src/classroom/courseSources.ts       (nuevo)
+frontend/src/classroom/useTutor.ts            (provenance estructurada, copy)
+frontend/src/classroom/TutorConversation.tsx  (grupos + Temas relacionados)
+frontend/src/classroom/TutorPanel.tsx         (onNavigateToTopic, voz, copy)
+frontend/src/pages/ClassroomPage.tsx          (onNavigateToTopic -> goToTopic)
+frontend/src/styles/global.css                (labels + Temas relacionados)
+```
+
+Sin dependencias nuevas. Sin segundo sistema de routing. Sin cambios de
+contrato backend (`TutorReplyBody`/`CourseGroundedText`/
+`TutorCourseSource` idénticos al Bloque 2).
+
+## 35. Próximos pasos (fuera de alcance de este bloque)
+
+- Hardening/release de v1.4.0 (bloque futuro): auditoría del diff
+  acumulado Bloque 1+2+3, siguiendo el mismo patrón que v1.1.0/v1.2.0/
+  v1.3.0.
+- `heading_path` de `TutorCourseSource` sigue sin mostrarse en la UI
+  (decisión deliberada de este bloque, PARTE 10: "solo si agrega valor y
+  no produce ruido" -- module_title/topic_title ya alcanzan para
+  ubicarse). Si un bloque futuro encuentra evidencia real de que hace
+  falta más contexto, se puede agregar sin romper el contrato (el campo
+  ya existe).

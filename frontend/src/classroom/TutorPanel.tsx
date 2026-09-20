@@ -27,6 +27,10 @@ export interface TutorPanelProps {
   onInterrupt: () => void;
   onContinueClass: () => void;
   onInspectRef?: (ref: string) => void;
+  /** v1.4.0 (Bloque 3): "Ver tema relacionado" -- reutiliza la navegación
+   * curricular ya existente (goToTopic en ClassroomPage), nunca un
+   * segundo sistema de routing. */
+  onNavigateToTopic?: (moduleId: string, topicId: string) => void;
 }
 
 /**
@@ -47,6 +51,7 @@ export function TutorPanel({
   onInterrupt,
   onContinueClass,
   onInspectRef,
+  onNavigateToTopic,
 }: TutorPanelProps) {
   const [question, setQuestion] = useState("");
   const [neuralVoiceError, setNeuralVoiceError] = useState<string | null>(null);
@@ -84,9 +89,18 @@ export function TutorPanel({
     setQuestion("");
     const reply = await tutor.sendMessage(text, allowGeneralKnowledge);
     if (reply && voiceEnabled) {
+      // v1.4.0 (Bloque 3): course_answer_chunks faltaba acá -- una
+      // respuesta cross-topic (answer_chunks=[], todo en
+      // course_answer_chunks, ver Bloque 2) quedaba en silencio total con
+      // la voz activada. Mismo criterio que answer_chunks/
+      // general_knowledge_chunks: se lee tal cual, sin reformular.
       const texts =
         reply.response_type === "answer"
-          ? [...reply.answer_chunks.map((chunk) => chunk.text), ...reply.general_knowledge_chunks]
+          ? [
+              ...reply.answer_chunks.map((chunk) => chunk.text),
+              ...(reply.course_answer_chunks ?? []).map((chunk) => chunk.text),
+              ...reply.general_knowledge_chunks,
+            ]
           : reply.response_type === "clarification"
             ? [reply.clarification_question ?? ""]
             : reply.response_type === "unrelated"
@@ -141,6 +155,7 @@ export function TutorPanel({
         messages={tutor.messages}
         showSourceRefs={import.meta.env.DEV}
         onInspectRef={onInspectRef}
+        onNavigateToTopic={onNavigateToTopic}
       />
 
       {tutor.loading && <p className="tutor-panel__loading">El tutor está pensando…</p>}
@@ -225,8 +240,8 @@ export function TutorPanel({
           Ampliar con conocimiento general
         </label>
         <p className="tutor-panel__expanded-mode-help">
-          Permite complementar con conocimiento general de IA, pero solo para preguntas
-          relacionadas con este tema o con el ámbito del curso
+          Permite complementar las respuestas con conocimiento general cuando el contenido del
+          curso no es suficiente.
         </p>
       </div>
 
@@ -236,10 +251,14 @@ export function TutorPanel({
             Limpiar conversación
           </button>
         )}
+        {/* v1.4.0 (Bloque 3, PARTE 20/21): "apagado" ya NO significa "solo
+            este tema" -- desde el Bloque 2, el tutor siempre puede usar el
+            resto del curso además del tópico actual; el switch controla
+            EXCLUSIVAMENTE si además se permite conocimiento general. */}
         <p className="tutor-panel__hint">
           {allowGeneralKnowledge
-            ? "Modo ampliado activo: el tutor puede complementar con conocimiento general de IA para preguntas relacionadas con este tema o con el ámbito del curso."
-            : "El tutor responde únicamente en base al contenido de este tema."}
+            ? "Modo ampliado activo: el tutor puede complementar con conocimiento general de IA cuando ni este tema ni el resto del curso alcanzan para responder."
+            : "El tutor responde únicamente con contenido demostrado por el curso (este tema u otros temas relacionados), sin conocimiento general."}
         </p>
       </div>
     </div>
