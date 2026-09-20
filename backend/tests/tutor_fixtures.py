@@ -20,8 +20,18 @@ def lesson_body_with_reflection_scene() -> dict:
     return body
 
 
+# v1.3.0 (BLOQUE 6 gap-closure): `relevance_reasoning` es un campo extra
+# ignorado por `TutorReplyBody` (modo estricto, sin `extra="forbid"`
+# configurado en ningún modelo del tutor) pero EXIGIDO por
+# `ExpandedTutorReplyBody` (modo ampliado, ver app/models/tutor.py) -- se
+# incluye en todos los fixtures para que sirvan sin cambios en ambos
+# modos, sin necesitar variantes duplicadas por modo.
+_RELEVANCE_REASONING = "Pertenece al tema del tópico actual (categoría a)."
+
+
 def valid_answer_reply_dict(refs: list[str] | None = None) -> dict:
     return {
+        "relevance_reasoning": _RELEVANCE_REASONING,
         "response_type": "answer",
         "answer_chunks": [
             {
@@ -34,11 +44,17 @@ def valid_answer_reply_dict(refs: list[str] | None = None) -> dict:
 
 
 def valid_not_covered_reply_dict() -> dict:
-    return {"response_type": "not_covered", "answer_chunks": [], "clarification_question": None}
+    return {
+        "relevance_reasoning": _RELEVANCE_REASONING,
+        "response_type": "not_covered",
+        "answer_chunks": [],
+        "clarification_question": None,
+    }
 
 
 def valid_clarification_reply_dict() -> dict:
     return {
+        "relevance_reasoning": _RELEVANCE_REASONING,
         "response_type": "clarification",
         "answer_chunks": [],
         "clarification_question": "¿A cuál de los conceptos de esta escena te referís?",
@@ -52,6 +68,7 @@ def valid_clarification_reply_dict() -> dict:
 
 def valid_unrelated_reply_dict() -> dict:
     return {
+        "relevance_reasoning": "Claramente ajena al dominio educativo del curso.",
         "response_type": "unrelated",
         "answer_chunks": [],
         "clarification_question": None,
@@ -64,6 +81,7 @@ def valid_general_related_reply_dict() -> dict:
     toda la respuesta viene de conocimiento general (general_knowledge_chunks,
     sin ningún answer_chunk grounded)."""
     return {
+        "relevance_reasoning": _RELEVANCE_REASONING,
         "response_type": "answer",
         "answer_chunks": [],
         "general_knowledge_chunks": [
@@ -79,6 +97,7 @@ def valid_topic_plus_general_reply_dict(refs: list[str] | None = None) -> dict:
     answer_chunk grounded (con source_refs reales) y un
     general_knowledge_chunk (texto plano, sin source_refs)."""
     return {
+        "relevance_reasoning": _RELEVANCE_REASONING,
         "response_type": "answer",
         "answer_chunks": [
             {

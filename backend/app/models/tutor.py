@@ -94,49 +94,130 @@ class TutorReplyBody(BaseModel):
 
     @model_validator(mode="after")
     def _validate_shape_by_response_type(self) -> "TutorReplyBody":
-        if self.response_type == TutorResponseType.answer:
-            if not self.answer_chunks and not self.general_knowledge_chunks:
-                raise ValueError(
-                    "response_type='answer' requiere al menos un answer_chunk o "
-                    "general_knowledge_chunk."
-                )
-            if self.clarification_question is not None:
-                raise ValueError(
-                    "response_type='answer' no debe incluir clarification_question."
-                )
-            if bool(self.general_knowledge_chunks) != self.general_knowledge_used:
-                raise ValueError(
-                    "general_knowledge_used debe ser true si y solo si hay al menos un "
-                    "general_knowledge_chunk (nunca uno sin el otro)."
-                )
-        else:
-            if self.answer_chunks:
-                raise ValueError(
-                    f"response_type='{self.response_type.value}' no debe incluir answer_chunks."
-                )
-            if self.general_knowledge_chunks:
-                raise ValueError(
-                    f"response_type='{self.response_type.value}' no debe incluir "
-                    "general_knowledge_chunks (no se generó ninguna respuesta)."
-                )
-            if self.general_knowledge_used:
-                raise ValueError(
-                    f"response_type='{self.response_type.value}' no debe declarar "
-                    "general_knowledge_used=true (no se generó ninguna respuesta)."
-                )
-            if self.response_type == TutorResponseType.clarification:
-                if not self.clarification_question or not self.clarification_question.strip():
-                    raise ValueError(
-                        "response_type='clarification' requiere clarification_question."
-                    )
-            elif self.clarification_question is not None:
-                # not_covered / unrelated: el backend redacta el mensaje
-                # fijo, nunca el LLM (mismo criterio para ambos).
-                raise ValueError(
-                    f"response_type='{self.response_type.value}' no debe incluir "
-                    "clarification_question."
-                )
+        _validate_tutor_reply_shape(
+            response_type=self.response_type,
+            answer_chunks=self.answer_chunks,
+            general_knowledge_chunks=self.general_knowledge_chunks,
+            clarification_question=self.clarification_question,
+            general_knowledge_used=self.general_knowledge_used,
+        )
         return self
+
+
+def _validate_tutor_reply_shape(
+    *,
+    response_type: TutorResponseType,
+    answer_chunks: list[GroundedText],
+    general_knowledge_chunks: list[str],
+    clarification_question: str | None,
+    general_knowledge_used: bool,
+) -> None:
+    """Invariantes de forma compartidas entre `TutorReplyBody` y
+    `ExpandedTutorReplyBody` (v1.3.0, BLOQUE 6 gap-closure) -- ambas
+    exponen exactamente los mismos cinco campos de respuesta, la única
+    diferencia es que `ExpandedTutorReplyBody` antepone un campo de
+    razonamiento interno (ver su docstring)."""
+    if response_type == TutorResponseType.answer:
+        if not answer_chunks and not general_knowledge_chunks:
+            raise ValueError(
+                "response_type='answer' requiere al menos un answer_chunk o "
+                "general_knowledge_chunk."
+            )
+        if clarification_question is not None:
+            raise ValueError("response_type='answer' no debe incluir clarification_question.")
+        if bool(general_knowledge_chunks) != general_knowledge_used:
+            raise ValueError(
+                "general_knowledge_used debe ser true si y solo si hay al menos un "
+                "general_knowledge_chunk (nunca uno sin el otro)."
+            )
+    else:
+        if answer_chunks:
+            raise ValueError(
+                f"response_type='{response_type.value}' no debe incluir answer_chunks."
+            )
+        if general_knowledge_chunks:
+            raise ValueError(
+                f"response_type='{response_type.value}' no debe incluir "
+                "general_knowledge_chunks (no se generó ninguna respuesta)."
+            )
+        if general_knowledge_used:
+            raise ValueError(
+                f"response_type='{response_type.value}' no debe declarar "
+                "general_knowledge_used=true (no se generó ninguna respuesta)."
+            )
+        if response_type == TutorResponseType.clarification:
+            if not clarification_question or not clarification_question.strip():
+                raise ValueError("response_type='clarification' requiere clarification_question.")
+        elif clarification_question is not None:
+            # not_covered / unrelated: el backend redacta el mensaje
+            # fijo, nunca el LLM (mismo criterio para ambos).
+            raise ValueError(
+                f"response_type='{response_type.value}' no debe incluir clarification_question."
+            )
+
+
+class ExpandedTutorReplyBody(BaseModel):
+    """Modelo INTERNO usado ÚNICAMENTE como `response_model` de la llamada
+    LLM cuando `allow_general_knowledge=True` (v1.3.0, BLOQUE 6
+    gap-closure) -- NUNCA se expone en la API pública (el router sigue
+    declarando `response_model=TutorReplyBody`; `tutor_service.ask_tutor`
+    convierte el resultado a `TutorReplyBody` antes de devolverlo, ver
+    `_to_tutor_reply_body`).
+
+    Causa raíz que motiva este modelo: con OpenAI Structured Outputs
+    (`response_format=<PydanticModel>`) y `temperature=0`, el modelo debe
+    comprometerse con `response_type` como el PRIMER campo generado, sin
+    ningún espacio para razonar -- una comparación real (mismo prompt,
+    mismo modelo) mostró que en texto libre el modelo SÍ concluía
+    correctamente "relevante, cobertura insuficiente" para preguntas como
+    "¿Qué es una skill?" en un curso de AI-assisted development, pero en
+    modo estructurado igual devolvía "unrelated" 3/3 veces. Anteponer un
+    campo de razonamiento (`relevance_reasoning`) ANTES de `response_type`
+    en el orden de campos del schema le da al modelo el mismo espacio de
+    razonamiento dentro de la MISMA llamada estructurada -- sin agregar un
+    segundo LLM call, sin agregar ningún campo nuevo al contrato público
+    (`TutorReplyBody`), sin exponer `answer_mode`/`relevance` como campo de
+    API. `relevance_reasoning` se descarta siempre, nunca se loguea (podría
+    parafrasear la pregunta del alumno) y nunca llega al alumno."""
+
+    relevance_reasoning: str = Field(
+        min_length=1,
+        max_length=600,
+        description=(
+            "Razonamiento interno breve (1-3 oraciones, NUNCA se muestra al "
+            "alumno, NUNCA se persiste): qué categoría de REGLA 20 punto 1 "
+            "(a-f) aplica a esta pregunta, o por qué es CLARAMENTE ajena al "
+            "dominio educativo del curso si concluís unrelated. Completá "
+            "este campo ANTES de decidir response_type."
+        ),
+    )
+    response_type: TutorResponseType
+    answer_chunks: list[GroundedText] = Field(default_factory=list)
+    general_knowledge_chunks: list[str] = Field(default_factory=list)
+    clarification_question: str | None = Field(default=None, max_length=300)
+    general_knowledge_used: bool = False
+
+    @model_validator(mode="after")
+    def _validate_shape_by_response_type(self) -> "ExpandedTutorReplyBody":
+        _validate_tutor_reply_shape(
+            response_type=self.response_type,
+            answer_chunks=self.answer_chunks,
+            general_knowledge_chunks=self.general_knowledge_chunks,
+            clarification_question=self.clarification_question,
+            general_knowledge_used=self.general_knowledge_used,
+        )
+        return self
+
+    def to_tutor_reply_body(self) -> "TutorReplyBody":
+        """Descarta `relevance_reasoning` -- nunca cruza hacia el contrato
+        público ni hacia los logs."""
+        return TutorReplyBody(
+            response_type=self.response_type,
+            answer_chunks=self.answer_chunks,
+            general_knowledge_chunks=self.general_knowledge_chunks,
+            clarification_question=self.clarification_question,
+            general_knowledge_used=self.general_knowledge_used,
+        )
 
 
 class CheckpointRequest(BaseModel):

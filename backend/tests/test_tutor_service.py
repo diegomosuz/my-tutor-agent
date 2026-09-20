@@ -697,7 +697,11 @@ def test_expanded_B_course_domain_block_absent_in_strict_mode(tmp_path):
     sent_user_message = provider.calls[0][1]["content"]
     assert "COURSE DOMAIN" not in sent_user_message
     assert "REGLA 22" not in sent_system_message
-    assert "REGLA 20" not in sent_system_message  # modo ampliado ni se menciona
+    # REGLA 7 (siempre presente) menciona "REGLA 20" como puntero de
+    # cross-reference para el modo ampliado (BLOQUE 6 gap-closure) -- eso
+    # es esperado incluso en modo estricto. Lo que nunca debe aparecer es
+    # el CONTENIDO real de REGLA 20 (su título/heading).
+    assert "MODO AMPLIADO: CONOCIMIENTO GENERAL" not in sent_system_message
 
 
 def test_expanded_C_regla_22_present_in_system_prompt_only_when_expanded(tmp_path):
@@ -738,4 +742,4 @@ def test_expanded_E_existing_reply_fixtures_still_valid_with_course_scope_presen
 
 
 def test_expanded_F_tutor_prompt_version_bumped_for_course_scope():
-    assert TUTOR_PROMPT_VERSION == "tutor-v3.2"
+    assert TUTOR_PROMPT_VERSION == "tutor-v3.2.1"

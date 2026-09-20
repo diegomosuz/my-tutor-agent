@@ -8,7 +8,7 @@ from app.prompts.tutor import TUTOR_PROMPT_VERSION, TUTOR_SYSTEM_PROMPT
 
 
 def test_tutor_prompt_version_bumped():
-    assert TUTOR_PROMPT_VERSION == "tutor-v3.2"
+    assert TUTOR_PROMPT_VERSION == "tutor-v3.2.1"
 
 
 def test_system_prompt_forbids_decorative_markdown():

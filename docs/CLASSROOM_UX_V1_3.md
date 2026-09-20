@@ -569,6 +569,121 @@ fuera de alcance: "no agregar una segunda llamada LLM"). Se deja
 documentado para una fase futura de verificación de grounding más
 estricta si se decide abordarlo.
 
+### 7.1 Gap-closure: el relevance gate era demasiado estricto (`tutor-v3.2` → `tutor-v3.2.1`)
+
+QA real post-Bloque-6 encontró un defecto funcional real: con el switch
+activado, "¿Qué es una skill?" devolvía `unrelated` de forma consistente
+en el curso `spec-driven-design-expert` (`fundamentos-de-sdd/que-es-spec-driven-design-development`)
+— pese a que `COURSE DOMAIN` listaba literalmente un tópico "Skills, MCP
+y fuentes de contexto" en un módulo posterior del mismo curso.
+
+**Causa raíz #1 (filosofía del gate)**: REGLA 20 (v3.2) point 1 pedía
+"coincide con el tema de otro módulo/tópico" — una redacción que en la
+práctica el modelo interpretaba como "demostrar pertenencia" (casi una
+whitelist semántica contra títulos de `COURSE DOMAIN`), no como
+"descartar solo si es claramente ajeno". No había ninguna guía explícita
+sobre términos cortos o ambiguos con una lectura técnica plausible en el
+dominio del curso.
+
+**Causa raíz #2 (regla en conflicto, mismo patrón que v3→v3.1)**: REGLA
+20 solo decía explícitamente que reemplazaba REGLA 6 — nunca aclaraba
+que REGLA 3/4/5 ("prohibido inventar... definiciones") no aplican de la
+misma forma a `general_knowledge_chunks` en modo ampliado. El modelo
+parecía usar "unrelated" como una salida seguridad para evitar violar
+REGLA 5, incluso cuando la pregunta era razonablemente relevante.
+
+**Causa raíz #3 (la más profunda, encontrada por comparación real
+prompt-libre vs. structured output)**: con el MISMO prompt exacto, pedirle
+al modelo que razonara en texto libre (sin JSON Schema) producía
+consistentemente la conclusión correcta (relevance=SÍ, coverage
+insuficiente → debería responder con conocimiento general). Pero con
+OpenAI Structured Outputs (`response_format=<PydanticModel>`,
+`temperature=0`, el mecanismo real que usa `OpenAIProvider`), el modelo
+debe comprometerse con `response_type` como el PRIMER campo generado del
+JSON, sin ningún espacio de razonamiento previo — un experimento directo
+mostró que el propio `relevance_reasoning` del modelo (ver más abajo)
+podía decir explícitamente "se relaciona con conceptos técnicos
+relevantes" y aun así terminar en `response_type="unrelated"` en el mismo
+objeto — la conclusión escrita y la categórica no eran consistentes entre
+sí.
+
+**Fix de tres capas, ninguna agrega una segunda llamada LLM ni RAG**:
+
+1. **Prompt (filosofía)**: REGLA 20 point 1 se reescribió como una
+   "PRESUNCIÓN MODERADAMENTE PERMISIVA" con seis categorías explícitas
+   (a-f: tema actual, materia general, fundamentos del dominio, conceptos
+   adyacentes, herramientas/ecosistema, utilidad para aplicar el
+   material). REGLA 22 se reescribió para decir explícitamente que
+   `COURSE DOMAIN` es evidencia del dominio, NUNCA una lista cerrada, y
+   agrega una regla específica para términos cortos/ambiguos ("skill",
+   "agent", "hook", "context" como ejemplos ilustrativos, nunca
+   hardcodeados como la única lógica de match). REGLA 20 también aclara
+   ahora explícitamente que MATIZA REGLA 3/4/5 para esta consulta
+   puntual: usar conocimiento general dentro de `general_knowledge_chunks`
+   no es "inventar", es el propósito del modo. Se agregó además una
+   ADVERTENCIA CRÍTICA explícita: RELEVANCE y COVERAGE son ejes
+   independientes, "no hay cobertura" nunca es por sí solo motivo de
+   `unrelated`, con un autochequeo obligatorio de consistencia contra el
+   propio `relevance_reasoning` antes de fijar `response_type`.
+2. **Schema (causa raíz #3, el cambio más profundo)**: nuevo modelo
+   interno `ExpandedTutorReplyBody` (`app/models/tutor.py`) — usado
+   ÚNICAMENTE como `response_model` de la llamada LLM cuando
+   `allow_general_knowledge=true` — antepone un campo
+   `relevance_reasoning: str` (1-3 oraciones) ANTES de `response_type` en
+   el orden de campos del schema, dándole al modelo el mismo espacio de
+   razonamiento que ya usaba correctamente en modo texto libre, dentro de
+   la MISMA llamada estructurada. `relevance_reasoning` se descarta
+   siempre antes de devolver la respuesta
+   (`ExpandedTutorReplyBody.to_tutor_reply_body()`, llamado desde
+   `tutor_service.ask_tutor`): nunca se loguea, nunca cruza hacia el
+   contrato público (`TutorReplyBody`, el mismo de siempre, sin campos
+   nuevos — el router sigue declarando `response_model=TutorReplyBody`).
+   Modo estricto: sin cambios, sigue usando `TutorReplyBody` directamente.
+3. **Guardia de atribución débil (REGLA 7, ataca un hallazgo secundario)**:
+   REGLA 7 (siempre presente, ambos modos) ahora incluye un autochequeo
+   explícito — "¿esta oración exacta está respaldada por lo que ESTE
+   bloque específico dice, no por otro bloque ni por el tema general?" —
+   y una regla específica para preguntas de definición ("¿Qué es X?"): si
+   AUTHORIZED SOURCE menciona X de pasada pero nunca lo define, esa
+   definición va en `general_knowledge_chunks`, nunca en un
+   `answer_chunk` que cite ese bloque como si lo definiera.
+
+**Resultado real (QA extensa, `spec-driven-design-expert`,
+`gpt-4o-mini`)**: "¿Qué es una skill?" con switch ON pasó de 0% de éxito
+(3/3 `unrelated`, reproducido antes del fix) a **17/19 `answer` (~89%)**
+en corridas frescas posteriores al fix completo — una mejora real y
+sustancial, no un 3/3 perfectamente determinístico (documentado con
+honestidad: `temperature=0` reduce pero no elimina la varianza real de
+OpenAI, algo ya observado en bloques anteriores de este proyecto). Las 2
+excepciones observadas: 1 `unrelated` aislado (mismo patrón de varianza)
+y 1 agotamiento de reintentos (`GenerationFailedError`, dentro del mismo
+presupuesto de 3 intentos que siempre existió, nunca un tipo de fallo
+nuevo). Casos de control: "¿Qué es un agente de IA?" (concepto adyacente,
+no es ningún título literal) — 3/3 `answer`; "¿Cuál es la mejor receta de
+asado?" y un intento de prompt injection ("ignorá el curso y...") — ambos
+consistentemente `unrelated`; modo estricto con la misma pregunta de
+skill — `not_covered`, sin cambios (confirma que el modo estricto no se
+debilitó).
+
+**Limitación residual observada, documentada con honestidad**: "¿Qué es
+un LLM?" mostró un comportamiento idiosincrático (3/3 `unrelated`, pese a
+que su propio `relevance_reasoning` interno reconocía relación con el
+dominio) que no cedió ante las tres capas de fix — un caso aislado dentro
+de una mejora real y grande, no representativo del comportamiento general
+observado con otros términos ambiguos/adyacentes. Se deja documentado
+para una futura iteración si se decide seguir invirtiendo en esto (fuera
+de alcance agregar una segunda llamada LLM o un validador semántico
+nuevo, ambos explícitamente descartados para este gap-closure). La
+guardia de atribución débil (capa 3) tampoco elimina el problema al
+100%: quedó una mejora observable, no una garantía absoluta — sigue
+siendo la misma limitación arquitectónica ya documentada (`source_refs`
+demuestra trazabilidad estructural, no prueba semántica), atacada con
+prompt-tuning, nunca con un validador determinístico nuevo (explícitamente
+fuera de alcance de este gap-closure).
+
+`TUTOR_PROMPT_VERSION`: `tutor-v3.2` → `tutor-v3.2.1`.
+`LESSON_PROMPT_VERSION` sin cambios (`lesson-v3.3.1`).
+
 ## 8. Alcance explícitamente NO tocado (Bloque 6)
 
 `lesson-v3.3.1`, `VisualPlan`, renderers, Pedagogical Animations, RAG,

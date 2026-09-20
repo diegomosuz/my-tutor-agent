@@ -32,7 +32,12 @@ import time
 
 from app.config import Settings
 from app.models.schemas import CanonicalTopicContent
-from app.models.tutor import TutorMessage, TutorReplyBody, TutorResponseType
+from app.models.tutor import (
+    ExpandedTutorReplyBody,
+    TutorMessage,
+    TutorReplyBody,
+    TutorResponseType,
+)
 from app.prompts.tutor import (
     CourseModuleScope,
     CourseScope,
@@ -192,7 +197,7 @@ def ask_tutor(
         course_scope=course_scope,
     )
 
-    def _validate(body: TutorReplyBody) -> None:
+    def _validate(body: TutorReplyBody | ExpandedTutorReplyBody) -> None:
         validate_tutor_reply(body, canonical)
         # Defensa en profundidad (v1.3.0): en modo estricto el prompt
         # nunca menciona "unrelated" como opción (REGLA 20/21 ni siquiera
@@ -238,11 +243,21 @@ def ask_tutor(
         # ValidationFailure explícitas de acá arriba).
         log_event(logger, "tutor_query_retry", **log_context, attempt=attempt, reason=reason)
 
+    # v1.3.0 (BLOQUE 6 gap-closure): en modo ampliado, el `response_model`
+    # real pasado al provider es `ExpandedTutorReplyBody`, no
+    # `TutorReplyBody` -- ver su docstring en app/models/tutor.py para la
+    # causa raíz exacta (Structured Outputs + temperature=0 obligan a
+    # comprometerse con response_type sin espacio de razonamiento; un
+    # campo de razonamiento ANTES de response_type en el orden del schema
+    # resuelve esto dentro de la MISMA llamada). El modo estricto no
+    # cambia en absoluto: sigue usando `TutorReplyBody` tal cual.
+    response_model = ExpandedTutorReplyBody if allow_general_knowledge else TutorReplyBody
+
     try:
-        body = generate_with_retries(
+        raw_body = generate_with_retries(
             provider=llm_provider,
             messages=messages,
-            response_model=TutorReplyBody,
+            response_model=response_model,
             validate=_validate,
             build_correction_message=build_tutor_correction_message,
             on_retry=_on_retry,
@@ -257,6 +272,15 @@ def ask_tutor(
             error_type=type(exc).__name__,
         )
         raise
+
+    # `relevance_reasoning` (si existe) nunca cruza hacia el contrato
+    # público ni hacia los logs -- se descarta acá, antes de cualquier
+    # otro uso de `body`.
+    body: TutorReplyBody = (
+        raw_body.to_tutor_reply_body()
+        if isinstance(raw_body, ExpandedTutorReplyBody)
+        else raw_body
+    )
 
     duration_ms = int((time.monotonic() - started_at) * 1000)
     log_event(
