@@ -169,12 +169,24 @@ export function ClassroomPage() {
   // v1.5.0 (Guided Markdown Read Aloud): el Reader opera exclusivamente
   // sobre el Markdown ya renderizado dentro de este contenedor (nunca
   // sobre el resto de .content-panel__body -- puntos clave/recursos no
-  // son Markdown del tópico). `aiAudioSessionActive` es EXACTAMENTE la
-  // misma condición que habilita la narración de la clase arriba
-  // (`voiceEnabled && !engine.isCompleted`) -- mientras esté encendida,
-  // pausada o no, el Reader queda deshabilitado (PARTE 8/45: nunca le
-  // "roba" el turno a una sesión de IA que el alumno no cerró
-  // explícitamente).
+  // son Markdown del tópico). `aiAudioSessionActive` debe reflejar
+  // únicamente sesiones de IA que realmente PUEDEN producir audio:
+  // - generación en curso (`lessonLoading`, PARTE 6/41: el claim ya
+  //   detiene al Reader al hacer click en "Generar clase con IA", pero
+  //   sin este término el Reader podía re-habilitarse a mitad de la
+  //   generación si `voiceEnabled` era false o si todavía no había
+  //   escena);
+  // - narración de escena real activa (misma condición que
+  //   `useClassroomVoice.ts` usa para efectivamente hablar: `enabled &&
+  //   scene`, ver su guard `if (!enabled || !scene) return` -- nunca
+  //   solo `voiceEnabled && !engine.isCompleted`, que sigue siendo
+  //   `true` aunque no exista ninguna escena/lección generada, p. ej.
+  //   por una preferencia de voz encendida en una sesión anterior sin
+  //   que exista lección en esta).
+  // Bug real corregido (v1.5.0): sin `!!engine.currentScene`, "Leer
+  // tema" quedaba deshabilitado con Markdown visible y ninguna
+  // narración de IA sonando, solo por tener la voz activada como
+  // preferencia persistida.
   const readAloudContainerRef = useRef<HTMLDivElement>(null);
   const readAloud = useReadAloud({
     containerRef: readAloudContainerRef,
@@ -182,7 +194,8 @@ export function ClassroomPage() {
     topicKey: `${courseId ?? ""}:${moduleId ?? ""}:${topicId ?? ""}`,
     useNeural,
     voice: readAloudVoice,
-    aiAudioSessionActive: voiceEnabled && !engine.isCompleted,
+    aiAudioSessionActive:
+      lessonLoading || (voiceEnabled && !!engine.currentScene && !engine.isCompleted),
   });
 
   useEffect(() => {

@@ -134,11 +134,41 @@ inmediatamente (`hardStop`) ante cualquier claim — nunca se reanuda solo.
 **El Reader nunca llama a `claimAiAudioPriority()`** — si lo hiciera,
 "robaría prioridad" a sí mismo sin sentido, y peor, interrumpiría a la
 IA (PARTE 8: el Reader nunca le roba el turno a IA). En cambio, el botón
-del Reader queda **deshabilitado** mientras
-`aiAudioSessionActive = voiceEnabled && !engine.isCompleted` es `true`
-— EXACTAMENTE la misma condición que habilita la narración de la clase,
-sin importar si está en pausa (PARTE 45: "AI voice paused pero sigue
-siendo owner" → Reader deshabilitado, nunca lo reemplaza).
+del Reader queda **deshabilitado** mientras `aiAudioSessionActive` es
+`true`, calculado en `ClassroomPage.tsx` como:
+
+```typescript
+aiAudioSessionActive =
+  lessonLoading || (voiceEnabled && !!engine.currentScene && !engine.isCompleted)
+```
+
+sin importar si la narración está en pausa (PARTE 45: "AI voice paused
+pero sigue siendo owner" → Reader deshabilitado, nunca lo reemplaza).
+
+### 4.1 Bug real encontrado en QA (y su fix): `aiAudioSessionActive` no
+replicaba la condición real de audio
+
+La primera versión usaba `aiAudioSessionActive = voiceEnabled &&
+!engine.isCompleted` — la mitad de la condición real que
+`useClassroomVoice.ts` usa para efectivamente hablar
+(`if (!enabled || !scene) { cancelAllSpeech(); return; }`, donde
+`enabled = voiceEnabled && !engine.isCompleted`). Le faltaba el `&&
+scene`: sin ninguna lección generada en la sesión actual,
+`engine.currentScene` es `null` y por lo tanto NINGÚN audio de IA puede
+estar sonando — pero si `voiceEnabled` había quedado en `true` en
+`localStorage` de una sesión anterior (persiste entre sesiones,
+sección 9 de Fase 4), `aiAudioSessionActive` seguía dando `true` y
+"Leer tema" quedaba deshabilitado sin ninguna sesión de audio real
+detrás. Fix: agregar `!!engine.currentScene` a la condición (mismo
+criterio que `useClassroomVoice.ts`, nunca uno nuevo) y agregar
+`lessonLoading` como blocker explícito (PARTE 8: sin este término, el
+Reader podía re-habilitarse a mitad de una generación real si
+`voiceEnabled` era `false` o si la escena todavía no existía —
+`claimAiAudioPriority()` solo detiene al Reader en el momento del
+click, es un evento, no un lock persistente). Regresión cubierta por
+`ClassroomPage.test.tsx` — tests "C" (Markdown legible + voz activada
+por preferencia previa + sin escena → habilitado) y "D" (escena real
+narrando → deshabilitado; se apaga la voz → vuelve a habilitarse).
 
 ## 5. `SpeechSegment` y segmentación (`readAloudSegments.ts`)
 

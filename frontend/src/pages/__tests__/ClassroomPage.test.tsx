@@ -715,4 +715,35 @@ describe("ClassroomPage — v1.5.0 Guided Markdown Read Aloud", () => {
 
     resolveGeneration(SAMPLE_LESSON);
   });
+
+  it("C (PARTE 46, crítico -- bug real corregido): con voz activada por preferencia de una sesión previa pero SIN lección/escena generada, 'Leer tema' está habilitado", async () => {
+    // Reproduce el bug real reportado: `voiceEnabled` queda persistido en
+    // localStorage de una sesión anterior, pero en ESTA sesión el alumno
+    // todavía no generó ninguna clase con IA (no existe `engine.currentScene`)
+    // -- por lo tanto ningún audio de IA puede estar sonando. "Leer tema"
+    // nunca debe quedar deshabilitado solo por esta preferencia persistida
+    // sin una sesión de audio real detrás.
+    window.localStorage.setItem("pwc-tutor:voice-enabled", "1");
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Leer tema/ })).not.toBeDisabled()
+    );
+  });
+
+  it("D (PARTE 46): con una escena de IA realmente narrando 'Leer tema' se deshabilita, y al apagar la voz vuelve a habilitarse sin lock obsoleto", async () => {
+    await renderWithLesson();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Leer tema/ })).not.toBeDisabled()
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Activar voz" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Leer tema/ })).toBeDisabled()
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Desactivar voz" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Leer tema/ })).not.toBeDisabled()
+    );
+  });
 });
