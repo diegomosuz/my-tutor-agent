@@ -525,7 +525,8 @@ export function ClassroomPage() {
                 de ESCENA -- solo existe cuando hay una LessonPlan activa
                 (sin IA no hay escenas artificiales que navegar). La
                 navegación entre TÓPICOS del curso vive siempre en su propia
-                sección separada, más abajo (topic-nav), nunca acá. */}
+                sección separada (v1.3.0 BLOQUE 6: junto al panel de
+                Markdown, .content-panel__topic-nav), nunca acá. */}
             {lesson && (
               <div className="scene-controls" role="group" aria-label="Controles de la escena">
                 <div className="scene-controls__side scene-controls__side--prev">
@@ -711,32 +712,6 @@ export function ClassroomPage() {
               />
             )}
 
-            {/* v1.3.0 (BLOQUE C): navegación de TÓPICO, SIEMPRE visible
-                (con o sin LessonPlan) -- computada sobre el orden lineal
-                real del curso (flatTopics), cruzando módulos sin
-                problema. Nunca comparte botón con la navegación de
-                escena de arriba. */}
-            <div className="topic-nav" role="group" aria-label="Navegación entre tópicos">
-              <button
-                type="button"
-                className="topic-nav__prev"
-                onClick={() => goToTopic(prevTopic)}
-                disabled={!prevTopic}
-                aria-label="Tema anterior"
-              >
-                ← Tema anterior
-              </button>
-              <button
-                type="button"
-                className="topic-nav__next"
-                onClick={() => goToTopic(nextTopic)}
-                disabled={!nextTopic}
-                aria-label="Tema siguiente"
-              >
-                Tema siguiente →
-              </button>
-            </div>
-
             {course && course.modules.length > 0 && (
               <div className="module-topic-nav">
                 {flatTopics.map((t, index) => (
@@ -789,6 +764,37 @@ export function ClassroomPage() {
                 </button>
               ))}
             </div>
+
+            {/* v1.3.0 (BLOQUE 6): navegación de TÓPICO, SIEMPRE visible
+                (con o sin LessonPlan) -- computada sobre el orden lineal
+                real del curso (flatTopics), cruzando módulos sin
+                problema. Nunca comparte botón con la navegación de
+                escena. Reubicada junto al panel de Markdown (antes vivía
+                debajo del Tutor) para asociarla visualmente al contenido
+                que efectivamente cambia. Vive fuera de
+                .content-panel__body (el único contenedor con scroll), por
+                lo que permanece visible sin necesitar position: sticky. */}
+            <div className="content-panel__topic-nav topic-nav" role="group" aria-label="Navegación entre tópicos">
+              <button
+                type="button"
+                className="topic-nav__prev"
+                onClick={() => goToTopic(prevTopic)}
+                disabled={!prevTopic}
+                aria-label="Tema anterior"
+              >
+                ← Tema anterior
+              </button>
+              <button
+                type="button"
+                className="topic-nav__next"
+                onClick={() => goToTopic(nextTopic)}
+                disabled={!nextTopic}
+                aria-label="Tema siguiente"
+              >
+                Tema siguiente →
+              </button>
+            </div>
+
             <div className="content-panel__body">
               {!topic && !error && <p>Cargando contenido del tema…</p>}
 

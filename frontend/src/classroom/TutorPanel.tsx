@@ -226,7 +226,7 @@ export function TutorPanel({
         </label>
         <p className="tutor-panel__expanded-mode-help">
           Permite complementar con conocimiento general de IA, pero solo para preguntas
-          relacionadas con este tema
+          relacionadas con este tema o con el ámbito del curso
         </p>
       </div>
 
@@ -238,7 +238,7 @@ export function TutorPanel({
         )}
         <p className="tutor-panel__hint">
           {allowGeneralKnowledge
-            ? "Modo ampliado activo: el tutor puede complementar con conocimiento general de IA para preguntas relacionadas con este tema."
+            ? "Modo ampliado activo: el tutor puede complementar con conocimiento general de IA para preguntas relacionadas con este tema o con el ámbito del curso."
             : "El tutor responde únicamente en base al contenido de este tema."}
         </p>
       </div>

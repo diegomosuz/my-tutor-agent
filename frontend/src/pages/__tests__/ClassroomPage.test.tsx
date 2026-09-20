@@ -593,3 +593,36 @@ describe("ClassroomPage — v1.3.0 Classroom UX (BLOQUE C: navegación)", () => 
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 });
+
+// ----------------------------------------------------------------------
+// v1.3.0 (BLOQUE 6: content-panel navigation), PARTE 11 A-B — la
+// navegación de tópico vive junto al panel de Markdown, ya NO debajo del
+// Tutor. Reusa exactamente la misma navegación (mismos aria-labels,
+// mismos handlers) — solo cambia su ubicación en el DOM.
+// ----------------------------------------------------------------------
+describe("ClassroomPage — v1.3.0 content-panel navigation (BLOQUE 6)", () => {
+  it("A: la navegación de tópico vive dentro de .content-panel, antes de .content-panel__body", async () => {
+    const { container } = await renderWithLesson();
+
+    const panel = container.querySelector(".content-panel");
+    expect(panel).not.toBeNull();
+    const children = Array.from(panel!.children).map((el) => el.className);
+
+    const navIndex = children.findIndex((c) => c.includes("content-panel__topic-nav"));
+    const bodyIndex = children.findIndex((c) => c.includes("content-panel__body"));
+
+    expect(navIndex).toBeGreaterThanOrEqual(0);
+    expect(bodyIndex).toBeGreaterThan(navIndex);
+  });
+
+  it("B: la navegación de tópico ya NO vive dentro de .classroom-stage (no está debajo del Tutor)", async () => {
+    const { container } = await renderWithLesson();
+
+    const stage = container.querySelector(".classroom-stage");
+    expect(stage).not.toBeNull();
+    expect(stage!.querySelector(".content-panel__topic-nav")).toBeNull();
+
+    // sigue existiendo una sola instancia real del toolbar en toda la página
+    expect(screen.getAllByRole("group", { name: "Navegación entre tópicos" })).toHaveLength(1);
+  });
+});

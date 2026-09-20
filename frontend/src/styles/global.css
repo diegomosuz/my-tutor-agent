@@ -2771,6 +2771,16 @@ p {
   cursor: not-allowed;
 }
 
+/* v1.3.0 (BLOQUE 6): misma navegación de tópico, reubicada como fila fija
+   dentro de .content-panel (entre las tabs y el body con scroll), en vez
+   de debajo del Tutor. Vive fuera de .content-panel__body, así que
+   permanece visible sin position: sticky. */
+.content-panel__topic-nav {
+  margin-top: 0;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--color-border);
+}
+
 /* ---------- Estados: loading / error / vacío ---------- */
 
 .state-box {

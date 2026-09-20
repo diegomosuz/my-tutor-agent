@@ -344,7 +344,7 @@ relacionada en modo ampliado → `unrelated` con el mensaje fijo; misma
 pregunta en modo estricto → `not_covered`; el switch nunca aparece
 marcado por default; cero errores de consola.
 
-## 5. Alcance explícitamente NO tocado
+## 5. Alcance explícitamente NO tocado (Bloque 1)
 
 Generación visual de `LessonPlan`, `lesson-v3.2.1`, Visual Selection,
 `VisualPlan` (schema sin cambios), el builder determinístico de
@@ -352,3 +352,226 @@ Pedagogical Animations (`buildAnimationSequence`,
 `usePedagogicalAnimation`) y sus algoritmos por `visual_type`, RAG,
 búsqueda web. El problema de "exceso de texto / falta de diagramas" en
 las clases generadas queda explícitamente para el próximo bloque.
+
+## 6. Navegación de tópico: reubicada junto al contenido (Bloque 6)
+
+### Causa raíz
+
+La navegación de tópico (`.topic-nav`, "← Tema anterior"/"Tema siguiente
+→") vivía debajo de `TutorPanel`, dentro de `.classroom-stage` — lejos
+visualmente del panel de Markdown (`.content-panel`) cuyo contenido en
+realidad cambia al navegar. El alumno tenía que bajar más allá del Tutor
+para encontrar el control que cambia de tema.
+
+### Solución
+
+Reubicación pura de DOM/CSS, sin tocar ningún handler: el mismo bloque
+(mismos `aria-label`s "Tema anterior"/"Tema siguiente", mismos
+`goToTopic(prevTopic)`/`goToTopic(nextTopic)`, mismas condiciones
+`disabled`) se movió de `.classroom-stage` a `.content-panel`, como fila
+fija entre `.content-panel__tabs` y `.content-panel__body`
+(`ClassroomPage.tsx`). Nueva clase `.content-panel__topic-nav`
+(`global.css`) solo ajusta `margin-top`/`padding`/`border-bottom` para el
+nuevo contexto — reutiliza `.topic-nav`/`.topic-nav button` tal cual para
+todo lo demás (colores, hover, disabled, `focus-visible`).
+
+**Por qué no hace falta `position: sticky`**: `.content-panel` ya es
+`display: flex; flex-direction: column` con `.content-panel__body` como
+único contenedor con `overflow-y: auto` — el header y las tabs ya viven
+FUERA de ese scroll, como filas fijas hermanas. El nuevo toolbar es una
+tercera fila fija más en esa misma estructura: permanece visible mientras
+el Markdown scrollea debajo, sin ningún CSS especial de posicionamiento
+ni riesgo de tapar contenido (nunca `position: fixed` sobre toda la app).
+Sin override específico para mobile: `.classroom-grid` colapsa a una
+columna (`1fr`) por debajo de 960px, pero `.content-panel` conserva la
+misma estructura interna a cualquier ancho.
+
+Eliminado por completo el bloque duplicado de la ubicación anterior —
+una sola instancia de la navegación de tópico en todo el DOM (verificado
+con Playwright: `document.querySelectorAll(".content-panel__topic-nav")`
+devuelve longitud 1, y `.classroom-stage .content-panel__topic-nav` no
+matchea nada).
+
+Semántica sin cambios: `.scene-controls` (navegación de ESCENA, solo con
+`LessonPlan` activa) sigue completamente separada; "Tema siguiente"
+nunca avanza una escena y "Siguiente diapositiva" nunca cambia de tópico.
+El cruce de módulos, la limpieza de voz (`cancelAllSpeech`, ya invocada
+dentro de la navegación por ruta existente) y el cleanup de timers de
+animación (desmontaje de `SceneRenderer` al cambiar de tópico) se
+heredan sin duplicar ningún handler — `goToTopic` es la misma función de
+Bloque 1, sin modificar.
+
+### Tests
+
+`frontend/src/pages/__tests__/ClassroomPage.test.tsx`: los 10 tests
+existentes de BLOQUE C (navegación) siguen pasando sin cambios (usan
+`getByRole`/`aria-label`, no dependen de la posición en el DOM). 2 tests
+nuevos (`describe("... content-panel navigation (BLOQUE 6)")`): la
+navegación vive dentro de `.content-panel`, antes de
+`.content-panel__body`; ya no vive dentro de `.classroom-stage` y existe
+una sola instancia real en la página.
+
+### QA real
+
+Verificado con Playwright headless contra
+`spec-driven-design-expert/fundamentos-de-sdd/que-es-spec-driven-design-development`:
+el toolbar aparece inmediatamente debajo de las tabs Explicación/Puntos
+clave/Recursos, permanece en la misma posición al scrollear el Markdown
+(capturado en dos screenshots, antes/después de `scrollTop`), click en
+"Tema siguiente" navega realmente a
+`fundamentos-de-sdd/por-que-sdd-importa-en-ingenieria-asistida-por-ia`
+(confirmado por URL y `<h1>` reales, no solo por el mock). A 390×844
+(mobile): sin overflow horizontal
+(`document.documentElement.scrollWidth <= clientWidth`), los dos botones
+entran completos sin truncarse. Cero errores de consola en ambos
+viewports.
+
+## 7. Tutor ampliado a nivel de curso: CourseScope (Bloque 6)
+
+### Motivación
+
+El modo ampliado (Bloque 1) solo consideraba relevante una pregunta si
+pertenecía al tema del tópico actual — una pregunta legítima sobre OTRO
+tópico del mismo curso (p.ej., estando en "Qué es Spec-Driven Design" el
+alumno pregunta por "GitHub Spec Kit", que es un tópico real de un
+módulo posterior del mismo curso) caía en `unrelated`, aunque
+claramente perteneciera al dominio del curso que el alumno está
+cursando.
+
+### CourseScope: qué es y qué NO es
+
+`CourseScope` (`backend/app/prompts/tutor.py`) es una estructura
+determinística — **sin LLM, sin RAG, sin embeddings, sin segunda
+llamada** — resuelta server-side por `tutor_service._resolve_course_scope`
+a partir del `course_id` ya validado por el repositorio seguro existente
+(`course_service.get_course_detail`, la misma función que sirve
+`GET /api/courses/{course_id}`). Contiene EXCLUSIVAMENTE:
+
+- título del curso;
+- descripción del curso (hoy siempre `""` — el repositorio de cursos
+  todavía no tiene ningún mecanismo de metadata a nivel de curso; se
+  refleja fielmente ese estado real, nunca se inventa una descripción);
+- título de cada módulo;
+- título de cada tópico de cada módulo.
+
+**Nunca** contiene Markdown, ni un resumen generado, ni ningún dato que
+no sea un título ya conocido por el repositorio. Se envía al LLM como un
+bloque nuevo, `=== COURSE DOMAIN ===`, **solo cuando
+`allow_general_knowledge=true`** (igual que REGLA 20/21: en modo
+estricto ni se resuelve — ver `test_course_scope_H_resolver_never_called_in_strict_mode`
+— ni se agrega al prompt).
+
+**Regla dura, idéntica en espíritu a la sección 2 de `CLAUDE.md`**:
+CourseScope es exclusivamente para **RELEVANCE**, nunca para
+**GROUNDING**. Que un tópico se llame "X" en `COURSE DOMAIN` no le da al
+LLM ningún dato sobre el contenido real de X — solo le dice que X existe
+como tema del curso. El Grounding Packet del tópico actual
+(`AUTHORIZED SOURCE`) sigue siendo la única fuente real de conocimiento;
+una pregunta sobre otro tópico, aunque sea relevante, nunca se responde
+citando ese tópico como si fuera `AUTHORIZED SOURCE` — se responde vía
+`general_knowledge_chunks` (sin `source_refs`, ver Bloque 1 sección 4) o
+no se responde (`not_covered`/`unrelated` según corresponda).
+
+### Nueva definición de relevancia (REGLA 20/22, `tutor-v3.1` → `tutor-v3.2`)
+
+- **RELEVANTE** = pregunta sobre el tema del tópico actual **O** sobre
+  cualquier módulo/tópico listado en `COURSE DOMAIN`.
+- **NO RELEVANTE (`unrelated`)** = ni lo uno ni lo otro.
+- **COVERAGE** sigue evaluándose únicamente contra `AUTHORIZED SOURCE`
+  del tópico actual — nunca contra el contenido real de otro tópico
+  (el LLM nunca lo recibió). Una pregunta relevante-por-dominio-de-curso
+  pero fuera del tópico actual es, casi siempre, coverage=insuficiente
+  → se responde con `general_knowledge_chunks` (REGLA 20 punto 2b),
+  exactamente igual que cualquier otra pregunta relacionada-no-cubierta
+  — CourseScope solo amplía qué cuenta como "relacionada", nunca cambia
+  el mecanismo de respuesta.
+
+REGLA 22 (nueva) documenta esto explícitamente en el system prompt,
+incluyendo qué pasa si `COURSE DOMAIN` no aparece en el mensaje
+(relevance vuelve a evaluarse solo contra el tópico actual, como antes
+de este bloque — degradación explícita, nunca un comportamiento
+implícito).
+
+### Contrato sin cambios
+
+Por diseño explícito de este bloque, **no se agregó ningún campo nuevo**
+a `TutorRequest`/`TutorReplyBody` — ni `answer_mode` ni `relevance` ni
+nada equivalente. El contrato reutiliza exactamente
+`response_type`/`answer_chunks`/`general_knowledge_chunks`/
+`general_knowledge_used` ya existentes desde Bloque 1: una pregunta
+course-domain-pero-fuera-de-tópico sigue viéndose, desde el punto de
+vista del contrato, igual que cualquier otra pregunta
+relacionada-no-cubierta.
+
+### Frontend
+
+Solo copy actualizado (`TutorPanel.tsx`, `useTutor.ts`), sin cambios de
+lógica ni de estado: el texto de ayuda del switch pasa a *"Permite
+complementar con conocimiento general de IA, pero solo para preguntas
+relacionadas con este tema o con el ámbito del curso"*, y
+`UNRELATED_MESSAGE` pasa a *"Esa pregunta no parece estar relacionada
+con este tema ni con el resto del curso..."*. El switch sigue siendo
+estado de sesión puro (default OFF, se resetea por tópico vía `key` de
+`TutorPanel`, nunca toca `localStorage`/Learning Progress) — sin cambios
+respecto a Bloque 1.
+
+### Tests
+
+Backend (`backend/tests/test_tutor_service.py`): CourseScope A-H
+(título/módulos/tópicos de TODO el curso, no solo el módulo/tópico
+actual; descripción `""` fiel al estado real; nunca Markdown; curso
+inexistente y fallo de resolución degradan a `None` sin propagar
+excepción; nunca se resuelve en modo estricto) + modo ampliado A-F
+(`COURSE DOMAIN` presente solo en modo ampliado; REGLA 22 presente solo
+en modo ampliado; degradación sin `COURSE DOMAIN` si la resolución
+falla; fixtures de respuesta existentes de Bloque 1 siguen validando con
+`CourseScope` presente; versión de prompt confirmada `tutor-v3.2`).
+`backend/tests/test_tutor_prompt_injection.py`: 3 tests nuevos
+(`CourseScope` marcado no autoritativo en el prompt; un título de
+módulo/tópico adversarial permanece como DATO dentro del bloque
+delimitado, nunca se filtra al mensaje de sistema; `CourseScope` pasado
+en modo estricto se descarta por diseño). `test_tutor_plain_text.py`
+actualizado a `tutor-v3.2`.
+
+### QA real (proveedor `openai` configurado)
+
+Contra `spec-driven-design-expert`, tópico "Qué es Spec-Driven Design /
+Development" (módulo `fundamentos-de-sdd`):
+
+- **Pregunta cubierta por el tópico** (switch OFF): `answer` grounded con
+  `source_refs` reales ✓.
+- **Pregunta del dominio del curso pero de OTRO módulo**
+  ("¿Cómo se diseñan migraciones de modelos de datos manteniendo
+  invariantes?" — coincide con el tópico real
+  "Modelos de datos, invariantes y migraciones" del módulo 6):
+  - switch OFF → `not_covered` ✓ (criterio B).
+  - switch ON, **3 corridas frescas** → las 3 devolvieron
+    `response_type="answer"`, `general_knowledge_used=true`, con
+    `general_knowledge_chunks` sustantivo ✓✓✓ (criterio C, caso crítico
+    literal del bloque).
+- **Pregunta totalmente ajena al curso** ("¿Cuál es la mejor receta para
+  un asado argentino?", switch ON): `unrelated` ✓ (criterio D) — confirma
+  que `COURSE DOMAIN` amplía el universo de temas relevantes sin
+  volverlo ilimitado.
+
+**Limitación observada durante esta QA (preexistente, no introducida por
+este bloque)**: en el caso "course-domain pero de otro módulo", el
+`answer_chunk` grounded citó `source_refs` reales del tópico actual
+(headings/afirmaciones genéricas sobre especificaciones) para conectar
+tangencialmente con el concepto de "invariantes" del enunciado — una
+trazabilidad estructuralmente válida (las referencias existen) pero
+semánticamente laxa. Esto es exactamente la distinción ya documentada en
+`CLAUDE.md` sección 8 y en `docs/ARCHITECTURE.md`
+("`source_refs` demuestra trazabilidad estructural, NO es una prueba
+semántica") — no es un defecto nuevo de CourseScope ni algo que este
+bloque deba corregir (requeriría una verificación semántica adicional,
+fuera de alcance: "no agregar una segunda llamada LLM"). Se deja
+documentado para una fase futura de verificación de grounding más
+estricta si se decide abordarlo.
+
+## 8. Alcance explícitamente NO tocado (Bloque 6)
+
+`lesson-v3.3.1`, `VisualPlan`, renderers, Pedagogical Animations, RAG,
+búsqueda web, agentes, una segunda llamada LLM. `TutorReplyBody`/
+`TutorRequest` sin campos nuevos. El mecanismo de reintentos/validación
+de grounding de `answer_chunks` (Bloque 1) no cambió.

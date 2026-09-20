@@ -357,7 +357,7 @@ describe("TutorPanel", () => {
   it("H: el texto de ayuda del switch nunca sugiere web/internet/búsqueda", () => {
     render(<TutorPanel {...baseProps()} />);
     const help = screen.getByText(
-      "Permite complementar con conocimiento general de IA, pero solo para preguntas relacionadas con este tema"
+      "Permite complementar con conocimiento general de IA, pero solo para preguntas relacionadas con este tema o con el ámbito del curso"
     );
     const text = help.textContent?.toLowerCase() ?? "";
     expect(text).not.toMatch(/web|internet|búsqueda|actualizad/);

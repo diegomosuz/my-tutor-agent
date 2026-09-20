@@ -11,10 +11,14 @@ Pipeline:
         -> TutorReplyBody final (se devuelve tal cual; no se cachea, ver Fase 5 sección 18)
 
 Regla de fuente de verdad: el Grounding Packet es la ÚNICA fuente
-autorizada. `recent_history` y el contexto de escena (GENERATED CLASS
-CONTEXT) son exclusivamente contexto conversacional/generado NO confiable
-— nunca se usan como fuente de verdad, y nunca se envían al LLM como si lo
-fueran (ver `app/prompts/tutor.py`).
+autorizada. `recent_history`, el contexto de escena (GENERATED CLASS
+CONTEXT) y el dominio del curso (COURSE DOMAIN, v1.3.0 BLOQUE 6 -- ver
+`_resolve_course_scope`) son exclusivamente contexto conversacional/
+generado/estructural NO confiable — nunca se usan como fuente de verdad,
+y nunca se envían al LLM como si lo fueran (ver `app/prompts/tutor.py`).
+COURSE DOMAIN solo amplía qué preguntas se consideran RELEVANTES en modo
+ampliado (REGLA 22); nunca amplía qué se puede responder con grounding
+real, que sigue siendo exclusivamente el tópico actual.
 
 Diseñado para inyección de dependencias simple, igual que
 `lesson_generator.py`: `ask_tutor` acepta un `provider: LLMProvider | None`
@@ -29,7 +33,13 @@ import time
 from app.config import Settings
 from app.models.schemas import CanonicalTopicContent
 from app.models.tutor import TutorMessage, TutorReplyBody, TutorResponseType
-from app.prompts.tutor import SceneContext, build_tutor_correction_message, build_tutor_messages
+from app.prompts.tutor import (
+    CourseModuleScope,
+    CourseScope,
+    SceneContext,
+    build_tutor_correction_message,
+    build_tutor_messages,
+)
 from app.services import courses as course_service
 from app.services import lesson_generator
 from app.services.llm_provider import LLMConfigurationError, LLMProvider, get_llm_provider
@@ -78,6 +88,39 @@ def _resolve_scene_context(
     return SceneContext(scene_id=scene.scene_id, title=scene.title.text, source_refs=sorted(refs))
 
 
+def _resolve_course_scope(*, settings: Settings, course_id: str) -> CourseScope | None:
+    """Resuelve el dominio del curso completo (v1.3.0, BLOQUE 6) desde
+    `course_id` -- SIEMPRE vía el repositorio seguro ya existente
+    (`course_service.get_course_detail`, el mismo que resuelve `GET
+    /api/courses/{course_id}`), nunca a partir de un path o string
+    arbitrario del request. Determinístico, sin LLM, sin embeddings: solo
+    una segunda lectura (barata) del filesystem de cursos.
+
+    Se llama únicamente cuando `allow_general_knowledge=True` (ver
+    `ask_tutor`): en modo estricto no hace falta resolver esto, así que no
+    se paga ese costo. `course_id` ya fue validado por
+    `course_service.get_grounding_packet` momentos antes en `ask_tutor` --
+    en la práctica este resolver nunca debería fallar -- pero, igual que
+    `_resolve_scene_context`, nunca propaga una excepción: si por
+    cualquier motivo no puede resolver el curso, el modo ampliado
+    simplemente sigue funcionando con RELEVANCE acotada al tópico actual
+    (REGLA 20 sin REGLA 22), nunca rompe la consulta del alumno."""
+    try:
+        detail = course_service.get_course_detail(settings.content_path, course_id)
+    except Exception:
+        return None
+
+    modules = [
+        CourseModuleScope(title=m.title, topic_titles=[t.title for t in m.topics])
+        for m in detail.modules
+    ]
+    return CourseScope(
+        course_title=detail.title,
+        course_description=detail.description,
+        modules=modules,
+    )
+
+
 def ask_tutor(
     *,
     settings: Settings,
@@ -122,6 +165,11 @@ def ask_tutor(
     scene_context = _resolve_scene_context(
         settings=settings, provider=llm_provider, canonical=canonical, scene_id=scene_id
     )
+    course_scope = (
+        _resolve_course_scope(settings=settings, course_id=course_id)
+        if allow_general_knowledge
+        else None
+    )
 
     log_context = {
         "course_id": course_id,
@@ -141,6 +189,7 @@ def ask_tutor(
         scene_context=scene_context,
         grounding_packet=grounding_packet,
         allow_general_knowledge=allow_general_knowledge,
+        course_scope=course_scope,
     )
 
     def _validate(body: TutorReplyBody) -> None:

@@ -550,3 +550,192 @@ def test_P_lesson_prompt_version_untouched_by_tutor_prompt_change():
     from app.prompts.lesson import LESSON_PROMPT_VERSION
 
     assert LESSON_PROMPT_VERSION == "lesson-v3.3.1"
+
+
+# --------------------------------------------------------------------------
+# v1.3.0 (BLOQUE 6: content-panel navigation + course-scoped expanded
+# tutor) -- CourseScope A-H y comportamiento de modo ampliado A-F.
+# --------------------------------------------------------------------------
+
+from app.prompts.tutor import TUTOR_PROMPT_VERSION  # noqa: E402
+
+
+def _make_multi_module_content_dir(tmp_path: Path) -> Path:
+    """Curso con dos módulos y varios tópicos -- usado para verificar que
+    CourseScope resuelve TODO el dominio del curso, no solo el módulo/
+    tópico actual."""
+    content_dir = tmp_path / "content"
+    course_dir = content_dir / "curso-demo"
+
+    mod1 = course_dir / "modulo-demo"
+    mod1.mkdir(parents=True)
+    (mod1 / "topico-demo.md").write_text(SAMPLE_TOPIC_MARKDOWN, encoding="utf-8")
+    (mod1 / "02-segundo-topico.md").write_text(
+        "# Segundo Tópico\n\nOtro contenido del primer módulo.\n", encoding="utf-8"
+    )
+
+    mod2 = course_dir / "02-modulo-avanzado"
+    mod2.mkdir(parents=True)
+    (mod2 / "01-tema-avanzado.md").write_text(
+        "# Tema Avanzado\n\nContenido de un módulo distinto.\n", encoding="utf-8"
+    )
+
+    return content_dir
+
+
+def _settings_multi_module(tmp_path: Path) -> Settings:
+    return Settings(
+        content_dir=str(_make_multi_module_content_dir(tmp_path)),
+        lesson_cache_dir=str(tmp_path / "cache"),
+    )
+
+
+# ---- CourseScope A-H (resolución determinística) --------------------------
+
+
+def test_course_scope_A_contains_course_title(tmp_path):
+    settings = _settings_multi_module(tmp_path)
+    scope = tutor_service._resolve_course_scope(settings=settings, course_id="curso-demo")
+    assert scope is not None
+    assert scope.course_title == "Curso Demo"
+
+
+def test_course_scope_B_contains_all_module_titles(tmp_path):
+    settings = _settings_multi_module(tmp_path)
+    scope = tutor_service._resolve_course_scope(settings=settings, course_id="curso-demo")
+    titles = {m.title for m in scope.modules}
+    assert "Modulo Demo" in titles
+    assert "Modulo Avanzado" in titles
+
+
+def test_course_scope_C_contains_topic_titles_across_all_modules(tmp_path):
+    settings = _settings_multi_module(tmp_path)
+    scope = tutor_service._resolve_course_scope(settings=settings, course_id="curso-demo")
+    all_topic_titles = {t for m in scope.modules for t in m.topic_titles}
+    # Incluye tópicos de AMBOS módulos, no solo el módulo/tópico actual de
+    # la consulta puntual (eso es exactamente lo que hace útil a CourseScope
+    # para relevance a nivel de curso). El título viene del mismo
+    # repositorio seguro que usa el resto de la app (frontmatter `title` si
+    # existe, si no humanize(filename) -- SAMPLE_TOPIC_MARKDOWN no declara
+    # frontmatter, así que el título es el del archivo).
+    assert "Topico Demo" in all_topic_titles
+    assert "Segundo Topico" in all_topic_titles
+    assert "Tema Avanzado" in all_topic_titles
+
+
+def test_course_scope_D_description_defaults_to_empty_string(tmp_path):
+    # El repositorio seguro (_course_description) todavía no tiene ningún
+    # mecanismo de metadata a nivel de curso -- CourseScope refleja
+    # fielmente ese estado real (nunca inventa una descripción que no
+    # existe en el filesystem).
+    settings = _settings_multi_module(tmp_path)
+    scope = tutor_service._resolve_course_scope(settings=settings, course_id="curso-demo")
+    assert scope.course_description == ""
+
+
+def test_course_scope_E_never_contains_raw_markdown_content(tmp_path):
+    settings = _settings_multi_module(tmp_path)
+    scope = tutor_service._resolve_course_scope(settings=settings, course_id="curso-demo")
+    # Frases que SÍ existen en el Markdown real de los tópicos, pero que
+    # nunca deberían aparecer en CourseScope (solo títulos).
+    serialized = f"{scope.course_title}|{scope.course_description}|" + "|".join(
+        f"{m.title}:{','.join(m.topic_titles)}" for m in scope.modules
+    )
+    assert "orquestador de contenedores" not in serialized
+    assert "unidad mínima de despliegue" not in serialized
+    assert "Contenido de un módulo distinto" not in serialized
+
+
+def test_course_scope_F_nonexistent_course_returns_none_never_raises(tmp_path):
+    settings = _settings_multi_module(tmp_path)
+    scope = tutor_service._resolve_course_scope(settings=settings, course_id="no-existe")
+    assert scope is None
+
+
+def test_course_scope_G_resolution_failure_degrades_gracefully(tmp_path, monkeypatch):
+    settings = _settings_multi_module(tmp_path)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("fallo simulado del repositorio de cursos")
+
+    monkeypatch.setattr(course_service, "get_course_detail", _boom)
+    scope = tutor_service._resolve_course_scope(settings=settings, course_id="curso-demo")
+    assert scope is None  # nunca propaga la excepción
+
+
+def test_course_scope_H_resolver_never_called_in_strict_mode(tmp_path, monkeypatch):
+    settings = _settings_multi_module(tmp_path)
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("get_course_detail no debe llamarse en modo estricto")
+
+    monkeypatch.setattr(course_service, "get_course_detail", _fail_if_called)
+    provider = FakeLLMProvider(responses=[valid_answer_reply_dict(["SRC-002"])])
+    reply = _ask(settings, provider, allow_general_knowledge=False)
+    assert reply.response_type.value == "answer"  # nunca lanzó el AssertionError de arriba
+
+
+# ---- Modo ampliado A-F (integración vía ask_tutor, FakeLLMProvider) -------
+
+
+def test_expanded_A_course_domain_block_present_in_expanded_mode(tmp_path):
+    settings = _settings_multi_module(tmp_path)
+    provider = FakeLLMProvider(responses=[valid_general_related_reply_dict()])
+    _ask(settings, provider, allow_general_knowledge=True)
+    sent_user_message = provider.calls[0][1]["content"]
+    assert "COURSE DOMAIN" in sent_user_message
+    assert "Modulo Avanzado" in sent_user_message
+    assert "Tema Avanzado" in sent_user_message
+    assert "no es fuente de verdad" in sent_user_message
+
+
+def test_expanded_B_course_domain_block_absent_in_strict_mode(tmp_path):
+    settings = _settings_multi_module(tmp_path)
+    provider = FakeLLMProvider(responses=[valid_answer_reply_dict(["SRC-002"])])
+    _ask(settings, provider, allow_general_knowledge=False)
+    sent_system_message = provider.calls[0][0]["content"]
+    sent_user_message = provider.calls[0][1]["content"]
+    assert "COURSE DOMAIN" not in sent_user_message
+    assert "REGLA 22" not in sent_system_message
+    assert "REGLA 20" not in sent_system_message  # modo ampliado ni se menciona
+
+
+def test_expanded_C_regla_22_present_in_system_prompt_only_when_expanded(tmp_path):
+    settings = _settings_multi_module(tmp_path)
+    provider = FakeLLMProvider(responses=[valid_general_related_reply_dict()])
+    _ask(settings, provider, allow_general_knowledge=True)
+    sent_system_message = provider.calls[0][0]["content"]
+    assert "REGLA 22" in sent_system_message
+    assert "COURSE DOMAIN" in sent_system_message
+
+
+def test_expanded_D_course_domain_absent_when_course_resolution_fails(tmp_path, monkeypatch):
+    # Degradación: si CourseScope no se puede resolver, el modo ampliado
+    # sigue funcionando (relevance acotada al tópico actual, REGLA 20 sin
+    # REGLA 22 aplicable) -- nunca rompe la consulta del alumno.
+    settings = _settings_multi_module(tmp_path)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("fallo simulado")
+
+    monkeypatch.setattr(course_service, "get_course_detail", _boom)
+    provider = FakeLLMProvider(responses=[valid_general_related_reply_dict()])
+    reply = _ask(settings, provider, allow_general_knowledge=True)
+    sent_user_message = provider.calls[0][1]["content"]
+    assert "COURSE DOMAIN" not in sent_user_message
+    assert reply.response_type.value == "answer"
+
+
+def test_expanded_E_existing_reply_fixtures_still_valid_with_course_scope_present(tmp_path):
+    # Regresión: agregar CourseScope al prompt no debe romper ninguno de
+    # los contratos de respuesta ya validados en el Bloque 1 (gap-closure).
+    settings = _settings_multi_module(tmp_path)
+    provider = FakeLLMProvider(responses=[valid_topic_plus_general_reply_dict(["SRC-002"])])
+    reply = _ask(settings, provider, allow_general_knowledge=True)
+    assert reply.response_type.value == "answer"
+    assert reply.general_knowledge_used is True
+    assert reply.answer_chunks[0].source_refs == ["SRC-002"]
+
+
+def test_expanded_F_tutor_prompt_version_bumped_for_course_scope():
+    assert TUTOR_PROMPT_VERSION == "tutor-v3.2"

@@ -15,8 +15,12 @@ export const NOT_COVERED_MESSAGE =
 // el backend nunca produce response_type="unrelated" (ver REGLA 20/backend
 // PARTE 22-24). El backend redacta el mensaje fijo del lado del frontend,
 // igual que NOT_COVERED_MESSAGE: el LLM nunca compone este texto.
+// v1.3.0 (BLOQUE 6): el copy se actualiza para reflejar que la relevancia
+// ya no se limita al tema actual, sino también al ámbito del curso
+// (CourseScope, REGLA 22) -- "unrelated" ahora significa "ni el tema ni
+// el curso", no solo "ni el tema".
 export const UNRELATED_MESSAGE =
-  "Esa pregunta no parece estar relacionada con este tema. Puedo ayudarte con preguntas sobre el contenido de este tema, incluso yendo un poco más allá con conocimiento general, pero no con temas sin relación.";
+  "Esa pregunta no parece estar relacionada con este tema ni con el resto del curso. Puedo ayudarte con preguntas sobre el contenido de este tema o de otros temas del curso, incluso yendo un poco más allá con conocimiento general, pero no con temas sin relación.";
 
 export interface TutorConversationMessage {
   id: string;
