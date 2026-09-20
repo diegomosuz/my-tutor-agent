@@ -1054,11 +1054,15 @@ Sin dependencias nuevas. Sin segundo sistema de routing. Sin cambios de
 contrato backend (`TutorReplyBody`/`CourseGroundedText`/
 `TutorCourseSource` idénticos al Bloque 2).
 
-## 35. Próximos pasos (fuera de alcance de este bloque)
+## 35. Próximos pasos identificados al cierre del Bloque 3 (resueltos en el hardening, ver Release Notes)
 
-- Hardening/release de v1.4.0 (bloque futuro): auditoría del diff
-  acumulado Bloque 1+2+3, siguiendo el mismo patrón que v1.1.0/v1.2.0/
-  v1.3.0.
+- ~~Hardening/release de v1.4.0~~ → auditoría completa del diff acumulado
+  Bloque 1+2+3 realizada, sin bugs nuevos encontrados en esa auditoría
+  final (los dos bugs reales de este release -- voz incompleta y copy
+  obsoleto del switch -- se habían encontrado y corregido durante el
+  propio Bloque 3, sección 32). Detalle completo del hardening, QA real
+  repetida y límites honestos del release en
+  `docs/RELEASE_NOTES_v1.4.0.md`.
 - `heading_path` de `TutorCourseSource` sigue sin mostrarse en la UI
   (decisión deliberada de este bloque, PARTE 10: "solo si agrega valor y
   no produce ruido" -- module_title/topic_title ya alcanzan para

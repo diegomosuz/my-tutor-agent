@@ -563,9 +563,20 @@ reanudar exactamente en la misma escena/punto de narración donde estaba
 **Qué NUNCA es fuente de verdad en este flujo** (para que quede explícito y
 no se relaje accidentalmente en una fase futura): `recent_history`, la
 `LessonPlan` completa, el `SceneContext` derivado de ella, y — en el flujo
-de checkpoints, ver 8.2 — `expected_answer`. La única fuente de verdad
-sigue siendo el Grounding Packet del `CanonicalTopicContent` del tópico
+de checkpoints, ver 8.2 — `expected_answer`. En Fase 5, la única fuente de
+verdad era el Grounding Packet del `CanonicalTopicContent` del tópico
 activo (Fase 2).
+
+**Actualizado en v1.4.0** ("Course-Wide Grounded Tutor"): el flujo de
+arriba gana una fuente curricular adicional, igual de legítima que el
+Grounding Packet del tópico activo — evidencia real de OTROS tópicos del
+mismo curso, recuperada con retrieval lexical determinístico (sin
+embeddings, sin LLM) y citada con su propio namespace temporal
+(`COURSE-SRC-XXX`, nunca persistido). `recent_history`/`SceneContext`
+siguen sin ser fuente de verdad, sin cambios. Detalle completo (modelo,
+prompt, invariantes, QA real) en
+[`docs/COURSE_GROUNDED_TUTOR_V1_4.md`](./COURSE_GROUNDED_TUTOR_V1_4.md) —
+no se duplica acá para no mantener dos descripciones del mismo contrato.
 
 ### 8.2 Flujo: respuesta del alumno a un checkpoint
 

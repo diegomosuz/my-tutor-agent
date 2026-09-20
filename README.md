@@ -7,23 +7,26 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **v1.2.0** publicado (`master`/`origin/master`). **v1.3.0** está
-> preparado como release candidate local (`release/v1.3.0-rc`, sin push/
-> tag/merge todavía — release gate pendiente, decisión separada). Sobre
-> la base de v1.2.0 (fidelidad visual real de diagramas/jerarquías,
-> selección de `visual_type` más confiable, animación pedagógica
-> determinística), v1.3.0 agrega navegación de tópico reubicada junto al
-> panel de Markdown, lifecycle de voz endurecido (invariante de
-> reproducción única, protección de respuesta TTS obsoleta), generación
-> de lecciones consciente de la estructura del Markdown fuente
-> (`lesson-v3.3.1`, tablas/código/listas preservados con mayor
-> confiabilidad) y un modo ampliado del tutor conversacional que cubre el
-> dominio educativo del curso completo, no solo el tópico actual
-> (`tutor-v3.3`, contrato estructurado `scope_relation`/`topic_coverage`
-> que separa a qué pertenece la pregunta de cuánto la cubre el tópico
-> actual, sin RAG ni una segunda llamada al modelo). Ver
-> [`docs/RELEASE_NOTES_v1.3.0.md`](./docs/RELEASE_NOTES_v1.3.0.md) (y,
-> para el historial previo,
+> **v1.3.0** publicado (`master`/`origin/master`). **v1.4.0** está
+> preparado como release candidate local (`release/v1.4.0-rc`, sin push/
+> tag/merge todavía — release gate pendiente, decisión separada). v1.4.0
+> agrega un **tutor grounded a nivel de curso completo**: además del
+> tópico actual, el tutor ahora puede respaldar sus respuestas con
+> evidencia real de OTROS tópicos del mismo curso, localizada con
+> retrieval lexical determinístico in-process (sin embeddings, sin
+> vector DB, sin búsqueda semántica) y citada con la misma trazabilidad
+> estructural que ya exigía el tópico actual. El switch "Ampliar con
+> conocimiento general" cambia de alcance: ahora controla únicamente si
+> se permite conocimiento general del modelo — el resto del curso está
+> disponible en todo momento, incluso con el switch apagado. El alumno ve
+> de dónde viene cada parte de la respuesta ("Basado en este tema" /
+> "Basado en el curso" / "Ampliado con conocimiento general") y puede
+> saltar directamente al tema de origen con "Ver tema relacionado", sin
+> marcar nada como completado por eso. `tutor-v4`. Ver
+> [`docs/RELEASE_NOTES_v1.4.0.md`](./docs/RELEASE_NOTES_v1.4.0.md) y
+> [`docs/COURSE_GROUNDED_TUTOR_V1_4.md`](./docs/COURSE_GROUNDED_TUTOR_V1_4.md)
+> (y, para el historial previo,
+> [`docs/RELEASE_NOTES_v1.3.0.md`](./docs/RELEASE_NOTES_v1.3.0.md) /
 > [`docs/RELEASE_NOTES_v1.2.0.md`](./docs/RELEASE_NOTES_v1.2.0.md) /
 > [`docs/RELEASE_NOTES_v1.1.1.md`](./docs/RELEASE_NOTES_v1.1.1.md) /
 > [`docs/RELEASE_NOTES_v1.1.0.md`](./docs/RELEASE_NOTES_v1.1.0.md) /

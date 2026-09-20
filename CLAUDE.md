@@ -1059,9 +1059,77 @@ Ver `docs/ROADMAP.md` para el detalle de fases futuras.
      privacidad, secret scan del diff completo, regresión de
      Certification/Learning Progress/animaciones pedagógicas/StrictMode)
      sin hallazgos nuevos. 525 tests de backend / 420 de frontend, sin
-     regresiones. Ver `docs/RELEASE_NOTES_v1.3.0.md`. Sin push, sin tag
-     `v1.3.0`, sin merge a `master` — release gate pendiente, decisión
-     separada.
+     regresiones. Ver `docs/RELEASE_NOTES_v1.3.0.md`. **Publicado
+     posteriormente**: `master`/`origin/master`/tag `v1.3.0` apuntan hoy
+     a `e7cb4dcfeb5a46e4bf3542a6f4b1a92dc66891f2` (el mismo commit de
+     `chore: prepare v1.3.0 release candidate`, sin cambios adicionales
+     entre el RC y el release).
+
+- **v1.4.0** (release candidate, sobre v1.3.0, rama de desarrollo
+  `feat/v1.4.0-*` → `release/v1.4.0-rc`): **Course-Wide Grounded Tutor**,
+  en tres bloques funcionales más un hardening final. Sin cambios de
+  arquitectura, sin dependencias nuevas, sin embeddings, sin vector DB,
+  sin una segunda llamada LLM.
+  1. **Course-Wide Retrieval Foundation** (`app/services/course_retrieval.py`,
+     nuevo): búsqueda lexical determinística (BM25-like con boost de
+     campo `topic_title` ×3 / `heading_path` ×2 / cuerpo ×1, IDF, bonus
+     de frase exacta, piso de cobertura mínima de términos — corrección
+     real que eliminó falsos positivos de QA negativa) sobre TODOS los
+     `SourceBlock`s de un curso, cruzando módulos y tópicos, 100%
+     in-process y sin persistencia. `CourseEvidenceCandidate` nunca
+     asume que `source_ref` es único a nivel de curso (se reinicia por
+     tópico). `exclude_topic_id` + diversidad entre tópicos + `top_k`
+     (default 6). Optimización real de performance
+     (`course_service.iter_all_canonical_topics`, resuelve el curso una
+     sola vez en vez de repetir el listado de directorios por tópico:
+     ~4.6s → ~0.6-1.6s en un curso de 53 tópicos).
+  2. **Course-Grounded Tutor + Cross-Topic Provenance**
+     (`app/services/course_grounding.py`, nuevo): namespace temporal
+     `COURSE-SRC-XXX` por consulta (nunca persistido, nunca confundible
+     con el `SRC-XXX` del tópico actual), packet `COURSE EVIDENCE`
+     enviado al LLM junto al Grounding Packet del tópico actual. Decisión
+     de producto central: el switch "Ampliar con conocimiento general"
+     deja de controlar el uso de evidencia de otros tópicos del curso
+     (corre siempre, en ambos modos) y pasa a controlar exclusivamente el
+     conocimiento general del modelo. Modelo interno unificado
+     `StructuredTutorReplyBody` (reemplaza a `TutorReplyBody`/
+     `ExpandedTutorReplyBody` como dos modelos separados) con un tercer
+     eje `course_coverage`, independiente de `topic_coverage` — que el
+     retrieval encuentre candidatos NO implica cobertura suficiente, el
+     LLM sigue clasificando independientemente. `course_answer_chunks`/
+     `course_sources` nuevos en el contrato público (backward compatible,
+     default `[]`), filtrados a solo las fuentes efectivamente citadas.
+     `TUTOR_PROMPT_VERSION` `tutor-v3.3` → `tutor-v4`.
+  3. **Provenance UX + Related Topic Navigation** (100% frontend): el
+     alumno distingue "Basado en este tema" / "Basado en el curso" /
+     "Ampliado con conocimiento general", con una sección "Temas
+     relacionados" deduplicada por tópico y un CTA "Ver tema
+     relacionado" que reutiliza `goToTopic` (cero routing nuevo) — por
+     lo que voice/animation cleanup, reset del switch y la garantía de
+     no-completion llegan gratis de la navegación curricular existente.
+     Bug real encontrado y corregido: la voz nunca incluía
+     `course_answer_chunks` (una respuesta cross-topic pura quedaba en
+     silencio).
+  4. **Hardening / release candidate** (rama `release/v1.4.0-rc`, sin
+     features nuevas): auditoría del diff acumulado `v1.3.0..HEAD` (los
+     tres bloques). Sin bugs nuevos encontrados en este hardening final
+     (los dos bugs reales del release — voz incompleta y copy obsoleto
+     del switch — se encontraron y corrigieron durante el Bloque 3, no
+     acá). Confirmado con QA real repetida (caso central cross-topic con
+     switch OFF, deep provenance verificada byte a byte, regresión de
+     Skill 3/3 corridas consistentes, fallback a conocimiento general
+     ON/OFF, prompt injection en las tres superficies posibles, límite
+     lexical inglés/español sigue vigente por diseño, performance de
+     retrieval ~0.6-1.6s frente a ~1.2-3.4s del proveedor LLM — sin cache
+     nuevo), overflow mobile con títulos de peor caso, y aislamiento
+     confirmado de Certification/Checkpoint/Lesson Generation (el
+     retrieval nunca se referencia fuera del código del tutor).
+     `APP_VERSION` 1.3.0 → 1.4.0. 585 tests de backend (sin cambios) /
+     443 de frontend (+4, completar la cobertura de voz), sin
+     regresiones; build Docker `--no-cache` limpio; `doctor.ps1` → "Todo
+     en orden". Ver `docs/RELEASE_NOTES_v1.4.0.md` y
+     `docs/COURSE_GROUNDED_TUTOR_V1_4.md`. Sin push, sin tag `v1.4.0`,
+     sin merge a `master` — release gate pendiente, decisión separada.
 
 Cualquier trabajo futuro debe respetar este documento y actualizar la
 sección correspondiente del roadmap al avanzar de fase.

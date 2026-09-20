@@ -703,4 +703,119 @@ describe("TutorPanel", () => {
       expect.objectContaining({ rate: 1 })
     );
   });
+
+  // ------------------------------------------------------------------
+  // v1.4.0 Bloque 4 (hardening), PARTE 47: completitud de la voz para
+  // las 6 combinaciones de canales. "A" (solo tópico actual) y "B" (solo
+  // curso) ya están cubiertas arriba ("lee la respuesta del tutor por
+  // voz..." y "PARTE 39" respectivamente) -- acá se agregan C-F.
+  // ------------------------------------------------------------------
+
+  it("PARTE 47-C: voz de una respuesta solo de conocimiento general", async () => {
+    mockSendMessage.mockResolvedValue({
+      response_type: "answer",
+      answer_chunks: [],
+      course_answer_chunks: [],
+      course_sources: [],
+      general_knowledge_chunks: ["En general, suele considerarse que..."],
+      clarification_question: null,
+      general_knowledge_used: true,
+    });
+    const props = baseProps();
+    props.voiceEnabled = true;
+    render(<TutorPanel {...props} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Escribí tu pregunta sobre este tema…"), {
+      target: { value: "¿Qué es la observabilidad?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    await waitFor(() => expect(mockSpeakSequence).toHaveBeenCalledTimes(1));
+    expect(mockSpeakSequence).toHaveBeenCalledWith(
+      ["En general, suele considerarse que..."],
+      expect.objectContaining({ rate: 1 })
+    );
+  });
+
+  it("PARTE 47-D: voz de tópico actual + curso, en orden (tópico primero)", async () => {
+    mockSendMessage.mockResolvedValue({
+      response_type: "answer",
+      answer_chunks: [{ text: "Texto del tópico actual.", source_refs: ["SRC-002"] }],
+      course_answer_chunks: [
+        { text: "Texto de otro tópico.", source_refs: ["COURSE-SRC-001"] },
+      ],
+      course_sources: [],
+      general_knowledge_chunks: [],
+      clarification_question: null,
+      general_knowledge_used: false,
+    });
+    const props = baseProps();
+    props.voiceEnabled = true;
+    render(<TutorPanel {...props} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Escribí tu pregunta sobre este tema…"), {
+      target: { value: "pregunta mixta" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    await waitFor(() => expect(mockSpeakSequence).toHaveBeenCalledTimes(1));
+    expect(mockSpeakSequence).toHaveBeenCalledWith(
+      ["Texto del tópico actual.", "Texto de otro tópico."],
+      expect.objectContaining({ rate: 1 })
+    );
+  });
+
+  it("PARTE 47-E: voz de curso + conocimiento general, en orden (curso primero)", async () => {
+    mockSendMessage.mockResolvedValue({
+      response_type: "answer",
+      answer_chunks: [],
+      course_answer_chunks: [
+        { text: "Texto de otro tópico.", source_refs: ["COURSE-SRC-001"] },
+      ],
+      course_sources: [],
+      general_knowledge_chunks: ["Texto de conocimiento general."],
+      clarification_question: null,
+      general_knowledge_used: true,
+    });
+    const props = baseProps();
+    props.voiceEnabled = true;
+    render(<TutorPanel {...props} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Escribí tu pregunta sobre este tema…"), {
+      target: { value: "pregunta mixta" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    await waitFor(() => expect(mockSpeakSequence).toHaveBeenCalledTimes(1));
+    expect(mockSpeakSequence).toHaveBeenCalledWith(
+      ["Texto de otro tópico.", "Texto de conocimiento general."],
+      expect.objectContaining({ rate: 1 })
+    );
+  });
+
+  it("PARTE 47-F: voz de la triple mezcla (tópico + curso + general), una sola vez cada una, en orden", async () => {
+    mockSendMessage.mockResolvedValue({
+      response_type: "answer",
+      answer_chunks: [{ text: "A.", source_refs: ["SRC-002"] }],
+      course_answer_chunks: [{ text: "B.", source_refs: ["COURSE-SRC-001"] }],
+      course_sources: [],
+      general_knowledge_chunks: ["C."],
+      clarification_question: null,
+      general_knowledge_used: true,
+    });
+    const props = baseProps();
+    props.voiceEnabled = true;
+    render(<TutorPanel {...props} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Escribí tu pregunta sobre este tema…"), {
+      target: { value: "pregunta triple" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    await waitFor(() => expect(mockSpeakSequence).toHaveBeenCalledTimes(1));
+    expect(mockSpeakSequence).toHaveBeenCalledWith(
+      ["A.", "B.", "C."],
+      expect.objectContaining({ rate: 1 })
+    );
+  });
 });
