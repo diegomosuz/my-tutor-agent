@@ -1,24 +1,36 @@
-"""Orquestador del tutor interactivo grounded (Fase 5).
+"""Orquestador del tutor interactivo grounded (Fase 5, extendido en
+v1.3.0 con el modo ampliado y en v1.4.0 Bloque 2 con evidencia course-wide).
 
-Pipeline:
+Pipeline (v1.4.0):
 
     CanonicalTopicContent + Grounding Packet (Fase 2, vía app/services/courses.py)
         -> contexto de escena (opcional, vía lesson_generator.get_cached_lesson_plan)
+        -> COURSE DOMAIN (v1.3.0 BLOQUE 6, ahora resuelto en TODO modo)
+        -> COURSE EVIDENCE (v1.4.0 Bloque 2: app/services/course_retrieval.py
+           + app/services/course_grounding.py, SIEMPRE, sin importar el modo)
         -> Prompt Builder (app/prompts/tutor.py)
         -> LLMProvider.generate_structured (Fase 3, reutilizado tal cual)
-        -> TutorReplyBody (validación Pydantic automática)
+        -> StructuredTutorReplyBody (validación Pydantic automática)
         -> validación de grounding (app/services/tutor_validation.py)
-        -> TutorReplyBody final (se devuelve tal cual; no se cachea, ver Fase 5 sección 18)
+        -> validación de legalidad mode-aware (_validate, acá abajo)
+        -> TutorReplyBody público (_to_public_reply; no se cachea, ver Fase 5 sección 18)
 
-Regla de fuente de verdad: el Grounding Packet es la ÚNICA fuente
-autorizada. `recent_history`, el contexto de escena (GENERATED CLASS
-CONTEXT) y el dominio del curso (COURSE DOMAIN, v1.3.0 BLOQUE 6 -- ver
-`_resolve_course_scope`) son exclusivamente contexto conversacional/
-generado/estructural NO confiable — nunca se usan como fuente de verdad,
-y nunca se envían al LLM como si lo fueran (ver `app/prompts/tutor.py`).
-COURSE DOMAIN solo amplía qué preguntas se consideran RELEVANTES en modo
-ampliado (REGLA 22); nunca amplía qué se puede responder con grounding
-real, que sigue siendo exclusivamente el tópico actual.
+Regla de fuente de verdad: el Grounding Packet del tópico actual y el
+COURSE EVIDENCE de otros tópicos del mismo curso son las ÚNICAS fuentes
+autorizadas de conocimiento curricular. `recent_history`, el contexto de
+escena (GENERATED CLASS CONTEXT) y el dominio del curso (COURSE DOMAIN)
+son exclusivamente contexto conversacional/generado/estructural NO
+confiable — nunca se usan como fuente de verdad, y nunca se envían al LLM
+como si lo fueran (ver `app/prompts/tutor.py`).
+
+v1.4.0 (Bloque 2) -- decisión de producto no negociable: el switch
+"Ampliar con conocimiento general" (`allow_general_knowledge`) NUNCA
+controló si el tutor puede usar evidencia de otros tópicos del MISMO
+curso -- eso corre en TODA consulta, sin importar el switch (ver
+`_resolve_course_evidence`, llamado incondicionalmente acá abajo). El
+switch controla EXCLUSIVAMENTE si, además de eso, el tutor puede usar
+conocimiento general del modelo para lo que ni el tópico actual ni el
+resto del curso alcanzan a cubrir (ver `_validate` y REGLA 22 del prompt).
 
 Diseñado para inyección de dependencias simple, igual que
 `lesson_generator.py`: `ask_tutor` acepta un `provider: LLMProvider | None`
@@ -33,10 +45,12 @@ import time
 from app.config import Settings
 from app.models.schemas import CanonicalTopicContent
 from app.models.tutor import (
-    ExpandedTutorReplyBody,
+    StructuredTutorReplyBody,
+    TutorCourseSource,
     TutorMessage,
     TutorReplyBody,
     TutorResponseType,
+    TutorScopeRelation,
 )
 from app.prompts.tutor import (
     CourseModuleScope,
@@ -45,8 +59,14 @@ from app.prompts.tutor import (
     build_tutor_correction_message,
     build_tutor_messages,
 )
+from app.services import course_retrieval
 from app.services import courses as course_service
 from app.services import lesson_generator
+from app.services.course_grounding import (
+    CourseSourceBinding,
+    build_course_evidence_packet,
+    build_course_source_bindings,
+)
 from app.services.llm_provider import LLMConfigurationError, LLMProvider, get_llm_provider
 from app.services.llm_retry import GenerationFailedError, ValidationFailure, generate_with_retries
 from app.services.service_logging import log_event
@@ -56,6 +76,12 @@ logger = logging.getLogger("pwc_tutor.tutor")
 
 # Re-exportado para quien quiera capturarlo explícitamente (routers/tests).
 __all__ = ["ask_tutor", "GenerationFailedError"]
+
+# v1.4.0 (Bloque 2): mismo top_k que ya validó el Bloque 1 (PARTE 9) --
+# sin env var nueva, sin knob de configuración adicional. `exclude_topic_id`
+# siempre es el tópico actual: nunca tiene sentido que el tutor "descubra"
+# de vuelta el propio tópico que ya tiene como AUTHORIZED SOURCE.
+_COURSE_EVIDENCE_TOP_K = 6
 
 
 def _resolve_scene_context(
@@ -101,15 +127,16 @@ def _resolve_course_scope(*, settings: Settings, course_id: str) -> CourseScope 
     arbitrario del request. Determinístico, sin LLM, sin embeddings: solo
     una segunda lectura (barata) del filesystem de cursos.
 
-    Se llama únicamente cuando `allow_general_knowledge=True` (ver
-    `ask_tutor`): en modo estricto no hace falta resolver esto, así que no
-    se paga ese costo. `course_id` ya fue validado por
-    `course_service.get_grounding_packet` momentos antes en `ask_tutor` --
-    en la práctica este resolver nunca debería fallar -- pero, igual que
-    `_resolve_scene_context`, nunca propaga una excepción: si por
-    cualquier motivo no puede resolver el curso, el modo ampliado
-    simplemente sigue funcionando con RELEVANCE acotada al tópico actual
-    (REGLA 20 sin REGLA 22), nunca rompe la consulta del alumno."""
+    v1.4.0 (Bloque 2): se llama en TODO modo (antes: únicamente cuando
+    `allow_general_knowledge=True`) -- `scope_relation` ahora se clasifica
+    siempre (REGLA 20 del prompt es universal desde tutor-v4), así que el
+    modo estricto también se beneficia de este contexto. `course_id` ya
+    fue validado por `course_service.get_grounding_packet` momentos antes
+    en `ask_tutor` -- en la práctica este resolver nunca debería fallar --
+    pero, igual que `_resolve_scene_context`, nunca propaga una excepción:
+    si por cualquier motivo no puede resolver el curso, el tutor
+    simplemente sigue funcionando sin COURSE DOMAIN, nunca rompe la
+    consulta del alumno."""
     try:
         detail = course_service.get_course_detail(settings.content_path, course_id)
     except Exception:
@@ -123,6 +150,79 @@ def _resolve_course_scope(*, settings: Settings, course_id: str) -> CourseScope 
         course_title=detail.title,
         course_description=detail.description,
         modules=modules,
+    )
+
+
+def _resolve_course_evidence(
+    *, settings: Settings, course_id: str, topic_id: str, message: str
+) -> list[CourseSourceBinding]:
+    """Recupera evidencia lexical determinística de OTROS tópicos del
+    mismo curso (v1.4.0, Bloque 2) usando exactamente la pregunta del
+    alumno como query, sin reescritura ni segunda llamada LLM (PARTE 10).
+    Corre en TODA consulta, sin importar `allow_general_knowledge` (ver
+    docstring del módulo).
+
+    A diferencia de `_resolve_scene_context`/`_resolve_course_scope`, NO
+    atrapa excepciones de forma genérica: `course_id` ya fue validado
+    momentos antes por `course_service.get_grounding_packet`, así que
+    `course_retrieval.search_course` no debería fallar por un curso
+    inexistente en la práctica -- si de todos modos falla (por ejemplo,
+    un error real de parseo en otro tópico del curso), eso es un problema
+    real que debe propagarse como error, nunca silenciarse como "sin
+    evidencia" (PARTE 33: nunca confundir "no hay evidencia" con "no se
+    pudo buscar evidencia`)."""
+    candidates = course_retrieval.search_course(
+        settings,
+        course_id,
+        message,
+        exclude_topic_id=topic_id,
+        top_k=_COURSE_EVIDENCE_TOP_K,
+    )
+    return build_course_source_bindings(candidates)
+
+
+def _to_public_reply(
+    raw: StructuredTutorReplyBody, course_bindings: list[CourseSourceBinding]
+) -> TutorReplyBody:
+    """Convierte la respuesta interna del LLM (`StructuredTutorReplyBody`)
+    en el contrato público (`TutorReplyBody`) -- reemplaza a
+    `ExpandedTutorReplyBody.to_tutor_reply_body()` (v1.3.0), que ya no
+    puede ser un método sin argumentos porque armar `course_sources`
+    necesita los `CourseSourceBinding` de ESTA consulta puntual (v1.4.0,
+    Bloque 2).
+
+    `course_sources` se filtra acá a SOLO las fuentes efectivamente
+    citadas en `course_answer_chunks` (PARTE 18): el packet completo
+    enviado al LLM pudo tener hasta `_COURSE_EVIDENCE_TOP_K` candidatos,
+    pero el público nunca ve los que el LLM no usó. Se preserva el orden
+    determinístico de `course_bindings` (el mismo orden de ranking del
+    Bloque 1), nunca el orden en que el LLM las citó."""
+    cited_refs: set[str] = set()
+    for chunk in raw.course_answer_chunks:
+        cited_refs.update(chunk.source_refs)
+
+    course_sources = [
+        TutorCourseSource(
+            ref=binding.course_source_ref,
+            module_id=binding.module_id,
+            module_title=binding.module_title,
+            topic_id=binding.topic_id,
+            topic_title=binding.topic_title,
+            original_source_ref=binding.original_source_ref,
+            heading_path=binding.heading_path,
+        )
+        for binding in course_bindings
+        if binding.course_source_ref in cited_refs
+    ]
+
+    return TutorReplyBody(
+        response_type=raw.response_type,
+        answer_chunks=raw.answer_chunks,
+        course_answer_chunks=raw.course_answer_chunks,
+        course_sources=course_sources,
+        general_knowledge_chunks=raw.general_knowledge_chunks,
+        clarification_question=raw.clarification_question,
+        general_knowledge_used=raw.general_knowledge_used,
     )
 
 
@@ -146,13 +246,16 @@ def ask_tutor(
     está configurado. Lanza `GenerationFailedError` si no se pudo producir
     una respuesta válida tras los reintentos permitidos.
 
-    `allow_general_knowledge` (v1.3.0, default False -- PARTE 22/25):
-    en False, comportamiento IDÉNTICO a antes de este bloque. En True,
-    permite -- únicamente para esta consulta puntual -- que el tutor use
-    conocimiento general del modelo para preguntas relacionadas con el
-    tema pero no cubiertas por AUTHORIZED SOURCE (ver
-    app/prompts/tutor.py REGLA 20/21). Nunca se persiste entre preguntas:
-    el frontend lo reenvía en cada request (PARTE 24).
+    `allow_general_knowledge` (v1.3.0, default False; semántica ampliada
+    en v1.4.0 Bloque 2 -- PARTE 22/25 del bloque original de Fase 1.3,
+    reemplazada por la decisión de producto documentada en el docstring
+    del módulo): en False, el tutor puede usar el tópico actual Y el
+    resto del curso (COURSE EVIDENCE), pero NUNCA conocimiento general del
+    modelo. En True, además de esas dos fuentes curriculares, permite
+    -- únicamente para esta consulta puntual -- que el tutor use
+    conocimiento general del modelo para lo que ninguna de las dos
+    alcance a cubrir (ver app/prompts/tutor.py REGLA 22/23). Nunca se
+    persiste entre preguntas: el frontend lo reenvía en cada request.
     """
     llm_provider = provider or get_llm_provider(settings)
 
@@ -170,11 +273,17 @@ def ask_tutor(
     scene_context = _resolve_scene_context(
         settings=settings, provider=llm_provider, canonical=canonical, scene_id=scene_id
     )
-    course_scope = (
-        _resolve_course_scope(settings=settings, course_id=course_id)
-        if allow_general_knowledge
-        else None
+    # v1.4.0 (Bloque 2): ambas resoluciones de contexto curricular
+    # extendido corren SIEMPRE, sin importar allow_general_knowledge (ver
+    # docstring del módulo).
+    course_scope = _resolve_course_scope(settings=settings, course_id=course_id)
+
+    retrieval_started_at = time.monotonic()
+    course_bindings = _resolve_course_evidence(
+        settings=settings, course_id=course_id, topic_id=topic_id, message=message
     )
+    retrieval_ms = int((time.monotonic() - retrieval_started_at) * 1000)
+    course_evidence_packet = build_course_evidence_packet(course_bindings)
 
     log_context = {
         "course_id": course_id,
@@ -185,7 +294,13 @@ def ask_tutor(
         "model": llm_provider.model,
         "allow_general_knowledge": allow_general_knowledge,
     }
-    log_event(logger, "tutor_query_started", **log_context)
+    log_event(
+        logger,
+        "tutor_query_started",
+        **log_context,
+        retrieval_ms=retrieval_ms,
+        course_candidates_count=len(course_bindings),
+    )
     started_at = time.monotonic()
 
     messages = build_tutor_messages(
@@ -195,72 +310,120 @@ def ask_tutor(
         grounding_packet=grounding_packet,
         allow_general_knowledge=allow_general_knowledge,
         course_scope=course_scope,
+        course_evidence_packet=course_evidence_packet,
     )
 
-    def _validate(body: TutorReplyBody | ExpandedTutorReplyBody) -> None:
-        validate_tutor_reply(body, canonical)
-        # Defensa en profundidad (v1.3.0): en modo estricto el prompt
-        # nunca menciona "unrelated" como opción (REGLA 20/21 ni siquiera
-        # se incluyen) -- si de todos modos apareciera, es una
-        # inconsistencia real del modelo, se rechaza y se reintenta igual
-        # que cualquier otro problema de contrato.
-        if body.response_type == TutorResponseType.unrelated and not allow_general_knowledge:
-            raise ValidationFailure(
-                [
-                    "response_type='unrelated' solo es válido cuando el request permite "
-                    "conocimiento general (allow_general_knowledge=true); en modo estricto "
-                    "usá 'not_covered' si la fuente no alcanza para responder."
-                ]
-            )
-        # v1.3.0 (cierre del gap funcional del modo ampliado): QA real
-        # mostró que el proveedor configurado (gpt-4o-mini) seguía
-        # devolviendo "not_covered" para preguntas relacionadas pero no
-        # cubiertas por la fuente, incluso con REGLA 20/21 explícitas en
-        # el prompt (ver tutor-v3.1 en app/prompts/tutor.py). Reforzar
-        # solo el prompt no alcanza: acá se rechaza estructuralmente esa
-        # combinación inválida y se fuerza un reintento con corrección,
-        # igual que cualquier otro problema de contrato -- nunca se
-        # normaliza/reescribe la respuesta del lado del backend, el LLM
-        # es quien tiene que corregir su propio structured output.
-        if body.response_type == TutorResponseType.not_covered and allow_general_knowledge:
-            raise ValidationFailure(
-                [
-                    "response_type='not_covered' no es una respuesta válida en modo ampliado "
-                    "(allow_general_knowledge=true). Si la pregunta no está relacionada con el "
-                    "tema, usá response_type='unrelated'. Si está relacionada pero AUTHORIZED "
-                    "SOURCE no alcanza, respondé con response_type='answer' usando "
-                    "general_knowledge_chunks para la parte no cubierta por la fuente -- nunca "
-                    "'not_covered' para una pregunta relevante en este modo."
-                ]
-            )
+    def _validate(body: StructuredTutorReplyBody) -> None:
+        validate_tutor_reply(
+            answer_chunks=body.answer_chunks,
+            course_answer_chunks=body.course_answer_chunks,
+            canonical=canonical,
+            course_bindings=course_bindings,
+        )
+
+        if not allow_general_knowledge:
+            # Defensa en profundidad (igual criterio que v1.3.0): en modo
+            # estricto el prompt nunca incluye REGLA 22 (la única que
+            # explica cuándo usar conocimiento general) -- si de todos
+            # modos aparece, es una inconsistencia real del modelo.
+            if body.general_knowledge_chunks or body.general_knowledge_used:
+                raise ValidationFailure(
+                    [
+                        "general_knowledge_chunks debe estar vacío (y general_knowledge_used=false) "
+                        "cuando el request no permite conocimiento general (allow_general_knowledge=false); "
+                        "en este modo solo podés responder con answer_chunks/course_answer_chunks, o con "
+                        "response_type='not_covered' si ninguna fuente curricular alcanza."
+                    ]
+                )
+            if body.response_type == TutorResponseType.unrelated:
+                raise ValidationFailure(
+                    [
+                        "response_type='unrelated' solo es válido cuando el request permite "
+                        "conocimiento general (allow_general_knowledge=true); en modo estricto "
+                        "usá 'not_covered' si ninguna fuente curricular alcanza para responder."
+                    ]
+                )
+            # v1.4.0 (Bloque 2): mapeo scope_relation -> response_type,
+            # dependiente del modo (ver docstring del módulo y de
+            # app/models/tutor.py::_validate_course_grounded_shape, que
+            # deliberadamente NO valida esta relación por ser mode-aware).
+            if (
+                body.scope_relation == TutorScopeRelation.unrelated
+                and body.response_type
+                not in (TutorResponseType.not_covered, TutorResponseType.clarification)
+            ):
+                raise ValidationFailure(
+                    [
+                        "scope_relation='unrelated' en modo estricto debe mapear a "
+                        "response_type='not_covered' (o 'clarification' si hace falta más "
+                        "contexto) -- nunca 'answer' para una pregunta que vos mismo "
+                        "clasificaste como ajena al tópico y al curso."
+                    ]
+                )
+        else:
+            # v1.3.0 (cierre del gap funcional del modo ampliado): QA real
+            # mostró que el proveedor configurado (gpt-4o-mini) seguía
+            # devolviendo "not_covered" para preguntas relacionadas pero
+            # no cubiertas por la fuente. "not_covered" nunca es una
+            # respuesta legal en modo ampliado -- la reemplazan
+            # "unrelated" (scope ajeno) o "answer" con
+            # general_knowledge_chunks (scope relacionado, ver REGLA 22).
+            if body.response_type == TutorResponseType.not_covered:
+                raise ValidationFailure(
+                    [
+                        "response_type='not_covered' no es una respuesta válida en modo ampliado "
+                        "(allow_general_knowledge=true). Si la pregunta no está relacionada con el "
+                        "tema ni con el curso, usá response_type='unrelated'. Si está relacionada "
+                        "pero ninguna fuente curricular alcanza, respondé con response_type='answer' "
+                        "usando general_knowledge_chunks -- nunca 'not_covered' para una pregunta "
+                        "relevante en este modo."
+                    ]
+                )
+            # v1.4.0 (Bloque 2): mismo mapeo que en modo estricto, pero
+            # con el valor legal invertido -- scope_relation='unrelated'
+            # mapea a response_type='unrelated' en este modo (nunca
+            # 'not_covered', que ya está excluido arriba). Y a la inversa:
+            # si scope_relation SÍ pertenece al tópico o al curso, la
+            # respuesta nunca puede declararse 'unrelated'.
+            if body.scope_relation == TutorScopeRelation.unrelated:
+                if body.response_type not in (
+                    TutorResponseType.unrelated,
+                    TutorResponseType.clarification,
+                ):
+                    raise ValidationFailure(
+                        [
+                            "scope_relation='unrelated' en modo ampliado debe mapear a "
+                            "response_type='unrelated' (o 'clarification' si hace falta más "
+                            "contexto) -- nunca 'answer'."
+                        ]
+                    )
+            elif body.response_type == TutorResponseType.unrelated:
+                raise ValidationFailure(
+                    [
+                        "response_type='unrelated' requiere scope_relation='unrelated' -- si "
+                        "clasificaste la pregunta como 'current_topic' o 'course_domain', no es "
+                        "consistente responder 'unrelated'."
+                    ]
+                )
 
     def _on_retry(attempt: int, reason: str) -> None:
         # Observabilidad segura (nunca pregunta/respuesta/texto libre):
         # solo ids ya presentes en log_context + el intento + una
         # categoría fija de motivo (vocabulario cerrado de llm_retry.py:
         # "upstream_error"/"invalid_contract"/"grounding_invalid" -- esta
-        # última cubre tanto validate_tutor_reply como las dos
-        # ValidationFailure explícitas de acá arriba).
+        # última cubre tanto validate_tutor_reply como las ValidationFailure
+        # explícitas de _validate acá arriba).
         log_event(logger, "tutor_query_retry", **log_context, attempt=attempt, reason=reason)
 
-    # v1.3.0 (BLOQUE 6, dos gap-closures): en modo ampliado, el
-    # `response_model` real pasado al provider es `ExpandedTutorReplyBody`,
-    # no `TutorReplyBody` -- ver su docstring en app/models/tutor.py para
-    # la causa raíz exacta (Structured Outputs + temperature=0 obligan a
-    # comprometerse con response_type muy temprano; `scope_relation` +
-    # `topic_coverage`, ANTES de response_type en el orden del schema, le
-    # dan al modelo el mismo espacio de decisión estructurada dentro de la
-    # MISMA llamada -- y permiten validar determinísticamente que
-    # response_type sea consistente con esa clasificación, ver
-    # `_validate_expanded_scope_invariants`). El modo estricto no cambia en
-    # absoluto: sigue usando `TutorReplyBody` tal cual.
-    response_model = ExpandedTutorReplyBody if allow_general_knowledge else TutorReplyBody
-
+    # v1.4.0 (Bloque 2): un único response_model para TODA llamada, en
+    # ambos modos -- ver StructuredTutorReplyBody en app/models/tutor.py
+    # para la justificación completa (reemplaza a
+    # TutorReplyBody/ExpandedTutorReplyBody de v1.3.0).
     try:
-        raw_body = generate_with_retries(
+        raw_body: StructuredTutorReplyBody = generate_with_retries(
             provider=llm_provider,
             messages=messages,
-            response_model=response_model,
+            response_model=StructuredTutorReplyBody,
             validate=_validate,
             build_correction_message=build_tutor_correction_message,
             on_retry=_on_retry,
@@ -276,30 +439,19 @@ def ask_tutor(
         )
         raise
 
-    # `scope_relation`/`topic_coverage` (si existen) nunca cruzan hacia el
-    # contrato público -- se leen acá SOLO para el log seguro de abajo
-    # (categorías cerradas, nunca la pregunta/respuesta), y se descartan
-    # antes de cualquier otro uso de `body`.
-    scope_log_fields: dict[str, str] = {}
-    if isinstance(raw_body, ExpandedTutorReplyBody):
-        scope_log_fields = {
-            "scope_relation": raw_body.scope_relation.value,
-            "topic_coverage": raw_body.topic_coverage.value,
-        }
-    body: TutorReplyBody = (
-        raw_body.to_tutor_reply_body()
-        if isinstance(raw_body, ExpandedTutorReplyBody)
-        else raw_body
-    )
+    body = _to_public_reply(raw_body, course_bindings)
 
     duration_ms = int((time.monotonic() - started_at) * 1000)
     log_event(
         logger,
         "tutor_query_completed",
         **log_context,
-        **scope_log_fields,
+        scope_relation=raw_body.scope_relation.value,
+        topic_coverage=raw_body.topic_coverage.value,
+        course_coverage=raw_body.course_coverage.value,
         duration_ms=duration_ms,
         response_type=body.response_type.value,
         general_knowledge_used=body.general_knowledge_used,
+        course_sources_count=len(body.course_sources),
     )
     return body

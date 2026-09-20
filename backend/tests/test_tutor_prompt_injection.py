@@ -211,12 +211,14 @@ def test_course_scope_with_adversarial_module_title_stays_data_never_instruction
     assert injected_phrase not in system_message  # nunca se filtra al system prompt
 
 
-def test_course_scope_absent_when_strict_mode_even_if_provided():
-    # Defensa en profundidad: aunque alguien pasara un CourseScope a
-    # build_tutor_messages en modo estricto (nunca ocurre desde
-    # tutor_service.ask_tutor -- ver _resolve_course_scope), el builder lo
-    # descarta explícitamente (ver build_tutor_messages) porque REGLA 22
-    # solo tiene sentido junto con REGLA 20/21 del modo ampliado.
+def test_course_scope_present_in_strict_mode_but_expanded_rules_still_absent():
+    # v1.4.0 (Bloque 2): a diferencia de v1.3.0 (donde build_tutor_messages
+    # descartaba CourseScope en modo estricto), REGLA 20/21 -- y por lo
+    # tanto COURSE DOMAIN -- son universales desde tutor-v4: si
+    # tutor_service.ask_tutor resuelve un CourseScope, se incluye en TODO
+    # modo (ver _resolve_course_scope). Lo que sigue siendo exclusivo del
+    # modo ampliado es el bloque de reglas de conocimiento general
+    # (REGLA 22/23, nunca su heading real en modo estricto).
     course_scope = CourseScope(
         course_title="Curso Demo", course_description="", modules=[]
     )
@@ -228,5 +230,6 @@ def test_course_scope_absent_when_strict_mode_even_if_provided():
         allow_general_knowledge=False,
         course_scope=course_scope,
     )
-    assert "COURSE DOMAIN" not in messages[1]["content"]
-    assert "REGLA 22" not in messages[0]["content"]
+    assert "COURSE DOMAIN" in messages[1]["content"]
+    assert "REGLA 22 —" not in messages[0]["content"]
+    assert "MODO AMPLIADO: CONOCIMIENTO GENERAL" not in messages[0]["content"]

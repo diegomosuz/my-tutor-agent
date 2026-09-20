@@ -242,9 +242,50 @@ export interface TutorRequest {
 
 export type TutorResponseType = "answer" | "not_covered" | "clarification" | "unrelated";
 
+// v1.4.0 (Bloque 2, "COURSE-GROUNDED TUTOR + CROSS-TOPIC PROVENANCE"):
+// afirmación pedagógica respaldada por evidencia de OTRO tópico del mismo
+// curso. Estructuralmente análoga a GroundedText (mismo invariante:
+// source_refs nunca vacío) pero un tipo distinto -- sus source_refs viven
+// en el namespace COURSE-SRC-XXX, nunca en el namespace SRC-XXX del
+// tópico actual. Espejo manual de
+// `backend/app/models/tutor.py::CourseGroundedText`.
+export interface CourseGroundedText {
+  text: string;
+  source_refs: string[];
+}
+
+// v1.4.0 (Bloque 2): metadata de UNA fuente de COURSE EVIDENCE
+// efectivamente citada en la respuesta (nunca los candidatos no citados
+// del retrieval) -- suficiente para navegación/provenance futura ("Ver
+// tema relacionado"), nunca expone un path de filesystem ni el Markdown
+// completo del bloque. Espejo manual de
+// `backend/app/models/tutor.py::TutorCourseSource`.
+export interface TutorCourseSource {
+  ref: string;
+  module_id: string;
+  module_title: string;
+  topic_id: string;
+  topic_title: string;
+  original_source_ref: string;
+  heading_path: string[];
+}
+
 export interface TutorReplyBody {
   response_type: TutorResponseType;
   answer_chunks: GroundedText[];
+  // v1.4.0 (Bloque 2): evidencia grounded de OTROS tópicos del mismo
+  // curso -- tercer canal, estructuralmente distinto de answer_chunks y
+  // de general_knowledge_chunks. Vacío salvo que el tutor haya citado al
+  // menos un COURSE-SRC real. Opcional a nivel de tipo (aunque el backend
+  // SIEMPRE lo incluye, con default []) para que ningún mock/fixture de
+  // test existente (anterior a este bloque) necesite tocarse -- este
+  // bloque es backend + contrato de respuesta, sin diseño final de UI
+  // todavía (ver docs/COURSE_GROUNDED_TUTOR_V1_4.md); el consumo real de
+  // estos campos, si llega a haber alguno, siempre debe usar `?? []`.
+  course_answer_chunks?: CourseGroundedText[];
+  // v1.4.0 (Bloque 2): metadata SOLO de las fuentes efectivamente citadas
+  // en course_answer_chunks. Mismo criterio de opcionalidad que arriba.
+  course_sources?: TutorCourseSource[];
   // v1.3.0: texto plano de conocimiento general (nunca grounded, nunca
   // tiene source_refs -- ver docstring de TutorReplyBody en el backend).
   general_knowledge_chunks: string[];

@@ -331,11 +331,14 @@ def test_scene_id_without_any_cached_lesson_does_not_crash(tmp_path):
 def test_reply_schema_never_exposes_internal_fields():
     fields = set(TutorReplyBody.model_fields.keys())
     # v1.3.0: general_knowledge_chunks + general_knowledge_used (PARTE 26/31,
-    # 28) son los únicos campos nuevos -- transparencia de alcance, nunca un
-    # dato interno.
+    # 28). v1.4.0 (Bloque 2): course_answer_chunks + course_sources
+    # (evidencia grounded de otros tópicos del curso y su metadata pública,
+    # nunca los candidatos no citados -- ver tutor_service._to_public_reply).
     assert fields == {
         "response_type",
         "answer_chunks",
+        "course_answer_chunks",
+        "course_sources",
         "general_knowledge_chunks",
         "clarification_question",
         "general_knowledge_used",
@@ -530,14 +533,14 @@ def test_N_not_covered_still_valid_in_strict_mode_even_when_related(tmp_path):
 
 
 def test_O_retry_reason_code_logged_never_question_or_answer_text(tmp_path, caplog):
-    # v1.3.0 (segundo gap-closure): "not_covered" en modo ampliado ahora
-    # es estructuralmente inválido a nivel Pydantic (scope_relation !=
-    # unrelated exige response_type="answer", ver
-    # _validate_expanded_scope_invariants) -- el primer intento inválido
-    # se rechaza como "invalid_contract" (ValidationError de Pydantic),
-    # nunca llega siquiera a tutor_validation.validate_tutor_reply
-    # ("grounding_invalid"). El mecanismo de reintento y el resultado
-    # final siguen siendo los mismos.
+    # v1.4.0 (Bloque 2): el mapeo scope_relation/response_type se movió
+    # deliberadamente del validador Pydantic (mode-independiente, ver
+    # _validate_course_grounded_shape en app/models/tutor.py) al servicio
+    # (`tutor_service._validate`, que sí conoce el modo) -- "not_covered"
+    # en modo ampliado ya no es estructuralmente inválido a nivel Pydantic,
+    # así que ahora se rechaza como "grounding_invalid" (ValidationFailure
+    # explícita de _validate), no como "invalid_contract". El mecanismo de
+    # reintento y el resultado final siguen siendo los mismos.
     settings = _settings(tmp_path)
     provider = FakeLLMProvider(
         responses=[valid_not_covered_reply_dict(), valid_general_related_reply_dict()]
@@ -548,7 +551,7 @@ def test_O_retry_reason_code_logged_never_question_or_answer_text(tmp_path, capl
 
     assert "tutor_query_retry" in caplog.text
     assert "attempt=1" in caplog.text
-    assert "reason=invalid_contract" in caplog.text
+    assert "reason=grounding_invalid" in caplog.text
     assert secret_question not in caplog.text
 
 
@@ -675,16 +678,26 @@ def test_course_scope_G_resolution_failure_degrades_gracefully(tmp_path, monkeyp
     assert scope is None  # nunca propaga la excepción
 
 
-def test_course_scope_H_resolver_never_called_in_strict_mode(tmp_path, monkeypatch):
+def test_course_scope_H_resolver_now_called_in_strict_mode_too(tmp_path, monkeypatch):
+    # v1.4.0 (Bloque 2): a diferencia de v1.3.0 (donde CourseScope solo se
+    # resolvía en modo ampliado), "scope_relation" ahora se clasifica en
+    # TODO modo (REGLA 20 es universal desde tutor-v4) -- así que
+    # _resolve_course_scope también se llama incondicionalmente en modo
+    # estricto. Este test reemplaza al viejo "nunca se llama en modo
+    # estricto" por su contrario exacto.
     settings = _settings_multi_module(tmp_path)
+    calls: list[str] = []
+    real_get_course_detail = course_service.get_course_detail
 
-    def _fail_if_called(*args, **kwargs):
-        raise AssertionError("get_course_detail no debe llamarse en modo estricto")
+    def _spy(*args, **kwargs):
+        calls.append("called")
+        return real_get_course_detail(*args, **kwargs)
 
-    monkeypatch.setattr(course_service, "get_course_detail", _fail_if_called)
+    monkeypatch.setattr(course_service, "get_course_detail", _spy)
     provider = FakeLLMProvider(responses=[valid_answer_reply_dict(["SRC-002"])])
     reply = _ask(settings, provider, allow_general_knowledge=False)
-    assert reply.response_type.value == "answer"  # nunca lanzó el AssertionError de arriba
+    assert reply.response_type.value == "answer"
+    assert calls == ["called"]
 
 
 # ---- Modo ampliado A-F (integración vía ask_tutor, FakeLLMProvider) -------
@@ -701,18 +714,22 @@ def test_expanded_A_course_domain_block_present_in_expanded_mode(tmp_path):
     assert "no es fuente de verdad" in sent_user_message
 
 
-def test_expanded_B_course_domain_block_absent_in_strict_mode(tmp_path):
+def test_expanded_B_general_knowledge_rules_absent_in_strict_mode(tmp_path):
+    # v1.4.0 (Bloque 2): COURSE DOMAIN ahora se incluye en TODO modo (ver
+    # test_course_scope_H de arriba) -- lo que sigue siendo exclusivo del
+    # modo ampliado es el bloque de reglas de conocimiento general
+    # (REGLA 22/23), nunca presente en modo estricto.
     settings = _settings_multi_module(tmp_path)
     provider = FakeLLMProvider(responses=[valid_answer_reply_dict(["SRC-002"])])
     _ask(settings, provider, allow_general_knowledge=False)
     sent_system_message = provider.calls[0][0]["content"]
     sent_user_message = provider.calls[0][1]["content"]
-    assert "COURSE DOMAIN" not in sent_user_message
-    assert "REGLA 22" not in sent_system_message
-    # REGLA 7 (siempre presente) menciona "REGLA 20" como puntero de
-    # cross-reference para el modo ampliado (BLOQUE 6 gap-closure) -- eso
-    # es esperado incluso en modo estricto. Lo que nunca debe aparecer es
-    # el CONTENIDO real de REGLA 20 (su título/heading).
+    assert "COURSE DOMAIN" in sent_user_message  # ahora universal
+    # REGLA 2/3/4/6 (siempre presentes) mencionan "REGLA 22" como puntero
+    # condicional de cross-reference ("salvo que REGLA 22 esté presente...")
+    # -- igual patrón que v1.3.0 con REGLA 20 -- así que lo que se verifica
+    # acá es que el CONTENIDO real de la regla (su heading) esté ausente.
+    assert "REGLA 22 —" not in sent_system_message
     assert "MODO AMPLIADO: CONOCIMIENTO GENERAL" not in sent_system_message
 
 
@@ -754,4 +771,4 @@ def test_expanded_E_existing_reply_fixtures_still_valid_with_course_scope_presen
 
 
 def test_expanded_F_tutor_prompt_version_bumped_for_course_scope():
-    assert TUTOR_PROMPT_VERSION == "tutor-v3.3"
+    assert TUTOR_PROMPT_VERSION == "tutor-v4"

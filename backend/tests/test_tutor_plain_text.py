@@ -8,7 +8,11 @@ from app.prompts.tutor import TUTOR_PROMPT_VERSION, TUTOR_SYSTEM_PROMPT
 
 
 def test_tutor_prompt_version_bumped():
-    assert TUTOR_PROMPT_VERSION == "tutor-v3.3"
+    # v1.4.0 (Bloque 2) bumpeó tutor-v3.3 -> tutor-v4 (ver
+    # app/prompts/tutor.py para el historial completo) -- este test solo
+    # confirma que la constante sigue existiendo con el valor vigente,
+    # nunca que este bloque la haya modificado.
+    assert TUTOR_PROMPT_VERSION == "tutor-v4"
 
 
 def test_system_prompt_forbids_decorative_markdown():
