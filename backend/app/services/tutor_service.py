@@ -158,6 +158,36 @@ def ask_tutor(
                     "usá 'not_covered' si la fuente no alcanza para responder."
                 ]
             )
+        # v1.3.0 (cierre del gap funcional del modo ampliado): QA real
+        # mostró que el proveedor configurado (gpt-4o-mini) seguía
+        # devolviendo "not_covered" para preguntas relacionadas pero no
+        # cubiertas por la fuente, incluso con REGLA 20/21 explícitas en
+        # el prompt (ver tutor-v3.1 en app/prompts/tutor.py). Reforzar
+        # solo el prompt no alcanza: acá se rechaza estructuralmente esa
+        # combinación inválida y se fuerza un reintento con corrección,
+        # igual que cualquier otro problema de contrato -- nunca se
+        # normaliza/reescribe la respuesta del lado del backend, el LLM
+        # es quien tiene que corregir su propio structured output.
+        if body.response_type == TutorResponseType.not_covered and allow_general_knowledge:
+            raise ValidationFailure(
+                [
+                    "response_type='not_covered' no es una respuesta válida en modo ampliado "
+                    "(allow_general_knowledge=true). Si la pregunta no está relacionada con el "
+                    "tema, usá response_type='unrelated'. Si está relacionada pero AUTHORIZED "
+                    "SOURCE no alcanza, respondé con response_type='answer' usando "
+                    "general_knowledge_chunks para la parte no cubierta por la fuente -- nunca "
+                    "'not_covered' para una pregunta relevante en este modo."
+                ]
+            )
+
+    def _on_retry(attempt: int, reason: str) -> None:
+        # Observabilidad segura (nunca pregunta/respuesta/texto libre):
+        # solo ids ya presentes en log_context + el intento + una
+        # categoría fija de motivo (vocabulario cerrado de llm_retry.py:
+        # "upstream_error"/"invalid_contract"/"grounding_invalid" -- esta
+        # última cubre tanto validate_tutor_reply como las dos
+        # ValidationFailure explícitas de acá arriba).
+        log_event(logger, "tutor_query_retry", **log_context, attempt=attempt, reason=reason)
 
     try:
         body = generate_with_retries(
@@ -166,6 +196,7 @@ def ask_tutor(
             response_model=TutorReplyBody,
             validate=_validate,
             build_correction_message=build_tutor_correction_message,
+            on_retry=_on_retry,
         )
     except Exception as exc:
         duration_ms = int((time.monotonic() - started_at) * 1000)

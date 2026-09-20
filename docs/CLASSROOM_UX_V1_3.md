@@ -214,14 +214,28 @@ consola.
   LangGraph. `REGLA 20`/`REGLA 21` (`backend/app/prompts/tutor.py`) se
   agregan al system prompt SOLO cuando `allow_general_knowledge=true`;
   el modo estricto (default) usa exactamente el mismo prompt que antes.
-  `TUTOR_PROMPT_VERSION` pasó de `tutor-v2` a `tutor-v3` (el tutor no se
-  cachea, así que esto es solo trazabilidad/auditoría, no una cache key).
+  `TUTOR_PROMPT_VERSION` pasó de `tutor-v2` a `tutor-v3`, y luego a
+  `tutor-v3.1` (ver "Cierre del gap funcional" más abajo) — el tutor no
+  se cachea, así que esto es solo trazabilidad/auditoría, no una cache
+  key.
 
 - **Validación** (`app/services/tutor_validation.py`): sin cambios de
   fondo — sigue validando que cada `source_ref` de `answer_chunks`
   exista en el `CanonicalTopicContent`. `general_knowledge_chunks` no
   necesita validación de grounding porque no tiene ningún campo que
   pudiera citar una fuente inexistente.
+
+- **Validación semántica de `response_type` vs. modo** (`tutor_service.py::_validate`):
+  dos invariantes de contrato, ninguna relacionada con grounding textual:
+  1. `response_type="unrelated"` es inválido en modo estricto (defensa en
+     profundidad — el prompt estricto nunca ofrece esa opción).
+  2. `response_type="not_covered"` es inválido en modo ampliado (ver
+     "Cierre del gap funcional" abajo — esta es la regla que en la
+     práctica hace funcionar el switch con el proveedor real).
+  Ambas violaciones se tratan igual que cualquier otro problema de
+  contrato: `ValidationFailure` → reintento con
+  `build_tutor_correction_message` → el LLM corrige su propio structured
+  output (nunca el backend reescribe/normaliza la respuesta).
 
 ### Frontend
 
@@ -241,53 +255,94 @@ Una respuesta con `general_knowledge_used=true` muestra el badge
 frontend (`UNRELATED_MESSAGE`, mismo patrón que `NOT_COVERED_MESSAGE` —
 el LLM nunca compone ese texto).
 
-### Límite conocido (no bloqueante)
+### Cierre del gap funcional (tutor-v3 → tutor-v3.1)
 
-Con el proveedor real configurado (`gpt-4o-mini`), el relevance gate
-("¿está relacionado con el tema?") funciona de forma confiable — se
-verificó con preguntas claramente ajenas ("¿cómo se cocina una pizza
-margarita?") devolviendo `unrelated` consistentemente. Sin embargo, el
-modelo se mostró consistentemente conservador para activar
-`general_knowledge_used=true` en preguntas relacionadas pero no cubiertas
-por la fuente (incluidos los ejemplos textuales de la especificación,
-p.ej. "¿Cómo implementaría SDD en un monorepo?"): en la práctica siguió
-prefiriendo `not_covered` en la mayoría de los intentos, incluso tras
-reforzar `REGLA 20` para declarar explícitamente que en este modo
-`not_covered` queda reservado para cuando ni el conocimiento general
-alcanza. Esto es una preferencia del modelo/proveedor, no un defecto
-estructural: la ruta completa (`general_knowledge_chunks`, el badge, la
-validación, el prompt) está probada exhaustivamente y de punta a punta
-con `FakeLLMProvider` determinístico (backend) y con mocks (frontend).
-Quedó documentado acá para una futura iteración de prompt-tuning (mismo
-patrón que la deuda de `comprehension_check` cerrada entre Fase 5 y
-Fase 6, ver `CLAUDE.md` sección 14) — no bloquea este bloque porque el
-comportamiento observado nunca es incorrecto ni inseguro (en el peor
-caso, es más conservador de lo pedido, jamás inventa contenido).
+QA real inicial con el proveedor configurado (`gpt-4o-mini`) encontró que
+el relevance gate funcionaba de forma confiable (preguntas claramente
+ajenas devolvían `unrelated` consistentemente), pero el modelo devolvía
+consistentemente `not_covered` para preguntas relacionadas-pero-no-cubiertas
+en modo ampliado — incluso con la REGLA 20 (v3) explicitando el
+comportamiento esperado. El switch, en la práctica, no cumplía su
+propósito con el proveedor real (aunque sí con `FakeLLMProvider`).
+
+**Causa raíz exacta**: REGLA 20 (v3) dejaba una válvula de escape
+("`not_covered` reservado para cuando ni el conocimiento general
+alcanza"), y REGLA 21 la repetía ("preferí `not_covered` antes que
+inventar"). Frente a esa ambigüedad de dos reglas compitiendo, el modelo
+se refugiaba en el patrón más fuerte y más temprano del prompt (REGLA 6,
+imperativa e incondicional: "si no está sustentado por la fuente, tu
+respuesta debe ser `not_covered`"). Prompt tuning por sí solo no alcanzó
+para revertir esta preferencia de forma confiable.
+
+**Fix de dos capas (tutor-v3.1)**:
+1. **Prompt**: REGLA 20 se reescribió para separar explícitamente
+   RELEVANCE (¿pertenece al dominio del tema?) de COVERAGE (¿el Markdown
+   alcanza para responder?) como ejes independientes, con un ejemplo
+   genérico (no hardcodeado a ningún tema puntual). La válvula de escape
+   se eliminó por completo: "`not_covered` NO es una respuesta disponible
+   en este modo para preguntas relevantes" (REGLA 20 punto 3). REGLA 21
+   se corrigió para no repetir la contradicción.
+2. **Validación estructural** (`tutor_service.py::_validate`): si
+   `allow_general_knowledge=true` y el modelo igual responde
+   `response_type="not_covered"`, se rechaza con `ValidationFailure` y se
+   fuerza un reintento con corrección — el mismo mecanismo genérico de
+   `generate_with_retries` que ya maneja contrato/grounding inválido,
+   sin ningún sistema nuevo.
+
+**Resultado real con el proveedor configurado**: en las 3 corridas frescas
+de QA (ver más abajo), el primer intento del modelo siguió siendo
+`not_covered` en las 3 (`reason=grounding_invalid` en los logs) — el
+prompt por sí solo no cambió el primer impulso del modelo — pero la
+validación estructural lo rechazó y el segundo intento produjo una
+respuesta válida con `general_knowledge_used=true` las 3 veces. El
+resultado final que recibe el alumno es correcto el 100% de las veces
+observadas; el mecanismo real que lo garantiza es la validación +
+reintento, no (solo) el prompt — exactamente el diseño que pedía "no
+confiar solamente en prompt tuning" para este cierre.
 
 ### Tests
 
-Backend: `backend/tests/test_tutor_service.py` — 11 tests nuevos
-(PARTE 36 A-K): request sin el campo nuevo default a estricto; estricto
-cubierto/no cubierto sin cambios de comportamiento; ampliado
-relacionado-no-cubierto produce respuesta con `general_knowledge_chunks`;
-ampliado con cobertura parcial mezcla `answer_chunks` grounded +
-`general_knowledge_chunks`; `unrelated` rechazado en modo estricto y
-reintentado; `source_refs` siguen validados incluso en modo ampliado;
-logs nunca contienen la pregunta ni la respuesta completa. Frontend:
-`frontend/src/classroom/__tests__/TutorPanel.test.tsx` — 8 tests nuevos
-(PARTE 37 A-H): switch default OFF, request lleva el flag correcto según
-el switch, persiste entre escenas del mismo tópico, badge de
-transparencia condicional, mensaje fijo de "unrelated", texto de ayuda
-nunca sugiere web/internet/búsqueda.
+Backend: `backend/tests/test_tutor_service.py` — 16 tests nuevos en
+total sobre el modo ampliado (PARTE 36 A-K + 5 tests del cierre del gap):
+request sin el campo nuevo default a estricto; estricto cubierto/no
+cubierto sin cambios de comportamiento; ampliado relacionado-no-cubierto
+produce respuesta con `general_knowledge_chunks`; ampliado con cobertura
+parcial mezcla `answer_chunks` grounded + `general_knowledge_chunks`;
+`unrelated` rechazado en modo estricto y reintentado; `not_covered`
+rechazado en modo ampliado y reintentado hasta producir una respuesta
+válida; `not_covered` persistente en modo ampliado agota los reintentos y
+falla explícitamente (`GenerationFailedError`, nunca se devuelve una
+respuesta inválida); `not_covered` sigue siendo válido en modo estricto
+(control, sin regresión); `source_refs` siguen validados incluso en modo
+ampliado; logs de retry contienen `attempt`/`reason` pero nunca pregunta
+ni respuesta; `LESSON_PROMPT_VERSION` confirmado sin cambios
+(`lesson-v3.2.1`). Frontend: `frontend/src/classroom/__tests__/TutorPanel.test.tsx`
+— 8 tests (PARTE 37 A-H), sin cambios en este cierre (el contrato de
+API/UI no cambió, solo el comportamiento del backend).
 
-### QA real
+### QA real (incluye 3 corridas frescas)
 
-Verificado con Playwright + llamadas directas al endpoint contra
-`spec-driven-design-expert` con el proveedor `openai` real configurado:
-pregunta claramente no relacionada en modo ampliado → `unrelated` con el
-mensaje fijo; misma pregunta en modo estricto → `not_covered`; el switch
-nunca aparece marcado por default; cero errores de consola en toda la
-sesión de QA.
+Verificado con llamadas directas al endpoint contra
+`spec-driven-design-expert` (tópico "SDD frente a Prompt-Driven, TDD, BDD
+y Contract-Driven") con el proveedor `openai` real configurado:
+
+- **TEST A** (switch OFF, pregunta relacionada-no-cubierta): `not_covered` ✓.
+- **TEST B x3** (switch ON, MISMA pregunta, 3 corridas frescas):
+  las 3 devolvieron `response_type="answer"`, `general_knowledge_used=true`,
+  con `answer_chunks` grounded citando `source_refs` reales del tópico y
+  `general_knowledge_chunks` con contenido sustantivo sin `source_refs` ✓✓✓.
+- **TEST C** (switch ON, pregunta cubierta por el tópico): `answer` con
+  `general_knowledge_used=false`, 100% grounded, sin inventar refs ✓.
+- **TEST D** (switch ON, pregunta totalmente ajena): `unrelated` ✓.
+- **TEST E** (switch ON, intento de prompt injection pidiendo ignorar el
+  tema y hablar de otra cosa): `unrelated` — el relevance gate y REGLA
+  10/11 se mantuvieron intactos, el intento de injection no relajó el
+  alcance ✓.
+
+Playwright (sesión previa de este mismo bloque): pregunta claramente no
+relacionada en modo ampliado → `unrelated` con el mensaje fijo; misma
+pregunta en modo estricto → `not_covered`; el switch nunca aparece
+marcado por default; cero errores de consola.
 
 ## 5. Alcance explícitamente NO tocado
 

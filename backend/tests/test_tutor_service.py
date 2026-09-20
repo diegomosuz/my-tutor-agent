@@ -474,3 +474,75 @@ def test_K_logs_never_contain_question_or_answer_text(tmp_path, caplog):
     # Nunca la pregunta del alumno ni el texto de la respuesta.
     assert secret_question not in caplog.text
     assert reply.general_knowledge_chunks[0] not in caplog.text
+
+
+# --------------------------------------------------------------------------
+# v1.3.0 (cierre del gap funcional del modo ampliado, tutor-v3 -> v3.1)
+# --------------------------------------------------------------------------
+
+
+def test_L_expanded_not_covered_is_rejected_and_retried_into_general_answer(tmp_path):
+    # Reproduce exactamente el hallazgo de QA real con el proveedor
+    # configurado (gpt-4o-mini): un primer intento devuelve "not_covered"
+    # para una pregunta relacionada en modo ampliado -- eso ahora se
+    # rechaza estructuralmente y se reintenta con corrección, nunca se
+    # devuelve tal cual.
+    settings = _settings(tmp_path)
+    provider = FakeLLMProvider(
+        responses=[valid_not_covered_reply_dict(), valid_general_related_reply_dict()]
+    )
+    reply = _ask(settings, provider, allow_general_knowledge=True)
+    assert len(provider.calls) == 2  # el primer intento (not_covered) se rechazó
+    assert reply.response_type.value == "answer"
+    assert reply.general_knowledge_used is True
+
+
+def test_M_expanded_not_covered_persisting_raises_generation_failed(tmp_path):
+    # Si el modelo insiste con "not_covered" en modo ampliado agotando
+    # todos los reintentos permitidos, la generación falla explícitamente
+    # -- nunca se le devuelve al alumno una respuesta inválida.
+    settings = _settings(tmp_path)
+    provider = FakeLLMProvider(
+        responses=[
+            valid_not_covered_reply_dict(),
+            valid_not_covered_reply_dict(),
+            valid_not_covered_reply_dict(),
+        ]
+    )
+    with pytest.raises(GenerationFailedError):
+        _ask(settings, provider, allow_general_knowledge=True)
+    assert len(provider.calls) == 3
+
+
+def test_N_not_covered_still_valid_in_strict_mode_even_when_related(tmp_path):
+    # Control: el gap cerrado es específico del modo ampliado. En modo
+    # estricto, "not_covered" para una pregunta relacionada-pero-no-cubierta
+    # sigue siendo la respuesta correcta y esperada (REGLA 6 sin cambios).
+    settings = _settings(tmp_path)
+    provider = FakeLLMProvider(responses=[valid_not_covered_reply_dict()])
+    reply = _ask(settings, provider, allow_general_knowledge=False)
+    assert len(provider.calls) == 1  # nunca se rechaza en modo estricto
+    assert reply.response_type.value == "not_covered"
+
+
+def test_O_retry_reason_code_logged_never_question_or_answer_text(tmp_path, caplog):
+    settings = _settings(tmp_path)
+    provider = FakeLLMProvider(
+        responses=[valid_not_covered_reply_dict(), valid_general_related_reply_dict()]
+    )
+    secret_question = "¿Cómo se compara esta técnica con otra técnica externa al tema?"
+    with caplog.at_level(logging.INFO, logger="pwc_tutor.tutor"):
+        _ask(settings, provider, message=secret_question, allow_general_knowledge=True)
+
+    assert "tutor_query_retry" in caplog.text
+    assert "attempt=1" in caplog.text
+    assert "reason=grounding_invalid" in caplog.text
+    assert secret_question not in caplog.text
+
+
+def test_P_lesson_prompt_version_untouched_by_tutor_prompt_change():
+    # v1.3.0 PARTE 44: este bloque nunca debe tocar la versión del prompt
+    # de lecciones, aunque el prompt del tutor sí haya cambiado de versión.
+    from app.prompts.lesson import LESSON_PROMPT_VERSION
+
+    assert LESSON_PROMPT_VERSION == "lesson-v3.2.1"
