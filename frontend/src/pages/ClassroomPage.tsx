@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { AiOperationStatus } from "../components/AiOperationStatus";
@@ -7,6 +7,7 @@ import { GroundingPanel } from "../components/GroundingPanel";
 import { SafeMarkdown } from "../components/SafeMarkdown";
 import { CheckpointPanel } from "../classroom/CheckpointPanel";
 import { CompletionScreen } from "../classroom/CompletionScreen";
+import { ReadAloudControls } from "../classroom/ReadAloudControls";
 import { SceneRenderer } from "../classroom/SceneRenderer";
 import { TutorPanel } from "../classroom/TutorPanel";
 import { buildSourceBlockLookup } from "../classroom/sourceBlockLookup";
@@ -20,7 +21,9 @@ import {
 } from "../classroom/classroomStorage";
 import { describeLessonError } from "../classroom/lessonErrors";
 import { extractMarkdownLinks } from "../classroom/markdownLinks";
-import { isSpeechSupported } from "../classroom/speech";
+import { getAvailableVoices, isSpeechSupported, pickSpanishVoice } from "../classroom/speech";
+import { claimAiAudioPriority } from "../classroom/readAloudPriority";
+import { useReadAloud } from "../classroom/useReadAloud";
 import { cancelAllSpeech } from "../classroom/voicePlayback";
 import { useClassroomEngine } from "../classroom/useClassroomEngine";
 import { useClassroomVoice } from "../classroom/useClassroomVoice";
@@ -110,6 +113,20 @@ export function ClassroomPage() {
   const [neuralDismissed, setNeuralDismissed] = useState(false);
   const useNeural = neuralPreferred && !neuralDismissed;
 
+  // v1.5.0 (Guided Markdown Read Aloud): misma selección de voz en
+  // español que ya usa `useClassroomVoice.ts` para la narración de la
+  // clase -- nunca una voz nueva ni un criterio de selección distinto.
+  const [readAloudVoice, setReadAloudVoice] = useState<SpeechSynthesisVoice | undefined>(undefined);
+  useEffect(() => {
+    if (!speechSupported) return;
+    function loadVoice() {
+      setReadAloudVoice(pickSpanishVoice(getAvailableVoices()));
+    }
+    loadVoice();
+    window.speechSynthesis.addEventListener?.("voiceschanged", loadVoice);
+    return () => window.speechSynthesis.removeEventListener?.("voiceschanged", loadVoice);
+  }, [speechSupported]);
+
   // Fase 4: Classroom Engine — navegación determinística de escenas,
   // progreso local y estado de reproducción.
   const engine = useClassroomEngine({ lesson, courseId, moduleId, topicId });
@@ -147,6 +164,25 @@ export function ClassroomPage() {
     useNeural,
     onAdvanceChunk: engine.nextNarrationChunk,
     onNeuralError: (message) => setNeuralVoiceError(message),
+  });
+
+  // v1.5.0 (Guided Markdown Read Aloud): el Reader opera exclusivamente
+  // sobre el Markdown ya renderizado dentro de este contenedor (nunca
+  // sobre el resto de .content-panel__body -- puntos clave/recursos no
+  // son Markdown del tópico). `aiAudioSessionActive` es EXACTAMENTE la
+  // misma condición que habilita la narración de la clase arriba
+  // (`voiceEnabled && !engine.isCompleted`) -- mientras esté encendida,
+  // pausada o no, el Reader queda deshabilitado (PARTE 8/45: nunca le
+  // "roba" el turno a una sesión de IA que el alumno no cerró
+  // explícitamente).
+  const readAloudContainerRef = useRef<HTMLDivElement>(null);
+  const readAloud = useReadAloud({
+    containerRef: readAloudContainerRef,
+    active: contentTab === "explicacion" && !!topic,
+    topicKey: `${courseId ?? ""}:${moduleId ?? ""}:${topicId ?? ""}`,
+    useNeural,
+    voice: readAloudVoice,
+    aiAudioSessionActive: voiceEnabled && !engine.isCompleted,
   });
 
   useEffect(() => {
@@ -195,6 +231,12 @@ export function ClassroomPage() {
     setTutorInterrupting(false);
     setInspectedTutorRef(null);
     cancelAllSpeech();
+    // v1.5.0 (PARTE 5/38/39/40): cambio de tópico/curso (navegación
+    // normal, "Ver tema relacionado" o browser Back) -- el Reader se
+    // reinicia igual vía su propio efecto keyed en `topicKey`, pero se
+    // notifica acá también por explicitud (mismo patrón que
+    // cancelAllSpeech de la línea de arriba).
+    claimAiAudioPriority();
     api
       .getTopic(courseId, moduleId, topicId)
       .then((data) => {
@@ -282,6 +324,10 @@ export function ClassroomPage() {
     // deshabilitar el botón mientras carga — nunca confiar solo en el
     // re-render de React para evitar una segunda request por doble click.
     if (lessonLoading) return;
+    // v1.5.0 (PARTE 6/41): la prioridad de IA arranca en el EVENTO de
+    // generación, no cuando el audio realmente empieza -- el Reader debe
+    // detenerse ANTES de que termine la generación, nunca después.
+    claimAiAudioPriority();
     setLessonLoading(true);
     setLessonError(null);
     try {
@@ -310,6 +356,7 @@ export function ClassroomPage() {
 
   function handleExit() {
     cancelAllSpeech();
+    claimAiAudioPriority(); // v1.5.0: sale del aula -> el Reader también se detiene
     navigate(courseId ? `/cursos/${courseId}` : "/");
   }
 
@@ -787,6 +834,7 @@ export function ClassroomPage() {
               >
                 ← Tema anterior
               </button>
+              {contentTab === "explicacion" && <ReadAloudControls reader={readAloud} />}
               <button
                 type="button"
                 className="topic-nav__next"
@@ -802,12 +850,14 @@ export function ClassroomPage() {
               {!topic && !error && <p>Cargando contenido del tema…</p>}
 
               {topic && contentTab === "explicacion" && courseId && moduleId && topicId && (
-                <SafeMarkdown
-                  markdown={topic.content_markdown}
-                  courseId={courseId}
-                  moduleId={moduleId}
-                  topicId={topicId}
-                />
+                <div ref={readAloudContainerRef}>
+                  <SafeMarkdown
+                    markdown={topic.content_markdown}
+                    courseId={courseId}
+                    moduleId={moduleId}
+                    topicId={topicId}
+                  />
+                </div>
               )}
 
               {topic && contentTab === "puntos-clave" && (

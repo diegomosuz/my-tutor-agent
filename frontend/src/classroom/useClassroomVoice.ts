@@ -5,6 +5,7 @@
 // nextNarrationChunk) sin saber nada de síntesis de voz.
 import { useEffect, useRef } from "react";
 import type { LessonScene } from "../types/api";
+import { claimAiAudioPriority } from "./readAloudPriority";
 import { getAvailableVoices, isSpeechSupported, pickSpanishVoice } from "./speech";
 import { cancelAllSpeech, pauseAllSpeech, resumeAllSpeech, speakSequenceUnified } from "./voicePlayback";
 
@@ -60,6 +61,11 @@ export function useClassroomVoice({
     const chunk = scene.narration[narrationIndex];
     if (!chunk) return;
 
+    // v1.5.0 (PARTE 7/43): la narración de la clase SIEMPRE gana frente
+    // al Markdown Reader -- se notifica en cada chunk nuevo (no solo al
+    // activar la voz), cubre también el caso de reanudar después de un
+    // "Continuar clase" con el Reader reproduciendo mientras tanto.
+    claimAiAudioPriority();
     const cancelCurrent = speakSequenceUnified([chunk.text], {
       useNeural,
       rate,

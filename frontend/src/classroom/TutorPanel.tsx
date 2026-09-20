@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { AiStatusResponse } from "../types/api";
+import { claimAiAudioPriority } from "./readAloudPriority";
 import { speakSequenceUnified } from "./voicePlayback";
 import { TutorConversation } from "./TutorConversation";
 import { NOT_COVERED_MESSAGE, UNRELATED_MESSAGE, useTutor } from "./useTutor";
@@ -115,6 +116,9 @@ export function TutorPanel({
       // superponen dos voces en ningún caso.
       cancelTutorVoiceRef.current?.();
       setNeuralVoiceError(null);
+      // v1.5.0 (PARTE 7/44): la voz del tutor también gana frente al
+      // Markdown Reader -- se detiene antes de arrancar, nunca compiten.
+      claimAiAudioPriority();
       cancelTutorVoiceRef.current = speakSequenceUnified(texts, {
         useNeural: useNeuralVoice,
         rate: voiceRate,

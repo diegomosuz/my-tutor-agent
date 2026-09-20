@@ -51,6 +51,13 @@ export interface SpeakOptions {
   voice?: SpeechSynthesisVoice;
   onEnd?: () => void;
   onError?: () => void;
+  /** v1.5.0 (Guided Markdown Read Aloud): se invoca cuando el navegador
+   * realmente empieza a pronunciar el utterance (evento nativo
+   * `onstart`) -- el Reader lo usa para sincronizar el resaltado de la
+   * frase exactamente con el audio real, nunca antes (ver PARTE 62).
+   * Opcional: ningún consumidor existente (narración de clase, tutor) lo
+   * usa todavía, backward compatible. */
+  onStart?: () => void;
 }
 
 /** Encola un único texto para lectura. No modifica el texto recibido. */
@@ -63,6 +70,7 @@ export function speakText(text: string, options: SpeakOptions = {}): void {
     utterance.rate = options.rate ?? 1.0;
     if (options.onEnd) utterance.onend = options.onEnd;
     if (options.onError) utterance.onerror = options.onError;
+    if (options.onStart) utterance.onstart = options.onStart;
     window.speechSynthesis.speak(utterance);
   } catch {
     options.onError?.();

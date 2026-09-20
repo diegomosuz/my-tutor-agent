@@ -2774,7 +2774,10 @@ p {
 .slide-panel__cta:focus-visible,
 .topic-nav button:focus-visible,
 .topic-completion-cta__button:focus-visible,
-.tutor-related-topic__cta:focus-visible {
+.tutor-related-topic__cta:focus-visible,
+.read-aloud-controls__main:focus-visible,
+.read-aloud-controls__stop:focus-visible,
+.read-aloud-controls__rate:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
@@ -2867,7 +2870,12 @@ p {
   margin-top: 10px;
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 8px;
+  /* v1.5.0: ahora puede llevar los controles del Reader en el medio --
+     nunca debe forzar overflow horizontal en mobile (PARTE 58), se
+     permite pasar a una segunda línea si hace falta. */
+  flex-wrap: wrap;
 }
 
 .topic-nav button {
@@ -2899,6 +2907,85 @@ p {
   margin-top: 0;
   padding: 10px 18px;
   border-bottom: 1px solid var(--color-border);
+}
+
+/* v1.5.0 ("Guided Markdown Read Aloud"): controles del lector de
+   Markdown, ubicados junto a "Tema anterior/siguiente" (nunca debajo del
+   Tutor, ver PARTE 32) -- visualmente asociados al panel de Markdown que
+   efectivamente leen. */
+.read-aloud-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.read-aloud-controls__main {
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.read-aloud-controls__main:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.read-aloud-controls__main:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.read-aloud-controls__stop {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: #fff;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.read-aloud-controls__stop:hover {
+  border-color: var(--color-accent-red);
+  color: var(--color-accent-red);
+}
+
+.read-aloud-controls__rate {
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.read-aloud-controls__error {
+  font-size: 11.5px;
+  color: var(--color-accent-red);
+  flex-basis: 100%;
+  text-align: center;
+}
+
+/* Resaltado de la frase activa (CSS Custom Highlight API, PARTE 35): sin
+   animaciones llamativas, contraste suficiente, nunca depende SOLO del
+   color (el botón Play/Pausa ya refleja el estado, ver ReadAloudControls).
+   Sin soporte del navegador, `::highlight()` simplemente nunca matchea
+   nada -- degradación segura, no hace falta @supports. */
+::highlight(read-aloud-segment) {
+  background-color: var(--color-primary-subtle);
+  color: var(--color-text);
 }
 
 /* ---------- Estados: loading / error / vacío ---------- */

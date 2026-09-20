@@ -15,6 +15,7 @@ const mockGetSystemStatus = vi.fn();
 const mockGetAiStatus = vi.fn();
 const mockAskTutor = vi.fn();
 const mockEvaluateCheckpoint = vi.fn();
+const mockSynthesizeSpeech = vi.fn();
 
 vi.mock("../../api/client", () => ({
   api: {
@@ -25,6 +26,7 @@ vi.mock("../../api/client", () => ({
     getAiStatus: (...args: unknown[]) => mockGetAiStatus(...args),
     askTutor: (...args: unknown[]) => mockAskTutor(...args),
     evaluateCheckpoint: (...args: unknown[]) => mockEvaluateCheckpoint(...args),
+    synthesizeSpeech: (...args: unknown[]) => mockSynthesizeSpeech(...args),
   },
   ApiError: class ApiError extends Error {
     status: number;
@@ -125,6 +127,7 @@ beforeEach(() => {
   mockGenerateLesson.mockReset();
   mockAskTutor.mockReset();
   mockEvaluateCheckpoint.mockReset();
+  mockSynthesizeSpeech.mockReset();
   mockNavigate.mockReset();
   mockGetSystemStatus.mockReset().mockResolvedValue({
     app_version: "1.1.0",
@@ -624,5 +627,92 @@ describe("ClassroomPage — v1.3.0 content-panel navigation (BLOQUE 6)", () => {
 
     // sigue existiendo una sola instancia real del toolbar en toda la página
     expect(screen.getAllByRole("group", { name: "Navegación entre tópicos" })).toHaveLength(1);
+  });
+});
+
+// ----------------------------------------------------------------------
+// v1.5.0 ("Guided Markdown Read Aloud") — integración real dentro del
+// árbol completo de ClassroomPage. Fuerza voz neural configurada (mismo
+// mock de Audio/URL que useReadAloud.test.ts) para poder llevar al
+// Reader a un estado "playing" real y verificar que una acción de IA lo
+// detiene de inmediato (PARTE 41, "TEST CRÍTICO" de la especificación).
+// ----------------------------------------------------------------------
+describe("ClassroomPage — v1.5.0 Guided Markdown Read Aloud", () => {
+  class MockAudio {
+    src = "";
+    paused = true;
+    playbackRate = 1;
+    onended: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    play = vi.fn(() => {
+      this.paused = false;
+      return Promise.resolve();
+    });
+    pause = vi.fn(() => {
+      this.paused = true;
+    });
+    constructor(src: string) {
+      this.src = src;
+    }
+  }
+
+  beforeEach(() => {
+    mockGetSystemStatus.mockReset().mockResolvedValue({
+      app_version: "1.5.0",
+      backend: "ok",
+      courses: { count: 1, diagnostics: "ok" },
+      llm: { provider: "openai", model: "", configured: false, prompt_version: "", certification_prompt_version: "" },
+      voice: { provider: "openai", neural_configured: true, tts_model: "gpt-4o-mini-tts" },
+      cache_writable: true,
+    });
+    // El fetch de síntesis nunca resuelve por sí solo en este bloque: cada
+    // test controla explícitamente cuándo "llega" el audio.
+    mockSynthesizeSpeech.mockReturnValue(new Promise(() => {}));
+    // @ts-expect-error jsdom no implementa HTMLAudioElement de verdad
+    globalThis.Audio = MockAudio;
+    globalThis.URL.createObjectURL = vi.fn(() => "blob:fake-url");
+    globalThis.URL.revokeObjectURL = vi.fn();
+  });
+
+  it("A: el botón 'Leer tema' está disponible junto a la navegación de tópico", async () => {
+    renderPage();
+    // El botón existe desde el primer render, pero arranca disabled hasta
+    // que useReadAloud termina de segmentar el Markdown ya montado (efecto
+    // async) -- se espera a que quede habilitado, nunca se asume síncrono.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Leer tema/ })).not.toBeDisabled()
+    );
+  });
+
+  it("B (PARTE 41, crítico): Generar clase con IA detiene el Reader de inmediato, incluso ANTES de que termine la generación", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Leer tema/ })).not.toBeDisabled()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Leer tema/ }));
+
+    // El Reader queda "cargando" (fetch de síntesis todavía en vuelo,
+    // nunca resuelve en este test).
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Cargando/ })).toBeInTheDocument()
+    );
+
+    // La generación de IA tampoco resuelve todavía -- lo que importa es
+    // que el Reader se detiene en el momento del CLICK, no cuando la
+    // generación termina.
+    let resolveGeneration: (plan: typeof SAMPLE_LESSON) => void = () => {};
+    mockGenerateLesson.mockReturnValue(
+      new Promise((resolve) => {
+        resolveGeneration = resolve;
+      })
+    );
+    const generateButton = screen.getByRole("button", { name: /Preparar clase con IA/ });
+    fireEvent.click(generateButton);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^🔊 Leer tema/ })).toBeInTheDocument()
+    );
+
+    resolveGeneration(SAMPLE_LESSON);
   });
 });

@@ -132,3 +132,39 @@ export function saveVoiceSpeed(speed: VoiceSpeed): void {
     // ignorar
   }
 }
+
+// --- v1.5.0 (Guided Markdown Read Aloud): velocidad del Reader ---------
+//
+// PARTE 31 de la especificación: es una preferencia del LECTOR, distinta
+// de la velocidad de la narración de clase (`VOICE_SPEED_OPTIONS` arriba,
+// que usa otra escala: 0.85/1.0/1.15/1.3) -- nunca se comparte la misma
+// key ni el mismo set de opciones. Se persiste ÚNICAMENTE el número: el
+// estado de sesión (frase actual, posición de reproducción, Reader ON/OFF)
+// nunca se persiste (PARTE 66), se resetea siempre a `idle` en cada
+// tópico nuevo.
+const READ_ALOUD_RATE_KEY = "pwc-tutor:read-aloud-rate";
+
+export const READ_ALOUD_RATE_OPTIONS = [0.75, 1.0, 1.25, 1.5, 2.0] as const;
+export type ReadAloudRate = (typeof READ_ALOUD_RATE_OPTIONS)[number];
+export const DEFAULT_READ_ALOUD_RATE: ReadAloudRate = 1.0;
+
+export function loadReadAloudRate(): ReadAloudRate {
+  if (!hasLocalStorage()) return DEFAULT_READ_ALOUD_RATE;
+  try {
+    const raw = window.localStorage.getItem(READ_ALOUD_RATE_KEY);
+    const parsed = raw ? Number.parseFloat(raw) : NaN;
+    const match = READ_ALOUD_RATE_OPTIONS.find((option) => option === parsed);
+    return match ?? DEFAULT_READ_ALOUD_RATE;
+  } catch {
+    return DEFAULT_READ_ALOUD_RATE;
+  }
+}
+
+export function saveReadAloudRate(rate: ReadAloudRate): void {
+  if (!hasLocalStorage()) return;
+  try {
+    window.localStorage.setItem(READ_ALOUD_RATE_KEY, String(rate));
+  } catch {
+    // ignorar
+  }
+}
