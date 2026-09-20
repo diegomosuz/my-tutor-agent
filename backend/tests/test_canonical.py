@@ -454,3 +454,188 @@ def test_grounding_packet_format_and_no_injected_content():
     assert "[SRC-002]" in packet
     assert "# Título" in packet
     assert "Un párrafo simple." in packet
+    # Default: sin metadata estructural (comportamiento histórico intacto
+    # para tutor/checkpoints/certificación/endpoint de inspección).
+    assert "type:" not in packet
+    assert "heading_path:" not in packet
+
+
+# --------------------------------------------------------------------------
+# v1.3.0 (Bloque 3, "Structure-Aware Lesson Generation"), PARTE 26:
+# metadata estructural opt-in del Grounding Packet
+# (include_structural_metadata=True), exclusiva de lesson_generator.py.
+# --------------------------------------------------------------------------
+
+_STRUCTURED_DOCUMENT = """# Tema
+
+## Sección
+
+Un párrafo introductorio.
+
+| Modelo | Costo |
+|---|---|
+| A | Bajo |
+| B | Alto |
+
+```python
+def f():
+    return 1
+```
+
+![Diagrama del sistema](images/diagrama.png)
+
+1. Primer paso
+2. Segundo paso
+
+- Item libre
+- Otro item
+
+Checklist de dominio:
+
+- [ ] Tarea pendiente
+- [x] Tarea hecha
+"""
+
+
+def _packet_with_metadata(markdown_text: str) -> str:
+    canonical = _canonical(markdown_text)
+    return build_grounding_packet(
+        canonical,
+        course_title="Curso",
+        module_title="Módulo",
+        topic_title="Tema",
+        include_structural_metadata=True,
+    )
+
+
+def _block_section(packet: str, source_ref: str) -> str:
+    start = packet.index(f"[{source_ref}]")
+    end = packet.index("\n\n", start)
+    return packet[start:end]
+
+
+def test_metadata_disabled_by_default_matches_historical_packet():
+    canonical = _canonical(_STRUCTURED_DOCUMENT)
+    packet_default = build_grounding_packet(
+        canonical, course_title="Curso", module_title="Módulo", topic_title="Tema"
+    )
+    packet_explicit_false = build_grounding_packet(
+        canonical,
+        course_title="Curso",
+        module_title="Módulo",
+        topic_title="Tema",
+        include_structural_metadata=False,
+    )
+    assert packet_default == packet_explicit_false
+    assert "type:" not in packet_default
+
+
+def test_table_metadata_includes_type_and_preserves_literal_markdown():
+    canonical = _canonical(_STRUCTURED_DOCUMENT)
+    table_ref = next(b.source_ref for b in canonical.source_blocks if b.block_type == "table")
+    packet = _packet_with_metadata(_STRUCTURED_DOCUMENT)
+    section = _block_section(packet, table_ref)
+    assert "type: table" in section
+    assert "| Modelo | Costo |" in section
+    assert "| A | Bajo |" in section
+
+
+def test_image_metadata_includes_type_and_preserves_literal_markdown():
+    canonical = _canonical(_STRUCTURED_DOCUMENT)
+    image_ref = next(b.source_ref for b in canonical.source_blocks if b.block_type == "image")
+    packet = _packet_with_metadata(_STRUCTURED_DOCUMENT)
+    section = _block_section(packet, image_ref)
+    assert "type: image" in section
+    assert "![Diagrama del sistema](images/diagrama.png)" in section
+
+
+def test_code_metadata_includes_type_lang_and_preserves_fence():
+    canonical = _canonical(_STRUCTURED_DOCUMENT)
+    code_ref = next(b.source_ref for b in canonical.source_blocks if b.block_type == "code")
+    packet = _packet_with_metadata(_STRUCTURED_DOCUMENT)
+    section = _block_section(packet, code_ref)
+    assert "type: code" in section
+    assert "lang: python" in section
+    assert "```python" in section
+    assert "def f():" in section
+
+
+def test_paragraph_metadata_includes_type_without_extra_fields():
+    canonical = _canonical(_STRUCTURED_DOCUMENT)
+    para_ref = next(b.source_ref for b in canonical.source_blocks if b.block_type == "paragraph")
+    packet = _packet_with_metadata(_STRUCTURED_DOCUMENT)
+    section = _block_section(packet, para_ref)
+    assert "type: paragraph" in section
+    assert "list_kind:" not in section
+    assert "lang:" not in section
+
+
+def test_ordered_list_metadata_declares_list_kind_ordered():
+    canonical = _canonical(_STRUCTURED_DOCUMENT)
+    for block in canonical.source_blocks:
+        if block.block_type == "list" and block.markdown.lstrip().startswith("1."):
+            packet = _packet_with_metadata(_STRUCTURED_DOCUMENT)
+            section = _block_section(packet, block.source_ref)
+            assert "type: list" in section
+            assert "list_kind: ordered" in section
+            return
+    pytest.fail("no ordered list block found in fixture")
+
+
+def test_unordered_list_metadata_declares_list_kind_unordered():
+    canonical = _canonical(_STRUCTURED_DOCUMENT)
+    for block in canonical.source_blocks:
+        if block.block_type == "list" and block.markdown.lstrip().startswith("- Item libre"):
+            packet = _packet_with_metadata(_STRUCTURED_DOCUMENT)
+            section = _block_section(packet, block.source_ref)
+            assert "list_kind: unordered" in section
+            return
+    pytest.fail("no unordered list block found in fixture")
+
+
+def test_task_list_metadata_declares_list_kind_task():
+    canonical = _canonical(_STRUCTURED_DOCUMENT)
+    for block in canonical.source_blocks:
+        if block.block_type == "list" and "[ ]" in block.markdown:
+            packet = _packet_with_metadata(_STRUCTURED_DOCUMENT)
+            section = _block_section(packet, block.source_ref)
+            assert "list_kind: task" in section
+            return
+    pytest.fail("no task list block found in fixture")
+
+
+def test_heading_path_serialized_as_arrow_chain():
+    canonical = _canonical(_STRUCTURED_DOCUMENT)
+    table_ref = next(b.source_ref for b in canonical.source_blocks if b.block_type == "table")
+    block = next(b for b in canonical.source_blocks if b.source_ref == table_ref)
+    packet = _packet_with_metadata(_STRUCTURED_DOCUMENT)
+    section = _block_section(packet, table_ref)
+    expected = "heading_path: " + " > ".join(block.heading_path)
+    assert expected in section
+
+
+def test_structural_metadata_never_changes_source_refs_or_line_spans():
+    canonical_before = _canonical(_STRUCTURED_DOCUMENT)
+    packet = _packet_with_metadata(_STRUCTURED_DOCUMENT)
+    refs_in_packet = {r.strip("[]") for r in re.findall(r"\[SRC-\d{3}\]", packet)}
+    known_refs = {b.source_ref for b in canonical_before.source_blocks}
+    assert refs_in_packet == known_refs
+    # Nunca se agregan bloques nuevos ni se cambian sus line spans: el
+    # canonical en sí (fuente de verdad de start_line/end_line) es
+    # exactamente el mismo objeto sin importar include_structural_metadata.
+    canonical_after = _canonical(_STRUCTURED_DOCUMENT)
+    for before, after in zip(canonical_before.source_blocks, canonical_after.source_blocks):
+        assert before.start_line == after.start_line
+        assert before.end_line == after.end_line
+        assert before.markdown == after.markdown
+
+
+def test_grounding_packet_validate_source_refs_unaffected_by_metadata():
+    canonical = _canonical(_STRUCTURED_DOCUMENT)
+    existing_ref = canonical.source_blocks[0].source_ref
+    # validate_source_refs opera sobre canonical.source_blocks, nunca sobre
+    # el texto del packet -- confirmando que la metadata nueva del packet
+    # no es "nueva evidencia" que pudiera alterar esta validación.
+    result = validate_source_refs([existing_ref, "SRC-999"], canonical)
+    assert result.valid_refs == [existing_ref]
+    assert result.invalid_refs == ["SRC-999"]

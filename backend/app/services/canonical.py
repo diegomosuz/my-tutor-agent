@@ -281,19 +281,98 @@ def build_canonical_topic(
     )
 
 
+# v1.3.0 (Bloque 3, "Structure-Aware Lesson Generation"): helpers puros y
+# deterministas para describir metadata mínima de un bloque en el packet.
+# NUNCA agregan un análisis nuevo ni infieren nada que no esté ya
+# literalmente presente en `block.markdown` -- ver el diagnóstico previo
+# (docs/STRUCTURE_AWARE_LESSONS.md): el parser YA sabe esto en tiempo de
+# parseo, solo que `build_grounding_packet` nunca lo serializaba
+# explícitamente, obligando al LLM a re-descubrirlo leyendo sintaxis cruda
+# sin ninguna etiqueta. Ninguno de estos helpers modifica `SourceBlock`
+# (que sigue exactamente igual): la metadata se deriva on-the-fly a partir
+# del `markdown` literal ya existente, únicamente para la serialización del
+# packet.
+_ORDERED_ITEM_RE = re.compile(r"^\s*\d+[.)]\s+")
+_TASK_ITEM_RE = re.compile(r"^\s*[-*+]\s+\[[ xX]\]\s+")
+_UNORDERED_ITEM_RE = re.compile(r"^\s*[-*+]\s+")
+_FENCE_LANG_RE = re.compile(r"^```(\w+)")
+
+
+def _detect_list_kind(markdown_text: str) -> str | None:
+    """Determina "ordered" / "unordered" / "task" mirando únicamente el
+    marcador del primer ítem de la lista en el Markdown literal -- 100%
+    determinístico, sin heurísticas de contenido. Una lista con formato
+    irreconocible devuelve `None` (se omite `list_kind`, nunca se inventa)."""
+    for line in markdown_text.split("\n"):
+        if not line.strip():
+            continue
+        if _TASK_ITEM_RE.match(line):
+            return "task"
+        if _ORDERED_ITEM_RE.match(line):
+            return "ordered"
+        if _UNORDERED_ITEM_RE.match(line):
+            return "unordered"
+        return None
+    return None
+
+
+def _detect_code_lang(markdown_text: str) -> str | None:
+    """Extrae el identificador de lenguaje de la línea de apertura de un
+    fence (``` python``` -> "python"). Un bloque de código indentado (sin
+    fence) o un fence sin identificador devuelve `None` -- nunca se
+    adivina un lenguaje que el Markdown no declara literalmente."""
+    first_line = markdown_text.split("\n", 1)[0].strip()
+    match = _FENCE_LANG_RE.match(first_line)
+    return match.group(1) if match else None
+
+
+def _describe_block_metadata(block: SourceBlock) -> list[str]:
+    """Metadata mínima y ya conocida determinísticamente (PARTE 3 de la
+    especificación): `type` siempre; `list_kind`/`lang` solo cuando se
+    pueden derivar sin ambigüedad; `heading_path` solo cuando no está
+    vacío (el bloque raíz, si lo hubiera, no tiene heading contenedor)."""
+    lines = [f"type: {block.block_type}"]
+    if block.block_type == "list":
+        list_kind = _detect_list_kind(block.markdown)
+        if list_kind:
+            lines.append(f"list_kind: {list_kind}")
+    if block.block_type == "code":
+        lang = _detect_code_lang(block.markdown)
+        if lang:
+            lines.append(f"lang: {lang}")
+    if block.heading_path:
+        lines.append(f"heading_path: {' > '.join(block.heading_path)}")
+    return lines
+
+
 def build_grounding_packet(
     canonical: CanonicalTopicContent,
     *,
     course_title: str,
     module_title: str,
     topic_title: str,
+    include_structural_metadata: bool = False,
 ) -> str:
     """Genera el Grounding Packet determinístico de un tópico.
 
     Es texto plano listo para ser usado en una fase futura como el ÚNICO
     contexto pedagógico entregado a un LLM. No agrega explicaciones ni
     instrucciones de prompting generadas por la aplicación: cada sección
-    `[SRC-XXX]` contiene exclusivamente el Markdown fuente de ese bloque.
+    `[SRC-XXX]` contiene exclusivamente el Markdown fuente de ese bloque
+    (y, opcionalmente, metadata puramente descriptiva de ese mismo bloque
+    -- ver `include_structural_metadata`).
+
+    `include_structural_metadata` (v1.3.0, default False): cuando es
+    True, cada sección `[SRC-XXX]` antepone `type`/`list_kind`/`lang`/
+    `heading_path` al Markdown literal (que sigue viajando COMPLETO, sin
+    ningún recorte -- la metadata se AGREGA, nunca sustituye contenido).
+    Esto es exclusivo de la generación de lecciones
+    (`lesson_generator.py`, ver "Structure-Aware Lesson Generation" en
+    `docs/STRUCTURE_AWARE_LESSONS.md`): el tutor, los checkpoints, la
+    certificación y el endpoint de inspección `/grounding` siguen
+    recibiendo el packet exactamente igual que antes (default False) --
+    este bloque está scopeado únicamente a la generación de lecciones, y
+    esto evita cualquier efecto secundario sobre esos otros consumidores.
     """
     lines: list[str] = []
     lines.append("=== AUTHORIZED SOURCE: TOPIC ===")
@@ -305,6 +384,8 @@ def build_grounding_packet(
     lines.append("")
     for block in canonical.source_blocks:
         lines.append(f"[{block.source_ref}]")
+        if include_structural_metadata:
+            lines.extend(_describe_block_metadata(block))
         lines.append(block.markdown)
         lines.append("")
     lines.append("=== END AUTHORIZED SOURCE ===")

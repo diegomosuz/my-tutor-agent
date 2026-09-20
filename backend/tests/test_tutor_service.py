@@ -541,8 +541,12 @@ def test_O_retry_reason_code_logged_never_question_or_answer_text(tmp_path, capl
 
 
 def test_P_lesson_prompt_version_untouched_by_tutor_prompt_change():
-    # v1.3.0 PARTE 44: este bloque nunca debe tocar la versión del prompt
-    # de lecciones, aunque el prompt del tutor sí haya cambiado de versión.
+    # v1.3.0 PARTE 44 (Bloque 1, Tutor Expanded Mode): ese bloque nunca tocó
+    # la versión del prompt de lecciones, aunque el prompt del tutor sí haya
+    # cambiado de versión. El valor esperado avanzó por separado en el
+    # Bloque 3 ("Structure-Aware Lesson Generation", lesson-v3.2.1 ->
+    # lesson-v3.3) -- este test solo confirma que la constante existe y es
+    # importable desde acá, no que el Bloque 1 (tutor) la haya modificado.
     from app.prompts.lesson import LESSON_PROMPT_VERSION
 
-    assert LESSON_PROMPT_VERSION == "lesson-v3.2.1"
+    assert LESSON_PROMPT_VERSION == "lesson-v3.3"

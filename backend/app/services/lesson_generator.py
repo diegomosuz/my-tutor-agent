@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -241,6 +242,28 @@ def _visual_types_for_log(body: GeneratedLessonBody) -> str:
     return ",".join(scene.visual.visual_type.value for scene in body.scenes)
 
 
+# v1.3.0 (Bloque 3, "Structure-Aware Lesson Generation", PARTE 25 de
+# observabilidad): conteos agregados y seguros para medir, a lo largo del
+# tiempo, si el material estructurado disponible en la fuente (tablas,
+# imágenes, código, listas) efectivamente se traduce en visuales
+# estructurados en la LessonPlan generada. Nunca loguea contenido
+# pedagógico, source_refs ni texto -- solo counts por tipo (enum cerrado),
+# el mismo criterio de seguridad que el resto de `service_logging.py`.
+def _source_structured_counts(canonical: CanonicalTopicContent) -> dict[str, int]:
+    counter = Counter(block.block_type for block in canonical.source_blocks)
+    return {
+        "table": counter.get("table", 0),
+        "image": counter.get("image", 0),
+        "code": counter.get("code", 0),
+        "list": counter.get("list", 0),
+    }
+
+
+def _selected_visual_counts(body: GeneratedLessonBody) -> dict[str, int]:
+    counter = Counter(scene.visual.visual_type.value for scene in body.scenes)
+    return dict(counter)
+
+
 def _generate_validated_body(
     provider: LLMProvider,
     messages: list[dict[str, str]],
@@ -344,8 +367,17 @@ def generate_lesson(
     # Resolver el tópico ANTES de exigir credencial: un tópico inexistente
     # debe dar 404 incluso sin ninguna API key configurada (el catálogo y
     # la lectura de contenido nunca dependen de la disponibilidad del LLM).
+    # v1.3.0 (Bloque 3, "Structure-Aware Lesson Generation"):
+    # include_structural_metadata=True es exclusivo de este pipeline --
+    # el tutor/checkpoints/certificación siguen llamando a
+    # get_grounding_packet sin este argumento (default False), packet
+    # sin cambios para ellos.
     canonical, grounding_packet = course_service.get_grounding_packet(
-        settings.content_path, course_id, module_id, topic_id
+        settings.content_path,
+        course_id,
+        module_id,
+        topic_id,
+        include_structural_metadata=True,
     )
 
     if not llm_provider.is_configured():
@@ -424,6 +456,8 @@ def generate_lesson(
             duration_ms=duration_ms,
             cached=False,
             scene_count=len(lesson_plan.scenes),
+            source_structured_counts=_source_structured_counts(canonical),
+            selected_visual_counts=_selected_visual_counts(body),
         )
         return lesson_plan
 

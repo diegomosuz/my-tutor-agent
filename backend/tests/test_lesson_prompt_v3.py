@@ -18,7 +18,10 @@ from app.prompts.lesson import LESSON_PROMPT_VERSION, SYSTEM_PROMPT
 
 
 def test_lesson_prompt_version_is_v3_2_1():
-    assert LESSON_PROMPT_VERSION == "lesson-v3.2.1"
+    # v1.3.0 (Bloque 3): la versión efectiva avanzó a "lesson-v3.3" (ver
+    # test_lesson_prompt_v3_3_is_effective_cache_version más abajo, y
+    # tests/test_structure_aware_lesson_prompt.py para la guía nueva).
+    assert LESSON_PROMPT_VERSION == "lesson-v3.3"
 
 
 def test_system_prompt_mentions_comprehension_check_guidance():
@@ -161,8 +164,16 @@ def test_visual_selection_comparison_before_after_guidance_present():
 
 
 def test_visual_selection_table_vs_comparison_distinction_present():
-    assert "CONSULTAR filas/columnas" in SYSTEM_PROMPT or "CONSULTE la información" in SYSTEM_PROMPT
-    assert "comparison\" en modo tabla" in SYSTEM_PROMPT
+    # v1.3.0 (Bloque 3, "Structure-Aware Lesson Generation"): la distinción
+    # "table" (consulta) vs "comparison en modo tabla" (contraste) se
+    # eliminó a propósito -- QA real mostró que era la causa raíz de un
+    # fallo sistemático de contrato (ComparisonPlan.rows exige transponer
+    # la tabla, y el modelo lo hacía mal de forma consistente). Ahora
+    # cualquier tabla Markdown real usa "table" siempre, sin excepción
+    # (ver tests/test_structure_aware_lesson_prompt.py). Este test queda
+    # como control negativo explícito de esa decisión.
+    assert "en modo tabla" not in SYSTEM_PROMPT
+    assert 'CUALQUIER tabla Markdown real' in SYSTEM_PROMPT
 
 
 def test_visual_selection_scene_consolidation_guidance_present():
@@ -236,5 +247,6 @@ def test_lesson_prompt_v3_2_1_is_effective_cache_version():
     # D: la versión efectiva es la nueva -- ya cubierto arriba por
     # test_lesson_prompt_version_is_v3_2_1, repetido acá con nombre
     # explícito para PARTE 10.D de la especificación de corrección.
-    assert LESSON_PROMPT_VERSION == "lesson-v3.2.1"
+    # v1.3.0 (Bloque 3): sigue siendo cierto que v3.2.1 quedó atrás.
+    assert LESSON_PROMPT_VERSION != "lesson-v3.2.1"
     assert LESSON_PROMPT_VERSION != "lesson-v3.2"

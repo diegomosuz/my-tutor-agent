@@ -275,14 +275,15 @@ def test_different_lesson_prompt_version_produces_different_cache_entry(tmp_path
 def test_H_default_lesson_prompt_version_is_not_lesson_v3():
     settings = Settings()
     assert settings.lesson_prompt_version != "lesson-v3"
-    assert settings.lesson_prompt_version == "lesson-v3.2.1"
+    # v1.3.0 (Bloque 3, "Structure-Aware Lesson Generation"): avanzó a v3.3.
+    assert settings.lesson_prompt_version == "lesson-v3.3"
 
 
 def test_I_real_default_prompt_version_produces_lesson_plan_with_new_version(tmp_path):
     settings = _settings(tmp_path)
     provider = FakeLLMProvider(responses=[valid_lesson_body_dict()])
     plan = _generate(settings, provider)
-    assert plan.prompt_version == "lesson-v3.2.1"
+    assert plan.prompt_version == "lesson-v3.3"
 
 
 # --------------------------------------------------------------------------

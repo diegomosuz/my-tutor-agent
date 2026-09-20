@@ -324,10 +324,21 @@ def resolve_topic_asset(
 
 
 def get_grounding_packet(
-    content_path: Path, course_id: str, module_id: str, topic_id: str
+    content_path: Path,
+    course_id: str,
+    module_id: str,
+    topic_id: str,
+    *,
+    include_structural_metadata: bool = False,
 ) -> tuple[CanonicalTopicContent, str]:
     """Devuelve el `CanonicalTopicContent` de un tópico junto con su
-    Grounding Packet ya renderizado como texto determinístico."""
+    Grounding Packet ya renderizado como texto determinístico.
+
+    `include_structural_metadata` (v1.3.0, default False): se reenvía tal
+    cual a `canonical_service.build_grounding_packet` -- ver el docstring
+    de esa función. Solo `lesson_generator.py` lo activa; el resto de los
+    llamadores (tutor, checkpoints, certificación, endpoint `/grounding`)
+    no pasan este argumento y siguen recibiendo el packet sin cambios."""
     course_dir, module_dir, topic_file = _resolve_topic(
         content_path, course_id, module_id, topic_id
     )
@@ -344,5 +355,6 @@ def get_grounding_packet(
         course_title=humanize(course_dir.name),
         module_title=humanize(module_dir.name),
         topic_title=topic_metadata.title,
+        include_structural_metadata=include_structural_metadata,
     )
     return canonical, packet
