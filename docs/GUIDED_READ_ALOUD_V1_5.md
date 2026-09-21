@@ -170,6 +170,61 @@ click, es un evento, no un lock persistente). Regresión cubierta por
 por preferencia previa + sin escena → habilitado) y "D" (escena real
 narrando → deshabilitado; se apaga la voz → vuelve a habilitarse).
 
+### 4.2 Bug real encontrado en hardening (y su fix): overlap de audio
+con la voz del tutor
+
+`aiAudioSessionActive` (4.1) solo cubre la narración de ESCENA. La voz
+del tutor/checkpoint/certificación pasa por `voicePlayback.ts`
+(`speakSequenceUnified`) y solo dispara `claimAiAudioPriority()` —el
+evento puntual de arriba— al arrancar su secuencia, sin ningún
+equivalente de `aiAudioSessionActive` que la mantenga deshabilitada
+mientras esa voz sigue sonando. Una respuesta del tutor puede tener
+varios chunks/párrafos (`speakSequenceUnified(texts, ...)` recorre
+`texts` uno detrás de otro); el claim solo cubre el instante inicial,
+así que apenas pasaba ese instante el Reader volvía a `disabled=false`
+y un alumno podía reiniciarlo a mitad de la respuesta hablada del
+tutor, sonando junto con ese audio. Confirmado con instrumentación real
+de `HTMLAudioElement` (envolviendo el constructor `Audio` global) en QA
+de navegador real (Chromium, TTS neural real): el click en "Leer tema"
+mientras el tutor seguía hablando efectivamente arrancaba una segunda
+reproducción.
+
+Fix: `setAiAudioActive`/`isAiAudioActive`/`onAiAudioActiveChange` en
+`readAloudPriority.ts` — señal complementaria al claim, esta vez
+representando "hay audio de IA sonando AHORA" (no un evento puntual,
+un estado). La marca `voicePlayback.ts` porque es el único choque
+compartido por TODOS los consumidores de voz de IA (narración, tutor,
+checkpoint, certificación) — nunca un consumidor individual:
+
+- `speakSequenceUnified` la pone en `true` justo antes del primer chunk
+  (si `texts.length > 0`) y en `false` al llegar naturalmente al final
+  de la secuencia, o si un chunk neural falla (`onError`, un camino que
+  nunca llega a `onDone` — sin este caso la señal quedaría "pegada" en
+  `true` para siempre tras un error de red/proveedor).
+- `cancelAllSpeech()` (el choque de cancelación ya usado por TODA la
+  app — Stop, cambio de tópico, exit, nueva pregunta al tutor, etc.)
+  también la pone en `false` siempre, sin importar quién la llame —
+  así ninguna vía de cancelación externa a `speakSequenceUnified` puede
+  dejarla stale.
+
+`useReadAloud.ts` se suscribe con `onAiAudioActiveChange` (estado React,
+inicializado desde `isAiAudioActive()` por si ya estaba `true` al
+montar) y la combina con `aiAudioSessionActive` tanto en `disabled` como
+en el guard de `play()`. Verificado con tests unitarios
+(`voicePlayback.test.ts`, `useReadAloud.test.ts` test 18) y con QA real:
+muestreo de `currentTime`/`paused` de cada `HTMLAudioElement` cada 100ms
+durante una respuesta completa y larga del tutor (con el Reader
+reproduciendo antes de preguntar) confirma cero muestras con más de un
+audio audible simultáneo, y que el intento de click en "Leer tema"
+mientras `disabled=true` nunca dispara ninguna síntesis nueva.
+
+Nota histórica: `setAiAudioActive`/`isAiAudioActive` ya existían en el
+commit original de la feature (`0ce36c7`) pero sin ningún productor ni
+consumidor real — se identificaron y eliminaron como código muerto en
+una primera pasada de esta misma auditoría de hardening, y el hallazgo
+de este bug (encontrado después) terminó reintroduciendo exactamente
+esas dos funciones, esta vez cableadas de verdad.
+
 ## 5. `SpeechSegment` y segmentación (`readAloudSegments.ts`)
 
 Se segmenta el **DOM ya renderizado** (nunca el Markdown fuente por

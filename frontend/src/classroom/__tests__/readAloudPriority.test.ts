@@ -1,16 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  claimAiAudioPriority,
-  isAiAudioActive,
-  onAiAudioPriority,
-  setAiAudioActive,
-} from "../readAloudPriority";
+import { describe, expect, it, vi } from "vitest";
+import { claimAiAudioPriority, onAiAudioPriority } from "../readAloudPriority";
 
 describe("readAloudPriority", () => {
-  beforeEach(() => {
-    setAiAudioActive(false);
-  });
-
   it("notifica a todos los suscriptores cuando se reclama prioridad", () => {
     const listenerA = vi.fn();
     const listenerB = vi.fn();
@@ -37,13 +28,5 @@ describe("readAloudPriority", () => {
 
   it("claimAiAudioPriority sin suscriptores nunca lanza", () => {
     expect(() => claimAiAudioPriority()).not.toThrow();
-  });
-
-  it("setAiAudioActive/isAiAudioActive reflejan el último valor asignado", () => {
-    expect(isAiAudioActive()).toBe(false);
-    setAiAudioActive(true);
-    expect(isAiAudioActive()).toBe(true);
-    setAiAudioActive(false);
-    expect(isAiAudioActive()).toBe(false);
   });
 });

@@ -24,6 +24,7 @@ vi.mock("../neuralSpeech", () => ({
   speakTextNeural: (text: string, options: unknown) => mockSpeakNeural(text, options),
 }));
 
+import { isAiAudioActive } from "../readAloudPriority";
 import {
   cancelAllSpeech,
   pauseAllSpeech,
@@ -121,5 +122,46 @@ describe("voicePlayback", () => {
     mockSpeakNeural.mockClear();
     captured.onEnd?.();
     expect(mockSpeakNeural).not.toHaveBeenCalled(); // nunca avanza tras cancelar
+  });
+
+  it("(hardening v1.5.0, bug real -- overlap con el Markdown Reader) isAiAudioActive() queda true durante TODA la secuencia, no solo el primer chunk", () => {
+    const captured: { onEnd: (() => void) | null } = { onEnd: null };
+    mockSpeakNeural.mockImplementation((_text, options) => {
+      captured.onEnd = options.onEnd;
+    });
+    expect(isAiAudioActive()).toBe(false);
+    speakSequenceUnified(["uno", "dos", "tres"], { useNeural: true });
+    expect(isAiAudioActive()).toBe(true);
+    // Sigue true al pasar al segundo chunk -- antes del fix, nada
+    // mantenía esta señal viva más allá del instante inicial, así que el
+    // Reader podía reiniciarse acá y sonar junto con este audio.
+    captured.onEnd?.();
+    expect(isAiAudioActive()).toBe(true);
+    captured.onEnd?.();
+    expect(isAiAudioActive()).toBe(true);
+    // Último chunk: al terminar, se libera.
+    captured.onEnd?.();
+    expect(isAiAudioActive()).toBe(false);
+  });
+
+  it("isAiAudioActive() se libera si la secuencia se cancela a mitad de camino", () => {
+    mockSpeakNeural.mockImplementation(() => {});
+    speakSequenceUnified(["uno", "dos"], { useNeural: true });
+    expect(isAiAudioActive()).toBe(true);
+    cancelAllSpeech();
+    expect(isAiAudioActive()).toBe(false);
+  });
+
+  it("isAiAudioActive() se libera si un chunk falla (nunca queda pegada en true)", () => {
+    mockSpeakNeural.mockImplementation((_text, options) => {
+      options.onError("fallo de red");
+    });
+    speakSequenceUnified(["uno"], { useNeural: true });
+    expect(isAiAudioActive()).toBe(false);
+  });
+
+  it("una secuencia vacía nunca deja isAiAudioActive() en true", () => {
+    speakSequenceUnified([], { useNeural: true });
+    expect(isAiAudioActive()).toBe(false);
   });
 });

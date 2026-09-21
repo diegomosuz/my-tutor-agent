@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { loadReadAloudRate, saveReadAloudRate, type ReadAloudRate } from "./classroomStorage";
 import { prefersReducedMotion } from "./prefersReducedMotion";
-import { onAiAudioPriority } from "./readAloudPriority";
+import { isAiAudioActive, onAiAudioActiveChange, onAiAudioPriority } from "./readAloudPriority";
 import {
   applyReadAloudHighlight,
   clearReadAloudHighlight,
@@ -90,6 +90,17 @@ export function useReadAloud({
   const [rate, setRateState] = useState<ReadAloudRate>(() => loadReadAloudRate());
   const [hasReadableContent, setHasReadableContent] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Bug real de hardening v1.5.0: `aiAudioSessionActive` (prop) solo
+  // cubre la narración de escena; la voz del tutor/checkpoint/
+  // certificación únicamente dispara `claimAiAudioPriority()` (un evento
+  // puntual), así que sin esta señal complementaria el Reader volvía a
+  // quedar habilitado apenas pasaba ese instante -- reiniciarlo a mitad
+  // de una respuesta hablada de varios chunks producía audio superpuesto
+  // (confirmado con instrumentación real de HTMLAudioElement). Refleja
+  // "hay audio de IA sonando AHORA", marcado por `voicePlayback.ts`
+  // (único choque de todos los consumidores de voz de IA), nunca por un
+  // consumidor individual.
+  const [aiVoiceActive, setAiVoiceActive] = useState(() => isAiAudioActive());
 
   const segmentsRef = useRef<SpeechSegment[]>([]);
   const currentIndexRef = useRef(0);
@@ -169,6 +180,15 @@ export function useReadAloud({
     });
   }, [hardStop]);
 
+  // Mantiene `aiVoiceActive` sincronizado durante TODA la secuencia de
+  // voz de IA (no solo el instante del claim) -- ver comentario en la
+  // declaración del estado más arriba.
+  useEffect(() => {
+    return onAiAudioActiveChange((active) => {
+      setAiVoiceActive(active);
+    });
+  }, []);
+
   // Desmontar el aula/cambiar de tab: nunca deja audio/highlight vivo.
   useEffect(() => {
     return () => {
@@ -242,7 +262,7 @@ export function useReadAloud({
   );
 
   const play = useCallback(() => {
-    if (aiAudioSessionActive || !hasReadableContent) return;
+    if (aiAudioSessionActive || aiVoiceActive || !hasReadableContent) return;
     if (state === "paused") {
       resumeActiveSegment();
       setState("playing");
@@ -251,7 +271,7 @@ export function useReadAloud({
     setErrorMessage(null);
     const startIndex = state === "error" ? currentIndexRef.current : 0;
     playAt(startIndex);
-  }, [aiAudioSessionActive, hasReadableContent, state, playAt]);
+  }, [aiAudioSessionActive, aiVoiceActive, hasReadableContent, state, playAt]);
 
   const pause = useCallback(() => {
     if (state !== "playing") return;
@@ -284,6 +304,6 @@ export function useReadAloud({
     stop,
     hasReadableContent,
     errorMessage,
-    disabled: aiAudioSessionActive || !hasReadableContent,
+    disabled: aiAudioSessionActive || aiVoiceActive || !hasReadableContent,
   };
 }

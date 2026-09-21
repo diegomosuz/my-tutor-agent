@@ -17,6 +17,7 @@ import {
   resumeNeuralSpeech,
   speakTextNeural,
 } from "./neuralSpeech";
+import { setAiAudioActive } from "./readAloudPriority";
 
 export interface UnifiedSpeakOptions {
   useNeural: boolean;
@@ -29,10 +30,16 @@ export interface UnifiedSpeakOptions {
 }
 
 /** Cancela cualquier audio en curso en AMBOS backends — siempre segura de
- * llamar, incluso si ninguno está reproduciendo nada. */
+ * llamar, incluso si ninguno está reproduciendo nada. También limpia la
+ * señal "hay audio de IA sonando" (`readAloudPriority.ts`) -- este es el
+ * único choque compartido por todos los consumidores de voz de IA, así
+ * que es el lugar correcto para garantizar que esa señal nunca quede
+ * "pegada" en `true` sin importar quién dispare la cancelación (bug real
+ * de hardening v1.5.0, ver `speakSequenceUnified` más abajo). */
 export function cancelAllSpeech(): void {
   cancelBrowserSpeech();
   cancelNeuralSpeech();
+  setAiAudioActive(false);
 }
 
 export function pauseAllSpeech(): void {
@@ -55,6 +62,7 @@ export function speakSequenceUnified(texts: string[], options: UnifiedSpeakOptio
   function speakAt(index: number) {
     if (cancelled) return;
     if (index >= texts.length) {
+      setAiAudioActive(false);
       options.onDone?.();
       return;
     }
@@ -64,6 +72,9 @@ export function speakSequenceUnified(texts: string[], options: UnifiedSpeakOptio
         speed: options.rate,
         onEnd: () => speakAt(index + 1),
         onError: (message) => {
+          // La secuencia se detiene acá (nunca llega a onDone) -- nunca
+          // dejar la señal de "audio de IA sonando" pegada en `true`.
+          setAiAudioActive(false);
           options.onNeuralError?.(message);
         },
       });
@@ -77,6 +88,13 @@ export function speakSequenceUnified(texts: string[], options: UnifiedSpeakOptio
   }
 
   cancelAllSpeech();
+  // PARTE 45/bug real de hardening: activa desde ANTES del primer chunk
+  // hasta que la secuencia completa termina o se cancela -- no solo el
+  // instante del claim puntual (`claimAiAudioPriority`, disparado por
+  // cada consumidor por separado). Sin esto, el Markdown Reader podía
+  // reiniciarse a mitad de una secuencia de varios chunks (p. ej. la
+  // respuesta hablada del tutor) y sonar junto con el audio de IA.
+  if (texts.length > 0) setAiAudioActive(true);
   speakAt(0);
 
   return () => {

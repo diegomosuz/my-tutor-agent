@@ -1,3 +1,4 @@
+import * as React from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -6,7 +7,7 @@ vi.mock("../../api/client", () => ({
 }));
 
 import { api } from "../../api/client";
-import { claimAiAudioPriority } from "../readAloudPriority";
+import { claimAiAudioPriority, setAiAudioActive } from "../readAloudPriority";
 import { useReadAloud } from "../useReadAloud";
 
 const mockedSynthesize = api.synthesizeSpeech as unknown as ReturnType<typeof vi.fn>;
@@ -47,10 +48,12 @@ beforeEach(() => {
   globalThis.Audio = MockAudio;
   globalThis.URL.createObjectURL = vi.fn(() => "blob:fake-url");
   globalThis.URL.revokeObjectURL = vi.fn();
+  setAiAudioActive(false); // señal módulo-singleton -- nunca debe filtrarse entre tests
 });
 
 afterEach(() => {
   document.body.innerHTML = "";
+  setAiAudioActive(false);
 });
 
 describe("useReadAloud", () => {
@@ -358,5 +361,77 @@ describe("useReadAloud", () => {
       act(() => result.current.stop());
       expect(result.current.state).toBe("idle");
     }
+  });
+
+  it("17 (hardening v1.5.0): React.StrictMode -- el doble-invoke sintético de efectos en desarrollo nunca deja dos sesiones/audios compitiendo", async () => {
+    // El efecto de cleanup-al-desmontar (`clearAll()`) también se dispara
+    // en el "fake unmount" de StrictMode, entre el primer y segundo mount
+    // sintéticos -- lo mismo que rompió `usePedagogicalAnimation` en
+    // v1.2.0 (ver docs/PEDAGOGICAL_ANIMATIONS.md). Acá el efecto de
+    // segmentación (keyed en topicKey/active) se re-ejecuta después y
+    // reconstruye los segmentos, así que no debería haber estado
+    // corrupto -- se verifica en vez de asumirlo.
+    const containerRef = makeContainer("<p>Única frase para StrictMode.</p>");
+    const { result } = renderHook(
+      () =>
+        useReadAloud({
+          containerRef,
+          active: true,
+          topicKey: "curso:modulo:topico",
+          useNeural: true,
+          aiAudioSessionActive: false,
+        }),
+      { wrapper: ({ children }) => React.createElement(React.StrictMode, null, children) }
+    );
+
+    expect(result.current.hasReadableContent).toBe(true);
+    act(() => result.current.play());
+    await waitFor(() => expect(result.current.state).toBe("playing"));
+
+    // Un único audio real reproduciendo -- nunca dos sesiones sintetizando
+    // el mismo segmento en paralelo por el doble-invoke de StrictMode.
+    expect(mockedSynthesize).toHaveBeenCalledTimes(1);
+
+    act(() => lastMockAudio?.onended?.());
+    await waitFor(() => expect(result.current.state).toBe("completed"));
+
+    act(() => result.current.stop());
+    expect(result.current.state).toBe("idle");
+    act(() => result.current.play());
+    await waitFor(() => expect(result.current.state).toBe("playing"));
+    expect(mockedSynthesize).toHaveBeenCalledTimes(2);
+  });
+
+  it("18 (hardening v1.5.0, bug real -- overlap de audio): mientras hay una secuencia de voz de IA en curso (aiVoiceActive), el Reader permanece deshabilitado y play() nunca arranca", async () => {
+    // Bug real confirmado con instrumentación de HTMLAudioElement en QA
+    // real de navegador: `aiAudioSessionActive` (prop) solo cubre la
+    // narración de escena; la voz del tutor/checkpoint/certificación
+    // dispara `claimAiAudioPriority()` una única vez y listo -- sin esta
+    // señal complementaria, el Reader podía reiniciarse a mitad de una
+    // respuesta hablada de varios chunks y sonar junto con ese audio.
+    const containerRef = makeContainer("<p>Frase que no debería sonar junto a IA.</p>");
+    const { result } = renderHook(() =>
+      useReadAloud({
+        containerRef,
+        active: true,
+        topicKey: "curso:modulo:topico",
+        useNeural: true,
+        aiAudioSessionActive: false,
+      })
+    );
+    expect(result.current.disabled).toBe(false);
+
+    act(() => setAiAudioActive(true)); // "voicePlayback.ts" recién arrancó una secuencia
+    await waitFor(() => expect(result.current.disabled).toBe(true));
+
+    act(() => result.current.play());
+    expect(result.current.state).toBe("idle"); // play() no hizo nada mientras está disabled
+    expect(mockedSynthesize).not.toHaveBeenCalled();
+
+    act(() => setAiAudioActive(false)); // la secuencia de IA terminó
+    await waitFor(() => expect(result.current.disabled).toBe(false));
+
+    act(() => result.current.play());
+    await waitFor(() => expect(result.current.state).toBe("playing"));
   });
 });

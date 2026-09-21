@@ -7,25 +7,23 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **v1.3.0** publicado (`master`/`origin/master`). **v1.4.0** está
-> preparado como release candidate local (`release/v1.4.0-rc`, sin push/
-> tag/merge todavía — release gate pendiente, decisión separada). v1.4.0
-> agrega un **tutor grounded a nivel de curso completo**: además del
-> tópico actual, el tutor ahora puede respaldar sus respuestas con
-> evidencia real de OTROS tópicos del mismo curso, localizada con
-> retrieval lexical determinístico in-process (sin embeddings, sin
-> vector DB, sin búsqueda semántica) y citada con la misma trazabilidad
-> estructural que ya exigía el tópico actual. El switch "Ampliar con
-> conocimiento general" cambia de alcance: ahora controla únicamente si
-> se permite conocimiento general del modelo — el resto del curso está
-> disponible en todo momento, incluso con el switch apagado. El alumno ve
-> de dónde viene cada parte de la respuesta ("Basado en este tema" /
-> "Basado en el curso" / "Ampliado con conocimiento general") y puede
-> saltar directamente al tema de origen con "Ver tema relacionado", sin
-> marcar nada como completado por eso. `tutor-v4`. Ver
-> [`docs/RELEASE_NOTES_v1.4.0.md`](./docs/RELEASE_NOTES_v1.4.0.md) y
-> [`docs/COURSE_GROUNDED_TUTOR_V1_4.md`](./docs/COURSE_GROUNDED_TUTOR_V1_4.md)
+> **v1.4.0** publicado (`master`/`origin/master`, tag `v1.4.0`). **v1.5.0**
+> está preparado como release candidate local (`release/v1.5.0-rc`, sin
+> push/tag/merge todavía — release gate pendiente, decisión separada).
+> v1.5.0 agrega **Guided Markdown Read Aloud**: el alumno puede escuchar
+> el Markdown del tópico (no la clase generada por IA) leído en voz alta,
+> con resaltado progresivo de la frase activa y control de velocidad,
+> reutilizando la misma arquitectura de voz ya existente (TTS neural
+> OpenAI / Web Speech API del navegador) — sin modelo nuevo, sin forced
+> alignment, sin speech-to-text. La voz de la IA (narración de clase,
+> tutor, checkpoint, certificación) siempre tiene prioridad absoluta:
+> arranca de inmediato en cuanto empieza a sintetizar/hablar, y el Reader
+> permanece deshabilitado durante toda esa sesión, nunca solo el instante
+> inicial. Ver
+> [`docs/RELEASE_NOTES_v1.5.0.md`](./docs/RELEASE_NOTES_v1.5.0.md) y
+> [`docs/GUIDED_READ_ALOUD_V1_5.md`](./docs/GUIDED_READ_ALOUD_V1_5.md)
 > (y, para el historial previo,
+> [`docs/RELEASE_NOTES_v1.4.0.md`](./docs/RELEASE_NOTES_v1.4.0.md) /
 > [`docs/RELEASE_NOTES_v1.3.0.md`](./docs/RELEASE_NOTES_v1.3.0.md) /
 > [`docs/RELEASE_NOTES_v1.2.0.md`](./docs/RELEASE_NOTES_v1.2.0.md) /
 > [`docs/RELEASE_NOTES_v1.1.1.md`](./docs/RELEASE_NOTES_v1.1.1.md) /

@@ -1128,8 +1128,68 @@ Ver `docs/ROADMAP.md` para el detalle de fases futuras.
      443 de frontend (+4, completar la cobertura de voz), sin
      regresiones; build Docker `--no-cache` limpio; `doctor.ps1` → "Todo
      en orden". Ver `docs/RELEASE_NOTES_v1.4.0.md` y
-     `docs/COURSE_GROUNDED_TUTOR_V1_4.md`. Sin push, sin tag `v1.4.0`,
-     sin merge a `master` — release gate pendiente, decisión separada.
+     `docs/COURSE_GROUNDED_TUTOR_V1_4.md`. **Publicado posteriormente**:
+     `master`/`origin/master`/tag `v1.4.0` apuntan hoy a
+     `3542a40438677f54abcd2b50e86d794fecb577c4` (el mismo commit de
+     `chore: prepare v1.4.0 release candidate`, sin cambios adicionales
+     entre el RC y el release).
+
+- **v1.5.0** (release candidate, sobre v1.4.0, rama de desarrollo
+  `feat/v1.5.0-guided-read-aloud` → `release/v1.5.0-rc`): **Guided
+  Markdown Read Aloud**, en tres commits de desarrollo más un hardening
+  final. Sin cambios de arquitectura, sin dependencias nuevas, sin
+  modelo nuevo, sin forced alignment, sin speech-to-text, sin segunda
+  llamada LLM. `Tutor`/`Course Retrieval`/`Lesson Generation` sin tocar
+  en ningún commit de la cadena.
+  1. **Feature** (`0ce36c7`): el alumno puede escuchar el Markdown de un
+     tópico (nunca la clase generada por IA) leído en voz alta,
+     reutilizando la misma arquitectura de voz ya existente (TTS neural
+     OpenAI de Fase 7 / Web Speech API del navegador de Fase 4).
+     `readAloudSegments.ts` segmenta el DOM ya renderizado por
+     `SafeMarkdown` (`Intl.Segmenter` con fallback determinístico, sin
+     vocabulario técnico hardcodeado); `readAloudHighlight.ts` resalta
+     la frase activa con la CSS Custom Highlight API (nunca
+     `dangerouslySetInnerHTML`); `readAloudPlayer.ts` es un player
+     dedicado con prefetch acotado (máx. 2 segmentos adelante);
+     `readAloudPriority.ts` garantiza que la IA siempre tiene prioridad
+     absoluta. Velocidad 0.75×–2× persistida en `localStorage`.
+  2. **Fix** (`6ea1bb1`, bug real): "Leer tema" quedaba deshabilitado
+     con Markdown legible y ninguna narración de IA sonando, solo por
+     tener `voiceEnabled=true` persistido de una sesión anterior sin
+     ninguna escena/lección generada en la sesión actual —
+     `aiAudioSessionActive` no replicaba la condición real de audio de
+     `useClassroomVoice.ts` (`enabled && scene`, no solo `enabled`).
+  3. **Fix** (`7e9af55`, bug real): Stop dejaba al Reader inutilizado —
+     `clearAll()` (reutilizada por Stop y por la prioridad de IA)
+     vaciaba los `SpeechSegment`s y el marcado DOM, algo correcto solo
+     para un cambio de tópico. Separado en `stopPlaybackSession()`
+     (audio/highlight/índice, lo único que Stop debe hacer) y
+     `clearAll()` (exclusiva de cambio de tópico/unmount).
+  4. **Hardening / release candidate** (rama `release/v1.5.0-rc`, sin
+     features nuevas): auditoría del diff acumulado `v1.4.0..HEAD`. Dos
+     hallazgos: (a) código muerto real (`setAiAudioActive`/
+     `isAiAudioActive` en `readAloudPriority.ts`, sin productor ni
+     consumidor desde el commit original), eliminado; (b) bug real de
+     overlap de audio, encontrado DESPUÉS de eliminar (a) — la voz del
+     tutor/checkpoint/certificación solo dispara el evento puntual
+     `claimAiAudioPriority()` al arrancar, sin ningún equivalente
+     persistente a `aiAudioSessionActive` que mantuviera al Reader
+     deshabilitado durante TODA la secuencia (que puede tener varios
+     chunks/párrafos) — confirmado con instrumentación real de
+     `HTMLAudioElement` en QA de navegador. Corregido reintroduciendo
+     `setAiAudioActive`/`isAiAudioActive` (esta vez cableadas de
+     verdad: productor en `voicePlayback.ts`, el único choque
+     compartido por todos los consumidores de voz de IA; consumidor en
+     `useReadAloud.ts`). Se agregó también un test de `React.StrictMode`
+     para `useReadAloud` (no existía ninguno; mismo patrón de riesgo que
+     el bug real de v1.2.0 en `usePedagogicalAnimation`) — sin hallazgos.
+     `APP_VERSION` 1.4.0 → 1.5.0. `LESSON_PROMPT_VERSION`/
+     `TUTOR_PROMPT_VERSION` sin cambios (`lesson-v3.3.1`/`tutor-v4`).
+     585 tests de backend (sin cambios) / 528 de frontend (+5),
+     sin regresiones; build Docker `--no-cache` limpio; `doctor.ps1` →
+     "Todo en orden". Ver `docs/RELEASE_NOTES_v1.5.0.md` y
+     `docs/GUIDED_READ_ALOUD_V1_5.md`. Sin push, sin tag `v1.5.0`, sin
+     merge a `master` — release gate pendiente, decisión separada.
 
 Cualquier trabajo futuro debe respetar este documento y actualizar la
 sección correspondiente del roadmap al avanzar de fase.
