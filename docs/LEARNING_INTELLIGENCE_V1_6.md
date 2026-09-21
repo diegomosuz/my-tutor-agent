@@ -285,16 +285,17 @@ real que justificara tocar el backend.
 
 ## 10. UI / "Mi aprendizaje" (PARTE 32)
 
-**No se conectó `learningState.ts` a `LearningProgressPage.tsx` en este
-bloque.** La página ya funciona completamente sobre
+**Bloque 1**: no se conectó `learningState.ts` a `LearningProgressPage.tsx`
+todavía. La página ya funciona completamente sobre
 `learningRecommendationEngine.ts` (que internamente ya usa
 `topicLearningSignal.ts`, la misma evidencia que `LearningState`
-reutiliza) — conectar el nuevo módulo hoy sería puro riesgo aditivo sin
-ningún beneficio visible para el alumno, ya que Guided Review (el
-consumidor real de `LearningState`) es un bloque futuro. Se prioriza
-"cero cambio de UX relevante en este bloque" sobre una integración
-prematura. `learningState.ts` queda listo, probado y documentado para
-que Bloque 2 lo consuma directamente.
+reutiliza) — conectar el nuevo módulo en ese momento habría sido puro
+riesgo aditivo sin ningún beneficio visible para el alumno, ya que
+Guided Review (el consumidor real de `LearningState`) todavía no
+existía. `learningState.ts` quedó listo, probado y documentado para que
+un bloque futuro lo consumiera directamente.
+
+**Actualizado en Bloque 2**: ya conectado — ver sección 14.
 
 ## 11. Privacidad y seguridad (PARTE 30/31)
 
@@ -316,11 +317,146 @@ Checkpoint (ver sección 2.2 — limitación real y honesta, no un
 descuido), y cualquier fabricación retroactiva de evaluación histórica
 que el sistema no registró (PARTE 51).
 
-## 13. Integración futura con Guided Review (Bloque 2)
+## 13. Integración con Guided Review (histórico del Bloque 1, ya cumplido)
 
-`getReviewCandidates(states)` ya devuelve, en orden curricular con
-`needs_review` priorizado, la lista de tópicos candidatos — Bloque 2
-puede consumir esto directamente para construir una ruta de repaso, sin
-tocar `learningState.ts`. `LearningState.reasonCode` +
-`LearningState.evidence` alcanzan para que una UI futura explique "por
-qué" sin ningún texto pedagógico hardcodeado en el dominio (PARTE 28/29).
+`getReviewCandidates(states)` ya devolvía, en orden curricular con
+`needs_review` priorizado, la lista de tópicos candidatos — la
+expectativa de este bloque era que un bloque futuro pudiera consumir
+esto directamente para hacerlo visible/accionable, sin tocar
+`learningState.ts`. Bloque 2 (sección 14) hizo exactamente eso: cero
+cambios a `learningState.ts`, `deriveCourseLearningStates`,
+`summarizeLearningStates` ni `getReviewCandidates`.
+
+## 14. Learning Insights UI (Bloque 2: "Learning Insights UI + Actionable
+Review Candidates")
+
+Hace visible y accionable `LearningState[]` dentro de "Mi aprendizaje"
+(`frontend/src/pages/LearningProgressPage.tsx`) — sin crear todavía
+ninguna sesión de repaso (eso es Bloque 3). Cero cambios a
+`learningState.ts`: la UI solo renderiza lo que el dominio ya calculó.
+
+### 14.1 Auditoría previa de "Mi aprendizaje" (hecha ANTES de implementar)
+
+- **Componentes existentes**: `CourseProgressSection` (hero + progreso por
+  módulo, lista TODOS los tópicos curriculares con `TopicStatus` —
+  `not_started`/`in_progress`/`completed`, un eje ORTOGONAL a
+  `LearningState`), `RecommendedForYou`/`RecommendationCard`
+  (`learningRecommendationEngine.ts`, v1.1.0), `ModeOverviewCard`,
+  `ResultsEvolution`, `ReinforceAreas`.
+- **Selector de curso**: `<select>` controlado por `selectedCourseId`,
+  solo visible con 2+ cursos (`courses` vía `api.getCourses()`).
+- **Identity**: `courseId` real (URL/selector) → `courseDetail` real vía
+  `api.getCourse(courseId)` → `summary.modules[].topics[]` con
+  `moduleId`/`topicId`/`title` reales — nunca inventado.
+- **Navegación existente**: `<Link to={`/aula/${courseId}/${moduleId}/${topicId}`}>`
+  (lista de módulos) y `navigate(recommendation.action.to)` (tarjetas de
+  recomendación) — ambos construyen la ruta desde IDs reales, nunca desde
+  el título mostrado.
+- **Certification history**: `ModeOverviewCard` (por modo),
+  `ResultsEvolution` (barra por intento), `ReinforceAreas` (por
+  competencia) — todo ya vía `certificationSummary.ts`.
+- **Tests existentes**: `LearningProgressPage.test.tsx`, mockea
+  `api.getCourses`/`api.getCourse`, usa el store real
+  (`markTopicStarted`/`markTopicCompleted`/`recordCertificationAttempt`)
+  contra `localStorage` real de jsdom.
+
+### 14.2 Integración (PARTE 4/5)
+
+`deriveCourseLearningStates`/`summarizeLearningStates`/`getReviewCandidates`
+se llaman directamente desde `LearningProgressPage`, con los mismos
+`summary.modules`/`progress` ya cargados para el resto de la página —
+**cero lógica de clasificación/threshold/orden duplicada en el
+componente**. `LearningState[]` nunca se persiste (se recalcula en cada
+render vía `useMemo`, igual criterio que `recommendations`).
+
+### 14.3 Secciones nuevas
+
+- **"Estado de aprendizaje"** (`LearningInsightsSummary`): los 4 counts
+  de `summarizeLearningStates` — nunca un "AI Score"/"Learning Score"
+  inventado (PARTE 7).
+- **"Prioridad de repaso"** (`ReviewPrioritySection`): solo
+  `needs_review` (filtrado de `getReviewCandidates`), máximo 5 tarjetas
+  (`MAX_FEATURED_REVIEW_CANDIDATES`) + nota "+N tema(s) más" si hay más
+  — nunca paginación (PARTE 12). Orden: el que ya devuelve
+  `getReviewCandidates`, nunca reordenado (PARTE 11). CTA "Repasar tema"
+  por tarjeta + CTA global "Comenzar repaso" (visible solo si hay 1+
+  `needs_review`) que navega al primer candidate real — un solo
+  `navigate()`, sin cola/sesión/wizard (PARTE 23, eso es Bloque 3).
+- **"En progreso"** (`ProgressingSection`): `progressing` (del mismo
+  `getReviewCandidates`, filtrado). CTA "Continuar tema" para
+  `STARTED_NOT_COMPLETED`, "Ver tema" para
+  `COMPLETED_NO_ASSESSMENT`/`MEDIUM_CERTIFICATION_SCORE` (PARTE 21).
+- **"Dominados"** (`MasteredSection`): lista compacta con checkmark,
+  reutiliza literalmente el componente visual `.learning-topic` ya usado
+  por "Progreso por módulo" (PARTE 18 — nunca una card grande).
+- **`not_started`** (PARTE 19): nunca duplicado como cards nuevas — ya
+  está representado en el resumen y en "Progreso por módulo" (sin
+  cambios, lista TODOS los tópicos incluidos los no iniciados).
+
+### 14.4 Terminología y mapping presentacional (PARTE 8/13/14,
+`frontend/src/learning/learningStateCopy.ts`)
+
+Módulo nuevo, deliberadamente separado de `learningState.ts` (el dominio
+nunca contiene strings pedagógicos): `LEARNING_STATE_STATUS_LABEL`
+("No iniciado"/"En progreso"/"Necesita repaso"/"Dominado"),
+`LEARNING_STATE_REASON_COPY` (un texto por reason code, nunca menciona
+Checkpoint/resultados por pregunta — el modelo no los tiene, PARTE 14/59),
+`describeLearningStateEvidence` (evidencia concreta SOLO si
+`TopicLearningSignal` la expone — "Promedio reciente de certificación:
+N%" y/o "N resultados recientes" con 2+ observaciones — nunca
+recalculada, PARTE 15/16).
+
+### 14.5 Bug real encontrado en QA: colisión de label "Continuar"
+
+`ProgressingSection` originalmente usaba el label "Continuar" (igual al
+botón de "Recomendado para vos" para `continue_topic`) — como ambas
+secciones pueden mostrar el MISMO tópico simultáneamente (el mismo
+`in_progress` curricular alimenta tanto la recomendación existente como
+`STARTED_NOT_COMPLETED` acá), esto producía dos botones "Continuar"
+ambiguos en pantalla (falla real de tests existentes:
+`getByRole("button", { name: "Continuar" })` encontraba 2 elementos, un
+problema real de accesibilidad de teclado/lector de pantalla, no solo de
+tests). Corregido: `progressingCtaLabel` usa "Continuar tema" en su
+lugar — nunca el mismo texto exacto que un botón con otra acción ya
+visible en la misma pantalla.
+
+### 14.6 Bug real encontrado en QA real de navegador: overflow a 390px
+
+QA con curso real (`spec-driven-design-expert`) + un segundo curso real
+con título largo ("Claude Foundations Certification") expuso un overflow
+horizontal genuino a 390px (`scrollWidth` 409 vs. `clientWidth` 390):
+`.learning-course-selector select` (el selector de curso, PRE-EXISTENTE
+desde v1.1.0, nunca tocado por este bloque) es un hijo flex sin
+`min-width: 0`, así que nunca se encoge por debajo del ancho de su
+`<option>` más largo — con "Curso Demo"/"Otro Curso" (los únicos
+títulos que usaban los fixtures de test hasta ahora) esto nunca se
+disparaba. Corregido agregando `min-width: 0; max-width: 100%; flex: 1;
+text-overflow: ellipsis;` al selector. Confirmado con QA real: 0px de
+overflow en 1366×768/768×1024/390×844 después del fix.
+
+### 14.7 QA real (`spec-driven-design-expert`, Playwright, Chromium real)
+
+Evidencia controlada localmente (nunca inferida del curso real, PARTE
+51) inyectada en `localStorage` con IDs reales del curso (fetch directo
+al backend real corriendo) — 1 tópico `not_started` (nunca tocado), 1
+`progressing` (completado sin evaluación), 1 `needs_review` (evaluación
+baja real, 20%), 1 `mastered` (evaluación alta real, 95%). Confirmado
+visualmente: las 4 secciones muestran los títulos REALES correctos (no
+IDs), "Repasar tema" navega a la URL real exacta
+(`/aula/spec-driven-design-expert/fundamentos-de-sdd/el-ciclo-intent-evidence-convergence?review=true`),
+Guided Read Aloud disponible de inmediato tras navegar (sin integración
+especial, PARTE 37), y el registro de progreso (`completedAt`) del
+tópico visitado para repaso quedó exactamente igual después de navegar
+— confirmando que "Repasar tema" nunca marca completado ni modifica
+Learning Progress solo por visitar (PARTE 26/36). 0 errores de consola
+en las tres corridas de QA real (desktop + navegación + 3 viewports
+responsive).
+
+### 14.8 Límites (honestos)
+
+Redundancia deliberada con "Recomendado para vos" (v1.1.0): un mismo
+tópico `in_progress`/débil puede aparecer en ambas secciones con
+distinto framing — no se unificaron en este bloque (fuera de alcance,
+`learningRecommendationEngine.ts` no se tocó). Checkpoint sigue sin
+evidencia persistida (sección 2.2) — ningún texto de esta UI lo
+menciona. Sin sesión/cola/wizard de repaso todavía (Bloque 3).

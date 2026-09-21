@@ -80,7 +80,9 @@ function certificationSetupRoute(
   return `/certificacion/${courseId}?${params.toString()}`;
 }
 
-function findTopicTitle(modules: ModuleSummaryView[], moduleId: string, topicId: string): string {
+/** Exportado para reutilización (Bloque 2 de v1.6.0, `LearningProgressPage.tsx`)
+ * -- evita duplicar este lookup en otro módulo. */
+export function findTopicTitle(modules: ModuleSummaryView[], moduleId: string, topicId: string): string {
   for (const module of modules) {
     const topic = module.topics.find((t) => t.moduleId === moduleId && t.topicId === topicId);
     if (topic) return topic.title;

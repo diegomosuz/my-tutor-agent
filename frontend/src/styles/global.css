@@ -3691,12 +3691,23 @@ p {
   margin-bottom: 16px;
 }
 
+/* Bug real encontrado en QA de v1.6.0 Bloque 2 (nunca disparado antes:
+   los fixtures previos siempre usaban títulos cortos "Curso Demo"): un
+   <select> como hijo flex, sin min-width:0, nunca se encoge por debajo
+   de su contenido intrínseco -- con un título de curso real largo
+   ("Claude Foundations Certification") esto empuja overflow horizontal
+   a 390px. Mismo tipo de gotcha de layout ya documentado en releases
+   anteriores (CSS Grid minmax), acá en flexbox. */
 .learning-course-selector select {
   padding: 6px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border-strong);
   background: #fff;
   font-size: 14px;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1;
+  text-overflow: ellipsis;
 }
 
 .learning-modules {
@@ -3892,6 +3903,128 @@ p {
   white-space: nowrap;
 }
 
+/* v1.6.0 (Bloque 2, "Learning Insights UI"): resumen compacto de
+   LearningState[] -- nunca un "AI Score"/"Learning Score" inventado, solo
+   los 4 counts ya calculados por `summarizeLearningStates`. Reutiliza el
+   mismo verde ya usado para el verdict "correct" del Checkpoint
+   (`.checkpoint-panel__result--correct`, #1a7a3a) para "Dominado": mismo
+   significado semántico (resultado positivo), mismo tono en toda la app. */
+.learning-insights-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.learning-insights-summary__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-subtle);
+}
+
+.learning-insights-summary__count {
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.learning-insights-summary__label {
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.learning-insights-summary__item--mastered .learning-insights-summary__count {
+  color: #1a7a3a;
+}
+
+.learning-insights-summary__item--needs_review .learning-insights-summary__count {
+  color: var(--color-accent-red);
+}
+
+.learning-insights-summary__item--progressing .learning-insights-summary__count {
+  color: var(--color-primary-dark);
+}
+
+.learning-insights-summary__item--not_started .learning-insights-summary__count {
+  color: var(--color-text-faint);
+}
+
+.learning-insights__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.learning-insights__section-header h2 {
+  margin: 0;
+}
+
+/* Tarjetas de needs_review/progressing -- misma grilla que "Recomendado
+   para vos" (`.learning-recommendations__grid`, PARTE 42: reutilizar en
+   vez de crear un layout nuevo), estado nunca solo por color (PARTE 40):
+   siempre badge de TEXTO + ícono, nunca color aislado. */
+.learning-state-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  background: var(--color-surface);
+}
+
+.learning-state-card__badge {
+  display: inline-block;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  margin-bottom: 10px;
+}
+
+.learning-state-card--needs_review {
+  border-color: var(--color-accent-red);
+}
+.learning-state-card--needs_review .learning-state-card__badge {
+  background: #fdf3f2;
+  color: var(--color-accent-red);
+}
+
+.learning-state-card--progressing .learning-state-card__badge {
+  background: var(--color-primary-subtle);
+  color: var(--color-primary-dark);
+}
+
+.learning-state-card h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.learning-state-card__reason {
+  margin: 0 0 8px;
+  color: var(--color-text-muted);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.learning-state-card__evidence {
+  margin: 0 0 12px;
+  color: var(--color-text-faint);
+  font-size: 12.5px;
+}
+
+/* Lista compacta de "Dominados" -- reutiliza `.learning-topic` tal cual
+   (mismo componente visual que la lista de tópicos por módulo, PARTE 18:
+   "lista simple/checkmark", nunca una card grande por tema dominado). */
+.learning-topic--mastered .learning-topic__icon {
+  color: #1a7a3a;
+}
+
 @media (max-width: 640px) {
   .learning-cert-modes {
     grid-template-columns: 1fr;
@@ -3901,6 +4034,10 @@ p {
   }
   .learning-module summary {
     flex-wrap: wrap;
+  }
+  .learning-insights__section-header {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 

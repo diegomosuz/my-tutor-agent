@@ -6,12 +6,25 @@ import {
   getAreasToReinforce,
   type CertificationModeOverview,
 } from "../learning/certificationSummary";
-import { buildCourseLearningSummary, type CourseLearningSummary } from "../learning/courseSummary";
+import { buildCourseLearningSummary, type CourseLearningSummary, type ModuleSummaryView } from "../learning/courseSummary";
 import {
+  findTopicTitle,
   getLearningRecommendations,
   type LearningRecommendation,
   type RecommendationType,
 } from "../learning/learningRecommendationEngine";
+import {
+  deriveCourseLearningStates,
+  getReviewCandidates,
+  summarizeLearningStates,
+  type LearningState,
+  type LearningStateSummary,
+} from "../learning/learningState";
+import {
+  describeLearningStateEvidence,
+  LEARNING_STATE_REASON_COPY,
+  LEARNING_STATE_STATUS_LABEL,
+} from "../learning/learningStateCopy";
 import { getCourseLearningProgress } from "../learning/learningProgressStore";
 import type { CertificationAttemptSummary } from "../learning/types";
 import type { CourseDetail, CourseSummary } from "../types/api";
@@ -227,6 +240,223 @@ function RecommendedForYou({ recommendations }: { recommendations: LearningRecom
   );
 }
 
+// -------------------------------------------------------------------
+// v1.6.0 (Bloque 2, "Learning Insights UI"): hace visible y accionable
+// LearningState[] (Bloque 1) sin duplicar ninguna regla de clasificación
+// -- la UI solo renderiza lo que `deriveCourseLearningStates`/
+// `summarizeLearningStates`/`getReviewCandidates` ya calcularon. Ver
+// docs/LEARNING_INTELLIGENCE_V1_6.md sección "Learning Insights UI".
+// -------------------------------------------------------------------
+
+const MAX_FEATURED_REVIEW_CANDIDATES = 5;
+
+function LearningInsightsSummary({ summary }: { summary: LearningStateSummary }) {
+  return (
+    <section className="learning-section">
+      <h2>Estado de aprendizaje</h2>
+      <div className="learning-insights-summary">
+        <div className="learning-insights-summary__item learning-insights-summary__item--mastered">
+          <span className="learning-insights-summary__count">{summary.mastered}</span>
+          <span className="learning-insights-summary__label">Dominados</span>
+        </div>
+        <div className="learning-insights-summary__item learning-insights-summary__item--needs_review">
+          <span className="learning-insights-summary__count">{summary.needsReview}</span>
+          <span className="learning-insights-summary__label">Necesitan repaso</span>
+        </div>
+        <div className="learning-insights-summary__item learning-insights-summary__item--progressing">
+          <span className="learning-insights-summary__count">{summary.progressing}</span>
+          <span className="learning-insights-summary__label">En progreso</span>
+        </div>
+        <div className="learning-insights-summary__item learning-insights-summary__item--not_started">
+          <span className="learning-insights-summary__count">{summary.notStarted}</span>
+          <span className="learning-insights-summary__label">No iniciados</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** Tarjeta reutilizada para `needs_review` y `progressing` -- nunca
+ * `mastered` (ese caso usa `MasteredSection`, una lista compacta, PARTE
+ * 18) ni `not_started` (nunca se muestra como card, PARTE 19: ya está
+ * representado en el resumen y en "Progreso por módulo"). El texto de
+ * motivo y la evidencia vienen SIEMPRE de `learningStateCopy.ts` -- este
+ * componente nunca decide/calcula nada pedagógico. */
+function LearningStateCard({
+  state,
+  title,
+  courseId,
+  review,
+  ctaLabel,
+}: {
+  state: LearningState;
+  title: string;
+  courseId: string;
+  review: boolean;
+  ctaLabel: string;
+}) {
+  const navigate = useNavigate();
+  const evidenceText = describeLearningStateEvidence(state);
+  const to = `/aula/${courseId}/${state.moduleId}/${state.topicId}${review ? "?review=true" : ""}`;
+
+  return (
+    <div className={`learning-state-card learning-state-card--${state.status}`}>
+      <span className="learning-state-card__badge">{LEARNING_STATE_STATUS_LABEL[state.status]}</span>
+      <h3>{title}</h3>
+      <p className="learning-state-card__reason">{LEARNING_STATE_REASON_COPY[state.reasonCode]}</p>
+      {evidenceText && <p className="learning-state-card__evidence">{evidenceText}</p>}
+      <button type="button" className="course-card__cta" onClick={() => navigate(to)}>
+        {ctaLabel}
+      </button>
+    </div>
+  );
+}
+
+/** "Continuar tema" para uno empezado y no completado; "Ver tema" para
+ * uno ya completado/con evidencia parcial (PARTE 21: la semántica real de
+ * cada reason code decide, nunca un texto genérico único). Nunca el
+ * mismo texto EXACTO que el botón "Continuar" de "Recomendado para vos"
+ * (`RECOMMENDATION_BUTTON_LABEL`, más arriba): son dos acciones
+ * distintas que pueden coexistir en pantalla para el mismo tópico, con
+ * label ambiguo rompería accesibilidad de teclado/lector de pantalla
+ * (PARTE 40). */
+function progressingCtaLabel(state: LearningState): string {
+  return state.reasonCode === "STARTED_NOT_COMPLETED" ? "Continuar tema" : "Ver tema";
+}
+
+function ReviewPrioritySection({
+  courseId,
+  modules,
+  needsReview,
+  hasAnyActivity,
+}: {
+  courseId: string;
+  modules: ModuleSummaryView[];
+  needsReview: LearningState[];
+  hasAnyActivity: boolean;
+}) {
+  const navigate = useNavigate();
+  const featured = needsReview.slice(0, MAX_FEATURED_REVIEW_CANDIDATES);
+  const remaining = needsReview.length - featured.length;
+
+  function handleStartReview() {
+    const first = needsReview[0];
+    if (!first) return;
+    navigate(`/aula/${courseId}/${first.moduleId}/${first.topicId}?review=true`);
+  }
+
+  return (
+    <section className="learning-section">
+      <div className="learning-insights__section-header">
+        <h2>Prioridad de repaso</h2>
+        {/* PARTE 23: acción SIMPLE -- navega al primer candidate real de
+            getReviewCandidates(), nunca crea una cola/sesión/wizard (eso
+            es Bloque 3). */}
+        {needsReview.length > 0 && (
+          <button type="button" className="course-card__cta" onClick={handleStartReview}>
+            Comenzar repaso
+          </button>
+        )}
+      </div>
+
+      {needsReview.length === 0 && hasAnyActivity && (
+        <p className="learning-empty-note">No hay temas que requieran repaso prioritario.</p>
+      )}
+      {needsReview.length === 0 && !hasAnyActivity && (
+        <p className="learning-empty-note">
+          Todavía no hay suficiente actividad para generar recomendaciones de repaso.
+        </p>
+      )}
+
+      {featured.length > 0 && (
+        <>
+          <div className="learning-recommendations__grid">
+            {featured.map((state) => (
+              <LearningStateCard
+                key={`${state.moduleId}:${state.topicId}`}
+                state={state}
+                title={findTopicTitle(modules, state.moduleId, state.topicId)}
+                courseId={courseId}
+                review
+                ctaLabel="Repasar tema"
+              />
+            ))}
+          </div>
+          {remaining > 0 && (
+            <p className="learning-empty-note">
+              +{remaining} {remaining === 1 ? "tema más necesita" : "temas más necesitan"} repaso.
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function ProgressingSection({
+  courseId,
+  modules,
+  progressing,
+}: {
+  courseId: string;
+  modules: ModuleSummaryView[];
+  progressing: LearningState[];
+}) {
+  if (progressing.length === 0) return null;
+  return (
+    <section className="learning-section">
+      <h2>En progreso</h2>
+      <div className="learning-recommendations__grid">
+        {progressing.map((state) => (
+          <LearningStateCard
+            key={`${state.moduleId}:${state.topicId}`}
+            state={state}
+            title={findTopicTitle(modules, state.moduleId, state.topicId)}
+            courseId={courseId}
+            review={false}
+            ctaLabel={progressingCtaLabel(state)}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** Compacta a propósito (PARTE 18): lista simple con checkmark, reutiliza
+ * exactamente el mismo componente visual `.learning-topic` que ya usa
+ * "Progreso por módulo" -- nunca una card grande por tema dominado. */
+function MasteredSection({
+  courseId,
+  modules,
+  mastered,
+}: {
+  courseId: string;
+  modules: ModuleSummaryView[];
+  mastered: LearningState[];
+}) {
+  if (mastered.length === 0) return null;
+  return (
+    <section className="learning-section">
+      <h2>Dominados</h2>
+      <ul className="learning-module__topics">
+        {mastered.map((state) => (
+          <li key={`${state.moduleId}:${state.topicId}`}>
+            <Link
+              to={`/aula/${courseId}/${state.moduleId}/${state.topicId}`}
+              className="learning-topic learning-topic--mastered"
+            >
+              <span className="learning-topic__icon" aria-hidden="true">
+                ✓
+              </span>
+              {findTopicTitle(modules, state.moduleId, state.topicId)}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function statusIcon(status: "not_started" | "in_progress" | "completed"): string {
   if (status === "completed") return "✓";
   if (status === "in_progress") return "▶";
@@ -367,6 +597,32 @@ export function LearningProgressPage() {
     [courseDetail, summary, progress]
   );
 
+  // v1.6.0 (Bloque 2): LearningState[] SIEMPRE derivado on-demand (nunca
+  // persistido, PARTE 5) a partir de la misma `progress`/`summary.modules`
+  // ya cargados arriba — cualquier nueva certificación/reset se refleja
+  // apenas cambia `progress` (PARTE 31, sin lifecycle especial).
+  const learningStates = useMemo(
+    () => (summary && selectedCourseId ? deriveCourseLearningStates(selectedCourseId, summary.modules, progress) : []),
+    [summary, progress, selectedCourseId]
+  );
+  const learningSummary = useMemo(
+    () => (selectedCourseId ? summarizeLearningStates(selectedCourseId, learningStates) : null),
+    [selectedCourseId, learningStates]
+  );
+  const reviewCandidates = useMemo(() => getReviewCandidates(learningStates), [learningStates]);
+  const needsReviewCandidates = useMemo(
+    () => reviewCandidates.filter((s) => s.status === "needs_review"),
+    [reviewCandidates]
+  );
+  const progressingCandidates = useMemo(
+    () => reviewCandidates.filter((s) => s.status === "progressing"),
+    [reviewCandidates]
+  );
+  const masteredStates = useMemo(() => learningStates.filter((s) => s.status === "mastered"), [learningStates]);
+  // PARTE 25: "curso sin actividad" (0 tópicos tocados) es un empty state
+  // distinto de "hay actividad pero ninguna necesita repaso" (PARTE 24).
+  const hasAnyActivity = learningSummary ? learningSummary.totalTopics - learningSummary.notStarted > 0 : false;
+
   return (
     <div className="page">
       <div className="page-header">
@@ -414,6 +670,20 @@ export function LearningProgressPage() {
       {!error && courses !== null && courses.length > 0 && summary && selectedCourseId && (
         <>
           <CourseProgressSection summary={summary} courseId={selectedCourseId} />
+
+          {learningSummary && (
+            <>
+              <LearningInsightsSummary summary={learningSummary} />
+              <ReviewPrioritySection
+                courseId={selectedCourseId}
+                modules={summary.modules}
+                needsReview={needsReviewCandidates}
+                hasAnyActivity={hasAnyActivity}
+              />
+              <ProgressingSection courseId={selectedCourseId} modules={summary.modules} progressing={progressingCandidates} />
+              <MasteredSection courseId={selectedCourseId} modules={summary.modules} mastered={masteredStates} />
+            </>
+          )}
 
           <RecommendedForYou recommendations={recommendations} />
 
