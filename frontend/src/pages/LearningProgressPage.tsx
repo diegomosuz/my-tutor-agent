@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import {
   buildCertificationOverview,
@@ -8,6 +8,7 @@ import {
 } from "../learning/certificationSummary";
 import { buildCourseLearningSummary, type CourseLearningSummary, type ModuleSummaryView } from "../learning/courseSummary";
 import {
+  certificationSetupRoute,
   findTopicTitle,
   getLearningRecommendations,
   type LearningRecommendation,
@@ -25,6 +26,8 @@ import {
   LEARNING_STATE_REASON_COPY,
   LEARNING_STATE_STATUS_LABEL,
 } from "../learning/learningStateCopy";
+import { buildGuidedReviewPlan } from "../learning/guidedReviewPlan";
+import { startGuidedReviewSession } from "../learning/guidedReviewSession";
 import { getCourseLearningProgress } from "../learning/learningProgressStore";
 import type { CertificationAttemptSummary } from "../learning/types";
 import type { CourseDetail, CourseSummary } from "../types/api";
@@ -325,35 +328,30 @@ function progressingCtaLabel(state: LearningState): string {
 }
 
 function ReviewPrioritySection({
-  courseId,
-  modules,
   needsReview,
   hasAnyActivity,
+  onStartReview,
+  modules,
+  courseId,
 }: {
-  courseId: string;
-  modules: ModuleSummaryView[];
   needsReview: LearningState[];
   hasAnyActivity: boolean;
+  onStartReview: () => void;
+  modules: ModuleSummaryView[];
+  courseId: string;
 }) {
-  const navigate = useNavigate();
   const featured = needsReview.slice(0, MAX_FEATURED_REVIEW_CANDIDATES);
   const remaining = needsReview.length - featured.length;
-
-  function handleStartReview() {
-    const first = needsReview[0];
-    if (!first) return;
-    navigate(`/aula/${courseId}/${first.moduleId}/${first.topicId}?review=true`);
-  }
 
   return (
     <section className="learning-section">
       <div className="learning-insights__section-header">
         <h2>Prioridad de repaso</h2>
-        {/* PARTE 23: acción SIMPLE -- navega al primer candidate real de
-            getReviewCandidates(), nunca crea una cola/sesión/wizard (eso
-            es Bloque 3). */}
+        {/* v1.6.0 Bloque 3: crea una GuidedReviewSession real (ver
+            handleStartReview en LearningProgressPage) y navega al primer
+            tópico del plan -- antes solo navegaba, sin sesión. */}
         {needsReview.length > 0 && (
-          <button type="button" className="course-card__cta" onClick={handleStartReview}>
+          <button type="button" className="course-card__cta" onClick={onStartReview}>
             Comenzar repaso
           </button>
         )}
@@ -425,6 +423,48 @@ function ProgressingSection({
 /** Compacta a propósito (PARTE 18): lista simple con checkmark, reutiliza
  * exactamente el mismo componente visual `.learning-topic` que ya usa
  * "Progreso por módulo" -- nunca una card grande por tema dominado. */
+/** v1.6.0 Bloque 3: confirmación compacta al volver de un Guided Review
+ * ya terminado (PARTE 32/33/34). Texto preciso a propósito (PARTE 33):
+ * "recorriste una ruta", NUNCA "dominás esto"/"mejoraste tu nivel" --
+ * review != mastery, la evidencia de dominio sigue viniendo
+ * exclusivamente de Certification. "Evaluar progreso" reutiliza el
+ * flujo EXISTENTE de Certification (PARTE 38, nunca una evaluación
+ * nueva), acotado a los tópicos recién repasados. */
+function ReviewCompletionCard({
+  courseId,
+  topicCount,
+  topicIds,
+  onDismiss,
+}: {
+  courseId: string;
+  topicCount: number;
+  topicIds: string[];
+  onDismiss: () => void;
+}) {
+  const navigate = useNavigate();
+  return (
+    <section className="learning-section learning-review-completion" role="status">
+      <h2>Repaso completado</h2>
+      <p>
+        Completaste esta ruta de repaso ({topicCount} {topicCount === 1 ? "tema" : "temas"}). Tu
+        estado de aprendizaje se actualizará cuando haya nueva evidencia evaluativa.
+      </p>
+      <div className="learning-review-completion__actions">
+        <button
+          type="button"
+          className="course-card__cta"
+          onClick={() => navigate(certificationSetupRoute(courseId, "practice", topicIds))}
+        >
+          Evaluar progreso
+        </button>
+        <button type="button" className="learning-review-completion__dismiss" onClick={onDismiss}>
+          Entendido
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function MasteredSection({
   courseId,
   modules,
@@ -539,11 +579,50 @@ function CourseProgressSection({
   );
 }
 
+interface ReviewCompletionState {
+  courseId: string;
+  topicCount: number;
+  topicIds: string[];
+}
+
+function isReviewCompletionState(value: unknown): value is ReviewCompletionState & { reviewCompleted: true } {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    v.reviewCompleted === true &&
+    typeof v.courseId === "string" &&
+    typeof v.topicCount === "number" &&
+    Array.isArray(v.topicIds)
+  );
+}
+
 export function LearningProgressPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [courses, setCourses] = useState<CourseSummary[] | null>(null);
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [courseDetail, setCourseDetail] = useState<CourseDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // v1.6.0 (Bloque 3): confirmación de "Repaso completado" -- viaja como
+  // `navigate(..., { state })` desde ClassroomPage (PARTE 34, la opción
+  // más simple: ni sessionStorage ni una página nueva). Capturado UNA
+  // sola vez con un ref (nunca `location.state` directo en el render, que
+  // sobreviviría un refresh y volvería a mostrar la card).
+  const reviewCompletionRef = useRef<ReviewCompletionState | null>(
+    isReviewCompletionState(location.state) ? location.state : null
+  );
+  const [reviewCompletion, setReviewCompletion] = useState<ReviewCompletionState | null>(
+    reviewCompletionRef.current
+  );
+
+  useEffect(() => {
+    if (!reviewCompletionRef.current) return;
+    // Limpia el state del router: un refresh posterior nunca vuelve a
+    // mostrar la confirmación (PARTE 34: "de una sola vez").
+    navigate(location.pathname, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -552,7 +631,15 @@ export function LearningProgressPage() {
       .then((data) => {
         if (cancelled) return;
         setCourses(data);
-        if (data.length > 0) setSelectedCourseId(data[0].id);
+        // Si venimos de un Guided Review recién completado, priorizar ESE
+        // curso (nunca el default `data[0]`, que podría ser otro) -- solo
+        // si sigue siendo un curso real y publicado.
+        const preferredCourseId = reviewCompletionRef.current?.courseId;
+        if (preferredCourseId && data.some((c) => c.id === preferredCourseId)) {
+          setSelectedCourseId(preferredCourseId);
+        } else if (data.length > 0) {
+          setSelectedCourseId(data[0].id);
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -623,6 +710,20 @@ export function LearningProgressPage() {
   // distinto de "hay actividad pero ninguna necesita repaso" (PARTE 24).
   const hasAnyActivity = learningSummary ? learningSummary.totalTopics - learningSummary.notStarted > 0 : false;
 
+  // v1.6.0 Bloque 3: construye el plan EXCLUSIVAMENTE desde
+  // `learningStates` reales de este curso (PARTE 5 -- nunca recalcula
+  // score, nunca usa `learningRecommendationEngine.ts` para decidir esta
+  // ruta), crea la sesión, y navega al primer tópico ya como sesión
+  // activa (antes solo navegaba, sin sesión real).
+  function handleStartReview() {
+    if (!selectedCourseId) return;
+    const plan = buildGuidedReviewPlan(selectedCourseId, learningStates);
+    if (!plan) return; // sin needs_review: el botón ni debería estar visible.
+    startGuidedReviewSession(plan);
+    const first = plan.topics[0];
+    navigate(`/aula/${selectedCourseId}/${first.moduleId}/${first.topicId}?review=true`);
+  }
+
   return (
     <div className="page">
       <div className="page-header">
@@ -630,6 +731,15 @@ export function LearningProgressPage() {
         <h1>Mi aprendizaje</h1>
         <p>Progreso consolidado de tus cursos, guardado localmente en este navegador.</p>
       </div>
+
+      {reviewCompletion && (
+        <ReviewCompletionCard
+          courseId={reviewCompletion.courseId}
+          topicCount={reviewCompletion.topicCount}
+          topicIds={reviewCompletion.topicIds}
+          onDismiss={() => setReviewCompletion(null)}
+        />
+      )}
 
       {error && (
         <div className="state-box state-box--error">
@@ -679,6 +789,7 @@ export function LearningProgressPage() {
                 modules={summary.modules}
                 needsReview={needsReviewCandidates}
                 hasAnyActivity={hasAnyActivity}
+                onStartReview={handleStartReview}
               />
               <ProgressingSection courseId={selectedCourseId} modules={summary.modules} progressing={progressingCandidates} />
               <MasteredSection courseId={selectedCourseId} modules={summary.modules} mastered={masteredStates} />

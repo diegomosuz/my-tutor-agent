@@ -7,6 +7,7 @@ import { GroundingPanel } from "../components/GroundingPanel";
 import { SafeMarkdown } from "../components/SafeMarkdown";
 import { CheckpointPanel } from "../classroom/CheckpointPanel";
 import { CompletionScreen } from "../classroom/CompletionScreen";
+import { GuidedReviewBanner } from "../classroom/GuidedReviewBanner";
 import { ReadAloudControls } from "../classroom/ReadAloudControls";
 import { SceneRenderer } from "../classroom/SceneRenderer";
 import { TutorPanel } from "../classroom/TutorPanel";
@@ -28,6 +29,14 @@ import { cancelAllSpeech } from "../classroom/voicePlayback";
 import { useClassroomEngine } from "../classroom/useClassroomEngine";
 import { useClassroomVoice } from "../classroom/useClassroomVoice";
 import { useVoicePreference } from "../classroom/useVoicePreference";
+import {
+  clearGuidedReviewSession,
+  loadGuidedReviewSession,
+  nextGuidedReviewIndex,
+  prevGuidedReviewIndex,
+  resolveGuidedReviewStep,
+  updateGuidedReviewSessionIndex,
+} from "../learning/guidedReviewSession";
 import {
   getCourseLearningProgress,
   markTopicCompleted,
@@ -292,6 +301,79 @@ export function ClassroomPage() {
     navigate(`/aula/${courseId}/${target.moduleId}/${target.topicId}`);
   }
 
+  // v1.6.0 (Bloque 3, "Guided Review Session"): lectura síncrona de
+  // sessionStorage en el cuerpo del render -- mismo criterio ya usado
+  // para `progress` en LearningProgressPage.tsx (nunca useState/useEffect
+  // para un valor derivado de storage, PARTE 70: sin cache, la sesión
+  // tiene como mucho 5 tópicos). `course` ya resuelve el curriculum REAL
+  // y actual, así que "¿este tópico del plan sigue existiendo?" nunca
+  // necesita un framework de migración (PARTE 15/62): un tópico
+  // eliminado simplemente no matchea acá.
+  const guidedReviewSession = courseId ? loadGuidedReviewSession(courseId) : null;
+  const isValidGuidedReviewTopic = (ref: { moduleId: string; topicId: string }): boolean =>
+    !!course?.modules.some(
+      (m) => m.id === ref.moduleId && m.topics.some((t) => t.id === ref.topicId)
+    );
+  const guidedReviewStep =
+    guidedReviewSession && course
+      ? resolveGuidedReviewStep(guidedReviewSession.topics, guidedReviewSession.currentIndex, isValidGuidedReviewTopic)
+      : null;
+  // El índice SOLO avanza por un click explícito de "Siguiente/Anterior de
+  // repaso" (ver handlers abajo) -- nunca se infiere comparando la URL,
+  // así que llegar acá por cualquier otra vía (nav curricular, tema
+  // relacionado del Tutor, browser Back, URL pegada a mano) previsiblemente
+  // no matchea `step.ref` y el banner muestra "en pausa" (PARTE 23/24).
+  const isOnGuidedReviewTopic =
+    !!guidedReviewStep &&
+    guidedReviewStep.ref.moduleId === moduleId &&
+    guidedReviewStep.ref.topicId === topicId;
+
+  function handleNextReview() {
+    if (!guidedReviewSession || !guidedReviewStep || !courseId) return;
+    const next = nextGuidedReviewIndex(guidedReviewSession.topics, guidedReviewStep.resolvedIndex, isValidGuidedReviewTopic);
+    if (next === null) {
+      handleFinishReview();
+      return;
+    }
+    updateGuidedReviewSessionIndex(courseId, next);
+    goToTopic(guidedReviewSession.topics[next]);
+  }
+
+  function handlePrevReview() {
+    if (!guidedReviewSession || !guidedReviewStep || !courseId) return;
+    const prev = prevGuidedReviewIndex(guidedReviewSession.topics, guidedReviewStep.resolvedIndex, isValidGuidedReviewTopic);
+    if (prev === null) return; // "Anterior" ya deshabilitado en el primer tópico válido
+    updateGuidedReviewSessionIndex(courseId, prev);
+    goToTopic(guidedReviewSession.topics[prev]);
+  }
+
+  function handleReturnToReview() {
+    if (!guidedReviewStep) return;
+    goToTopic(guidedReviewStep.ref); // vuelve al tópico del índice actual, nunca lo avanza
+  }
+
+  // "Finalizar"/"Salir" dejan el aula por completo (misma ruta que
+  // handleExit) -- mismo cleanup explícito de audio (PARTE 28: nunca una
+  // integración especial, reutiliza exactamente lo que "Salir de la
+  // clase" ya hace, porque cambiar de ruta acá no dispara el efecto de
+  // limpieza de tópico que sí cubre goToTopic).
+  function handleFinishReview() {
+    if (!guidedReviewSession) return;
+    const topicIds = guidedReviewSession.topics.map((t) => t.topicId);
+    const topicCount = guidedReviewStep?.total ?? guidedReviewSession.topics.length;
+    clearGuidedReviewSession();
+    cancelAllSpeech();
+    claimAiAudioPriority();
+    navigate("/mi-aprendizaje", { state: { reviewCompleted: true, topicCount, topicIds, courseId } });
+  }
+
+  function handleExitReview() {
+    clearGuidedReviewSession();
+    cancelAllSpeech();
+    claimAiAudioPriority();
+    navigate("/mi-aprendizaje");
+  }
+
   // v1.3.0 (Classroom UX, BLOQUE C): SCENE navigation (dentro de una
   // LessonPlan) y TOPIC navigation (entre tópicos del curso, cruzando
   // módulos) son ahora dos affordances SIEMPRE distintas -- nunca el mismo
@@ -477,6 +559,17 @@ export function ClassroomPage() {
       />
 
       <div className="page" style={{ paddingTop: 16 }}>
+        {guidedReviewStep && (
+          <GuidedReviewBanner
+            step={guidedReviewStep}
+            isOnPlanTopic={isOnGuidedReviewTopic}
+            onNextReview={handleNextReview}
+            onPrevReview={handlePrevReview}
+            onFinishReview={handleFinishReview}
+            onReturnToReview={handleReturnToReview}
+            onExitReview={handleExitReview}
+          />
+        )}
         {contentUpdatedSinceCompletion && (
           <div className="learning-content-updated-note" role="status">
             Este contenido fue actualizado desde tu última visita.

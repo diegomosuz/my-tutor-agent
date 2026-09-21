@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CANONICAL_INFO, SAMPLE_LESSON } from "../../classroom/__tests__/fixtures";
 import type { LessonPlan, LessonScene } from "../../types/api";
 import {
@@ -745,5 +745,280 @@ describe("ClassroomPage — v1.5.0 Guided Markdown Read Aloud", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /Leer tema/ })).not.toBeDisabled()
     );
+  });
+});
+
+// ---------------------------------------------------------------------
+// v1.6.0 Bloque 3 — "Guided Review Session": banner de repaso guiado
+// dentro de Classroom. Curso propio de 3 tópicos (COURSE/TOPIC_RESPONSE
+// arriba solo tienen 1, insuficiente para next/prev).
+// ---------------------------------------------------------------------
+import {
+  loadGuidedReviewSession,
+  startGuidedReviewSession,
+} from "../../learning/guidedReviewSession";
+
+const REVIEW_COURSE = {
+  id: "curso-review",
+  title: "Curso Review",
+  description: "",
+  order: 1,
+  modules: [
+    {
+      id: "modulo-1",
+      title: "Módulo 1",
+      order: 1,
+      topics: [
+        { id: "t1", title: "Tópico Uno", order: 1 },
+        { id: "t2", title: "Tópico Dos", order: 2 },
+        { id: "t3", title: "Tópico Tres", order: 3 },
+      ],
+    },
+  ],
+};
+
+function reviewTopicResponse(topicId: string, title: string) {
+  return {
+    course: { id: "curso-review", title: "Curso Review", description: "", order: 1 },
+    module: REVIEW_COURSE.modules[0],
+    topic: { id: topicId, title, order: 1 },
+    metadata: { title, order: 1 },
+    content_markdown: `# ${title}`,
+    canonical: CANONICAL_INFO,
+  };
+}
+
+function reviewRenderPage(entry: string) {
+  return render(
+    <MemoryRouter initialEntries={[entry]}>
+      <Routes>
+        <Route path="/aula/:courseId/:moduleId/:topicId" element={<ClassroomPage />} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
+describe("ClassroomPage — v1.6.0 Bloque 3 (Guided Review Session)", () => {
+  beforeEach(() => {
+    mockGetCourse.mockReset().mockResolvedValue(REVIEW_COURSE);
+    mockGetTopic.mockReset().mockImplementation((_courseId: string, _moduleId: string, topicId: string) =>
+      Promise.resolve(reviewTopicResponse(topicId, `Tópico ${topicId}`))
+    );
+    window.sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    window.sessionStorage.clear();
+  });
+
+  it("PASO 50: sin sesión activa, el banner de repaso guiado no se muestra", async () => {
+    reviewRenderPage("/aula/curso-review/modulo-1/t1");
+    await waitFor(() => expect(screen.getAllByText("Tópico t1").length).toBeGreaterThan(0));
+    expect(screen.queryByText(/Repaso guiado/)).not.toBeInTheDocument();
+  });
+
+  it("PASO 50: con sesión activa en el tópico actual, muestra 'Tema 1 de 3'", async () => {
+    startGuidedReviewSession({
+      courseId: "curso-review",
+      topics: [
+        { moduleId: "modulo-1", topicId: "t1" },
+        { moduleId: "modulo-1", topicId: "t2" },
+        { moduleId: "modulo-1", topicId: "t3" },
+      ],
+      createdFromLearningState: true,
+    });
+    reviewRenderPage("/aula/curso-review/modulo-1/t1");
+    await waitFor(() => expect(screen.getByText("Repaso guiado · Tema 1 de 3")).toBeInTheDocument());
+  });
+
+  it("PASO 51: click 'Siguiente de repaso' actualiza currentIndex y navega al próximo tópico del plan", async () => {
+    startGuidedReviewSession({
+      courseId: "curso-review",
+      topics: [
+        { moduleId: "modulo-1", topicId: "t1" },
+        { moduleId: "modulo-1", topicId: "t2" },
+        { moduleId: "modulo-1", topicId: "t3" },
+      ],
+      createdFromLearningState: true,
+    });
+    reviewRenderPage("/aula/curso-review/modulo-1/t1");
+    await waitFor(() => expect(screen.getByText("Repaso guiado · Tema 1 de 3")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente del repaso" }));
+    expect(mockNavigate).toHaveBeenCalledWith("/aula/curso-review/modulo-1/t2");
+    expect(loadGuidedReviewSession("curso-review")?.currentIndex).toBe(1);
+  });
+
+  it("PASO 52: en el segundo tópico, 'Anterior de repaso' navega al primero y decrementa el índice", async () => {
+    startGuidedReviewSession({
+      courseId: "curso-review",
+      topics: [
+        { moduleId: "modulo-1", topicId: "t1" },
+        { moduleId: "modulo-1", topicId: "t2" },
+        { moduleId: "modulo-1", topicId: "t3" },
+      ],
+      createdFromLearningState: true,
+    });
+    // El índice ya está en 1 (arribo simulado -- ver PASO 25, nunca se
+    // infiere de la URL, siempre lo dejó el handler de "Siguiente").
+    const { updateGuidedReviewSessionIndex } = await import("../../learning/guidedReviewSession");
+    updateGuidedReviewSessionIndex("curso-review", 1);
+    reviewRenderPage("/aula/curso-review/modulo-1/t2");
+    await waitFor(() => expect(screen.getByText("Repaso guiado · Tema 2 de 3")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Anterior del repaso" }));
+    expect(mockNavigate).toHaveBeenCalledWith("/aula/curso-review/modulo-1/t1");
+    expect(loadGuidedReviewSession("curso-review")?.currentIndex).toBe(0);
+  });
+
+  it("PASO 53: en el primer tópico, 'Anterior de repaso' está deshabilitado", async () => {
+    startGuidedReviewSession({
+      courseId: "curso-review",
+      topics: [
+        { moduleId: "modulo-1", topicId: "t1" },
+        { moduleId: "modulo-1", topicId: "t2" },
+      ],
+      createdFromLearningState: true,
+    });
+    reviewRenderPage("/aula/curso-review/modulo-1/t1");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Anterior del repaso" })).toBeDisabled());
+  });
+
+  it("PASO 53/54: en el último tópico, se muestra 'Finalizar repaso' en vez de 'Siguiente de repaso'", async () => {
+    const { updateGuidedReviewSessionIndex } = await import("../../learning/guidedReviewSession");
+    startGuidedReviewSession({
+      courseId: "curso-review",
+      topics: [
+        { moduleId: "modulo-1", topicId: "t1" },
+        { moduleId: "modulo-1", topicId: "t2" },
+      ],
+      createdFromLearningState: true,
+    });
+    updateGuidedReviewSessionIndex("curso-review", 1);
+    reviewRenderPage("/aula/curso-review/modulo-1/t2");
+    await waitFor(() => expect(screen.getByText("Repaso guiado · Tema 2 de 2")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Finalizar repaso" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Siguiente del repaso" })).not.toBeInTheDocument();
+  });
+
+  it("PASO 54: 'Finalizar repaso' limpia la sesión y navega a Mi aprendizaje con confirmación", async () => {
+    const { updateGuidedReviewSessionIndex } = await import("../../learning/guidedReviewSession");
+    startGuidedReviewSession({
+      courseId: "curso-review",
+      topics: [
+        { moduleId: "modulo-1", topicId: "t1" },
+        { moduleId: "modulo-1", topicId: "t2" },
+      ],
+      createdFromLearningState: true,
+    });
+    updateGuidedReviewSessionIndex("curso-review", 1);
+    reviewRenderPage("/aula/curso-review/modulo-1/t2");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Finalizar repaso" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Finalizar repaso" }));
+    expect(mockNavigate).toHaveBeenCalledWith(
+      "/mi-aprendizaje",
+      expect.objectContaining({
+        state: expect.objectContaining({ reviewCompleted: true, topicCount: 2, courseId: "curso-review" }),
+      })
+    );
+    expect(loadGuidedReviewSession("curso-review")).toBeNull();
+  });
+
+  it("PASO 55: 'Salir del repaso' limpia la sesión sin marcar finalización, vuelve a Mi aprendizaje", async () => {
+    startGuidedReviewSession({
+      courseId: "curso-review",
+      topics: [
+        { moduleId: "modulo-1", topicId: "t1" },
+        { moduleId: "modulo-1", topicId: "t2" },
+      ],
+      createdFromLearningState: true,
+    });
+    reviewRenderPage("/aula/curso-review/modulo-1/t1");
+    await waitFor(() => expect(screen.getByText("Repaso guiado · Tema 1 de 2")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Salir del repaso" }));
+    expect(mockNavigate).toHaveBeenCalledWith("/mi-aprendizaje");
+    expect(loadGuidedReviewSession("curso-review")).toBeNull();
+  });
+
+  it("PASO 56: navegar a un tópico fuera del plan actual muestra 'Repaso guiado en pausa' sin mover el índice", async () => {
+    startGuidedReviewSession({
+      courseId: "curso-review",
+      topics: [
+        { moduleId: "modulo-1", topicId: "t1" },
+        { moduleId: "modulo-1", topicId: "t2" },
+      ],
+      createdFromLearningState: true,
+    });
+    // El alumno terminó en t3 (fuera del plan) por navegación incidental
+    // -- el índice sigue en 0 (nunca se infiere de la URL).
+    reviewRenderPage("/aula/curso-review/modulo-1/t3");
+    await waitFor(() => expect(screen.getByText("Repaso guiado en pausa")).toBeInTheDocument());
+    expect(loadGuidedReviewSession("curso-review")?.currentIndex).toBe(0);
+  });
+
+  it("PASO 57: 'Volver al repaso' navega al tópico del currentIndex actual", async () => {
+    startGuidedReviewSession({
+      courseId: "curso-review",
+      topics: [
+        { moduleId: "modulo-1", topicId: "t1" },
+        { moduleId: "modulo-1", topicId: "t2" },
+      ],
+      createdFromLearningState: true,
+    });
+    reviewRenderPage("/aula/curso-review/modulo-1/t3");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Volver al repaso" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Volver al repaso" }));
+    expect(mockNavigate).toHaveBeenCalledWith("/aula/curso-review/modulo-1/t1");
+    // Nunca avanza el índice por esto -- sigue en 0.
+    expect(loadGuidedReviewSession("curso-review")?.currentIndex).toBe(0);
+  });
+
+  it("PASO 46/aislamiento: sesión de OTRO curso nunca muestra el banner acá", async () => {
+    startGuidedReviewSession({
+      courseId: "otro-curso",
+      topics: [{ moduleId: "modulo-1", topicId: "t1" }],
+      createdFromLearningState: true,
+    });
+    reviewRenderPage("/aula/curso-review/modulo-1/t1");
+    await waitFor(() => expect(screen.getAllByText("Tópico t1").length).toBeGreaterThan(0));
+    expect(screen.queryByText(/Repaso guiado/)).not.toBeInTheDocument();
+  });
+
+  it("PASO 60: navegar con 'Siguiente de repaso' no modifica Learning Progress (no auto-completion)", async () => {
+    startGuidedReviewSession({
+      courseId: "curso-review",
+      topics: [
+        { moduleId: "modulo-1", topicId: "t1" },
+        { moduleId: "modulo-1", topicId: "t2" },
+      ],
+      createdFromLearningState: true,
+    });
+    reviewRenderPage("/aula/curso-review/modulo-1/t1");
+    await waitFor(() => expect(screen.getByText("Repaso guiado · Tema 1 de 2")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente del repaso" }));
+    // "Siguiente de repaso" es un simple navigate() (mockeado en este
+    // archivo) -- nunca llama markTopicCompleted/markTopicStarted por sí
+    // mismo. Confirmamos que Learning Progress de t1 sigue sin `completed`.
+    const progress = getCourseLearningProgress("curso-review");
+    expect(progress?.topics["modulo-1:t1"]?.status).not.toBe("completed");
+  });
+
+  it("PASO 62: tópico stale en el snapshot -- se salta determinísticamente, sin romper el banner", async () => {
+    startGuidedReviewSession({
+      courseId: "curso-review",
+      topics: [
+        { moduleId: "modulo-1", topicId: "t1" },
+        { moduleId: "modulo-1", topicId: "topico-eliminado" }, // ya no existe en REVIEW_COURSE
+        { moduleId: "modulo-1", topicId: "t3" },
+      ],
+      createdFromLearningState: true,
+    });
+    reviewRenderPage("/aula/curso-review/modulo-1/t1");
+    // Total cuenta solo los 2 tópicos reales (t1, t3) -- "topico-eliminado" nunca cuenta.
+    await waitFor(() => expect(screen.getByText("Repaso guiado · Tema 1 de 2")).toBeInTheDocument());
   });
 });

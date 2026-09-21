@@ -69,7 +69,10 @@ function topicRoute(courseId: string, moduleId: string, topicId: string, review:
   return review ? `${base}?review=true` : base;
 }
 
-function certificationSetupRoute(
+/** Exportado para reutilización (Bloque 3 de v1.6.0, "Evaluar progreso"
+ * tras un Guided Review -- reusa el flujo EXISTENTE de Certification,
+ * nunca crea una evaluación nueva, ver docs/LEARNING_INTELLIGENCE_V1_6.md). */
+export function certificationSetupRoute(
   courseId: string,
   mode: "practice" | "simulation",
   topicIds: string[]

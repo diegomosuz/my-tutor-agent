@@ -58,9 +58,9 @@ const COURSE_DETAIL = {
   ],
 };
 
-function renderPage() {
+function renderPage(initialEntries?: Array<string | { pathname: string; state?: unknown }>) {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries ?? ["/mi-aprendizaje"]}>
       <LearningProgressPage />
     </MemoryRouter>
   );
@@ -529,5 +529,102 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
       Number(el.textContent)
     );
     expect(counts.reduce((a, b) => a + b, 0)).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------
+// v1.6.0 Bloque 3 — "Guided Review Session": "Comenzar repaso" crea una
+// sesión real; "Repasar tema" individual NUNCA la crea; confirmación de
+// repaso completado.
+// ---------------------------------------------------------------------
+import { loadGuidedReviewSession, clearGuidedReviewSession } from "../../learning/guidedReviewSession";
+
+describe("LearningProgressPage — v1.6.0 Bloque 3 (Guided Review Session)", () => {
+  afterEach(() => {
+    clearGuidedReviewSession();
+  });
+
+  it("PASO 48: 'Comenzar repaso' crea una GuidedReviewSession real y navega al primer tópico del plan con currentIndex=0", async () => {
+    markTopicCompleted("curso-demo", "modulo-1", "topico-a");
+    recordCertificationAttempt(
+      "curso-demo",
+      scoreAttempt("topico-a", 30, "2026-01-01T00:00:00.000Z", "att-1")
+    );
+    mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
+    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    renderPage();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Comenzar repaso" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Comenzar repaso" }));
+
+    expect(mockNavigate).toHaveBeenCalledWith("/aula/curso-demo/modulo-1/topico-a?review=true");
+    const session = loadGuidedReviewSession("curso-demo");
+    expect(session?.currentIndex).toBe(0);
+    expect(session?.topics).toEqual([{ moduleId: "modulo-1", topicId: "topico-a" }]);
+  });
+
+  it("PASO 49: 'Repasar tema' individual navega al tópico pero NUNCA crea una GuidedReviewSession", async () => {
+    markTopicCompleted("curso-demo", "modulo-1", "topico-a");
+    recordCertificationAttempt(
+      "curso-demo",
+      scoreAttempt("topico-a", 30, "2026-01-01T00:00:00.000Z", "att-1")
+    );
+    mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
+    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    renderPage();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Repasar tema" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Repasar tema" }));
+
+    expect(mockNavigate).toHaveBeenCalledWith("/aula/curso-demo/modulo-1/topico-a?review=true");
+    expect(loadGuidedReviewSession("curso-demo")).toBeNull();
+  });
+
+  it("confirmación 'Repaso completado' se muestra con el state de navegación, con copy preciso (nunca 'dominás'/'mejoraste')", async () => {
+    mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
+    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    const { container } = renderPage([
+      { pathname: "/mi-aprendizaje", state: { reviewCompleted: true, courseId: "curso-demo", topicCount: 2, topicIds: ["topico-a", "topico-b"] } },
+    ]);
+    await waitFor(() => expect(screen.getByText("Repaso completado")).toBeInTheDocument());
+    expect(
+      screen.getByText(
+        "Completaste esta ruta de repaso (2 temas). Tu estado de aprendizaje se actualizará cuando haya nueva evidencia evaluativa."
+      )
+    ).toBeInTheDocument();
+    const text = container.textContent?.toLowerCase() ?? "";
+    expect(text).not.toContain("dominás");
+    expect(text).not.toContain("mejoraste");
+  });
+
+  it("'Evaluar progreso' navega al flujo EXISTENTE de Certification, acotado a los tópicos repasados", async () => {
+    mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
+    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    renderPage([
+      { pathname: "/mi-aprendizaje", state: { reviewCompleted: true, courseId: "curso-demo", topicCount: 2, topicIds: ["topico-a", "topico-b"] } },
+    ]);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Evaluar progreso" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Evaluar progreso" }));
+    expect(mockNavigate).toHaveBeenCalledWith("/certificacion/curso-demo?mode=practice&topics=topico-a%2Ctopico-b");
+  });
+
+  it("'Entendido' cierra la confirmación sin efectos secundarios", async () => {
+    mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
+    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    renderPage([
+      { pathname: "/mi-aprendizaje", state: { reviewCompleted: true, courseId: "curso-demo", topicCount: 1, topicIds: ["topico-a"] } },
+    ]);
+    await waitFor(() => expect(screen.getByText("Repaso completado")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Entendido" }));
+    expect(screen.queryByText("Repaso completado")).not.toBeInTheDocument();
+  });
+
+  it("sin state de navegación, nunca muestra la confirmación de repaso completado", async () => {
+    mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
+    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Estado de aprendizaje")).toBeInTheDocument());
+    expect(screen.queryByText("Repaso completado")).not.toBeInTheDocument();
   });
 });

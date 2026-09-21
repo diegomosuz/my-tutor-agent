@@ -460,3 +460,208 @@ distinto framing — no se unificaron en este bloque (fuera de alcance,
 `learningRecommendationEngine.ts` no se tocó). Checkpoint sigue sin
 evidencia persistida (sección 2.2) — ningún texto de esta UI lo
 menciona. Sin sesión/cola/wizard de repaso todavía (Bloque 3).
+
+## 15. Guided Review Session (Bloque 3: "Guided Review Session")
+
+Convierte "Prioridad de repaso" en una ruta secuencial pequeña dentro de
+Classroom, reutilizado (nunca una segunda pantalla): `Comenzar repaso →
+Topic A → Topic B → Topic C → Fin del repaso`.
+
+### 15.1 Principio pedagógico crítico: review != mastery
+
+Recorrer un repaso guiado **nunca** cambia `needs_review → mastered`,
+nunca crea evidencia evaluativa, nunca modifica `certificationAttempts`,
+nunca inventa una "evidencia de repaso exitoso". Confirmado por
+construcción: ningún archivo de este bloque
+(`guidedReviewPlan.ts`/`guidedReviewSession.ts`/`GuidedReviewBanner.tsx`/
+los handlers nuevos en `ClassroomPage.tsx`/`LearningProgressPage.tsx`)
+importa ni llama a `markTopicCompleted`/`markTopicStarted`/
+`recordCertificationAttempt` en ningún punto — la única fuente de
+evidencia real sigue siendo Certification. Verificado con un test
+dedicado (`PASO 60`, `ClassroomPage.test.tsx`) y con QA real: un repaso
+completo de 3 tópicos `needs_review` reales, sin rendir ninguna
+certificación nueva, deja el summary con los mismos 3 `needs_review`
+después de terminar.
+
+### 15.2 `GuidedReviewPlan` (`frontend/src/learning/guidedReviewPlan.ts`)
+
+Función pura `buildGuidedReviewPlan(courseId, states: LearningState[])
+-> GuidedReviewPlan | null`. Fuente **exclusiva**: `getReviewCandidates`
+(Bloque 1, sin cambios) filtrado a `status === "needs_review"` — nunca
+`progressing` (esos siguen disponibles vía "Continuar tema" en Mi
+aprendizaje, nunca se mezclan automáticamente), nunca recalcula score,
+nunca usa `learningRecommendationEngine.ts` para decidir la ruta.
+`MAX_GUIDED_REVIEW_TOPICS = 5`: los primeros 5 en el orden ya
+determinístico de `getReviewCandidates`, sin scoring nuevo. `null` si no
+hay ningún `needs_review` (el botón "Comenzar repaso" ya está oculto en
+ese caso desde Bloque 2, pero el builder igual nunca lanza con `[]`).
+
+### 15.3 `GuidedReviewSession` (`frontend/src/learning/guidedReviewSession.ts`)
+
+**Storage: `sessionStorage`, no `localStorage`** — decisión explícita:
+transitoria (desaparece al cerrar la pestaña), sobrevive cambios de
+ruta/refresh (a diferencia de un `useState` en memoria, que Classroom
+perdería al desmontar/remontar entre tópicos), y nunca contamina
+Learning Progress permanente. Mismo patrón de saneamiento que
+`learningProgressStore.ts` (schema version, parseo seguro, nunca lanza,
+una entidad corrupta degrada a "sin sesión" en vez de romper la app).
+Contenido MÍNIMO: `courseId` + `topics: {moduleId,topicId}[]` (snapshot
+inmutable, PARTE 9 — nunca se reordena mientras el alumno la recorre,
+aunque `LearningState` cambie mientras tanto en otra pestaña) +
+`currentIndex`. Nunca scores/reason copy/títulos/Markdown/historial de
+certificación — todo eso se resuelve desde el curriculum/stores reales
+cuando hace falta mostrarlo.
+
+`currentIndex` cambia **únicamente** por un click explícito de
+"Siguiente/Anterior de repaso" (`updateGuidedReviewSessionIndex`) —
+nunca inferido comparando la URL actual. Esto es lo que hace que
+navegar manualmente a un tópico del plan (nav curricular, tema
+relacionado del Tutor, browser Back, URL pegada a mano) **nunca** avance
+el índice silenciosamente: la posición de la sesión representa el flujo
+guiado, no cualquier navegación incidental.
+
+Aislamiento de curso: `loadGuidedReviewSession(courseId)` devuelve
+`null` si la sesión guardada pertenece a otro curso — una sesión de A
+nunca aparece en B.
+
+### 15.4 Resolución de posición y tópicos stale
+
+Funciones puras separadas del I/O (`resolveGuidedReviewStep`,
+`nextGuidedReviewIndex`, `prevGuidedReviewIndex`): reciben `topics` +
+`currentIndex` + un predicado `isValidTopic` (resuelto por el llamador
+contra el curriculum REAL y actual, `course.modules`, nunca contra una
+copia guardada) y devuelven qué tópico corresponde mostrar, saltando
+determinísticamente cualquier tópico que ya no exista (tópico
+eliminado/renombrado) — nunca un framework de migración. Si NINGÚN
+tópico del plan sigue siendo válido, resuelven `null` y la sesión puede
+terminar limpiamente (sin ruta rota).
+
+### 15.5 `GuidedReviewBanner` (`frontend/src/classroom/GuidedReviewBanner.tsx`)
+
+Dimensión de navegación **separada** de "Tema anterior/siguiente"
+curricular (`content-panel__topic-nav`, sin cambios) — nunca el mismo
+control, texto siempre explícito ("de repaso"). Dos estados visuales:
+
+- **Activo** (el tópico mostrado coincide con `step.ref`): "Repaso
+  guiado · Tema X de N" + Anterior/Siguiente de repaso (Anterior
+  deshabilitado en el primero; en el último, "Siguiente" se reemplaza
+  conceptualmente por "Finalizar repaso") + "Salir del repaso".
+- **En pausa** (el alumno navegó fuera del plan por cualquier vía que no
+  sea los botones de repaso): "Repaso guiado en pausa" + "Volver al
+  repaso" (navega exactamente al tópico de `currentIndex`, sin tocarlo)
+  + "Salir del repaso".
+
+Nunca solo color para indicar el estado (PARTE 66): siempre texto +
+estructura de botones distinta.
+
+### 15.6 Ciclo de vida completo
+
+- **"Comenzar repaso"** (`LearningProgressPage.tsx`): construye el plan,
+  `startGuidedReviewSession(plan)`, navega al primer tópico ya con
+  `currentIndex=0`. Reemplaza el comportamiento de Bloque 2 (que solo
+  navegaba, sin sesión real).
+- **"Repasar tema"** individual: **sigue sin crear sesión** — solo
+  navega (`?review=true`), exactamente igual que Bloque 2. Ambas
+  acciones coexisten a propósito (repasar uno vs. repaso guiado
+  completo).
+- **Siguiente/Anterior de repaso**: actualiza `currentIndex`
+  explícitamente y navega (`goToTopic`, reutilizado sin cambios) — el
+  cleanup de audio (Reader/narración IA/Tutor) llega gratis del efecto
+  de cambio de tópico ya existente, nunca una integración especial
+  (PARTE 28/69).
+- **"Finalizar repaso"** (solo visible en el último tópico válido):
+  limpia la sesión, hace el mismo cleanup explícito de audio que "Salir
+  de la clase" (`handleExit`, ya existente — necesario acá porque
+  cambiar a `/mi-aprendizaje` no dispara el efecto de cambio de tópico),
+  y navega a Mi aprendizaje con una confirmación de una sola vez vía
+  `navigate(..., { state: { reviewCompleted, topicCount, topicIds,
+  courseId } })` — la opción más simple entre las evaluadas (nunca
+  sessionStorage adicional ni una página nueva, PARTE 34). El `state` del
+  router se limpia (`navigate(pathname, {replace:true})`) apenas se
+  captura, así un refresh posterior nunca vuelve a mostrar la
+  confirmación.
+- **"Salir del repaso"**: limpia la sesión sin marcar finalización,
+  mismo cleanup de audio, vuelve a Mi aprendizaje sin confirmación.
+- **`ReviewCompletionCard`** (`LearningProgressPage.tsx`): copy preciso
+  y literal —
+  *"Completaste esta ruta de repaso (N temas). Tu estado de aprendizaje
+  se actualizará cuando haya nueva evidencia evaluativa."* — nunca
+  "dominás"/"mejoraste tu nivel" sin evidencia real. Si la review vino
+  de OTRO curso que no es el actualmente seleccionado, la página
+  prioriza automáticamente ese curso (nunca el default `courses[0]`) al
+  cargar.
+
+### 15.7 "Evaluar progreso" y el boundary con Certification (PARTE 38/39)
+
+Auditoría previa (PASO 3.G/H): Certification YA soporta scope acotado a
+tópicos específicos (`certificationSetupRoute(courseId, mode,
+topicIds)`, ya usado por "Iniciar práctica" desde Bloque 1/v1.1.0) — no
+es "solo curso completo". Por lo tanto **sí** se agregó "Evaluar
+progreso" en `ReviewCompletionCard`, reutilizando ese mismo helper
+(exportado, sin duplicar la construcción de ruta) acotado a los
+`topicIds` recién repasados — nunca una evaluación nueva, nunca
+resultados preconfigurados, nunca una restricción artificial de
+preguntas. Si esta reutilización no hubiera encajado limpiamente, este
+bloque habría diferido la funcionalidad a un bloque futuro en vez de
+forzar arquitectura — no fue necesario.
+
+### 15.8 Tests
+
+- `guidedReviewPlan.test.ts` (7): null sin needs_review, filtra
+  únicamente needs_review, máximo 5, orden preservado, determinismo,
+  aislamiento de curso.
+- `guidedReviewSession.test.ts` (17): save/load/update/clear, JSON
+  corrupto, schema inválido, shape inválido, aislamiento de curso,
+  reemplazo de sesión, resolución de posición con/sin tópicos stale,
+  next/prev, determinismo.
+- `ClassroomPage.test.tsx` (+13): banner ausente sin sesión, "Tema X de
+  N", Siguiente/Anterior actualizan índice y navegan, último tópico
+  muestra "Finalizar repaso", Finalizar limpia sesión + navega con
+  confirmación, Salir limpia sesión, navegación off-plan muestra
+  "pausa" sin mover el índice, "Volver al repaso" navega al
+  `currentIndex` real, aislamiento de curso, no auto-completion, tópico
+  stale se salta sin romper el banner.
+- `LearningProgressPage.test.tsx` (+6): "Comenzar repaso" crea sesión
+  real y navega con `currentIndex=0`, "Repasar tema" individual NUNCA
+  crea sesión, confirmación con copy preciso, "Evaluar progreso" navega
+  al flujo existente de Certification, "Entendido" cierra sin efectos
+  secundarios, sin `state` de navegación nunca se muestra la
+  confirmación.
+
+### 15.9 QA real (`spec-driven-design-expert`, Playwright, Chromium real)
+
+Escenario con 3 `needs_review` reales (evidencia controlada, IDs reales
+del curso vía fetch al backend real): `Comenzar repaso` → Tema 1 de 3
+(Guided Read Aloud usado con éxito) → `Siguiente de repaso` → Tema 2 de
+3 → navegación curricular hacia un tema fuera del plan → banner
+"Repaso guiado en pausa" con "Volver al repaso" → click → vuelve
+exactamente a Tema 2 de 3 (índice sin cambios) → **refresh real de
+página** → banner recuperado correctamente ("Tema 2 de 3") → `Siguiente
+de repaso` → Tema 3 de 3 → `Finalizar repaso` → `Mi aprendizaje` con
+`Repaso completado` visible. Confirmado tras terminar (esperando la
+carga real del curso de 53 tópicos, no un timeout fijo): el summary
+sigue mostrando exactamente 3 `needs_review` — ninguno se convirtió en
+`mastered` por haber sido repasado. 0 errores de consola en toda la
+corrida. QA responsive en 390×844 (Mi aprendizaje y el banner dentro de
+Classroom): 0px de overflow horizontal en ambos, banner compacto
+(nunca media pantalla).
+
+### 15.10 Privacidad y seguridad (PARTE 71/72)
+
+`GuidedReviewSessionDocumentV1` contiene únicamente identity de
+curso/tópicos + índice — nunca scores, respuestas de certificación,
+Markdown ni conversación del Tutor. Sin telemetría, sin analytics, sin
+historial de reviews persistido (PARTE 37 — ni intentos, ni timestamps
+de finalización, ni "temas repasados" a través de sesiones: eso sería
+evidencia nueva y requeriría diseño pedagógico específico, fuera de
+alcance de este bloque). `JSON.parse` siempre en try/catch, sin `eval`,
+sin construcción dinámica de rutas de filesystem.
+
+### 15.11 Explícitamente fuera de este bloque
+
+Tutor adaptativo, cambios a `tutor-v4`/`lesson-v3.3.1`, LLM para elegir
+ruta, embeddings, vector DB, recommender ML, agentes, LangGraph, base de
+datos nueva, backend de usuario, evaluación generada especialmente para
+review, persistencia de Checkpoint, review score, mastery artificial,
+gamification (XP/badges/streaks), telemetry, analytics, historial de
+reviews completados.

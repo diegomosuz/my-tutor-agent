@@ -4050,6 +4050,99 @@ p {
   margin-bottom: 14px;
 }
 
+/* v1.6.0 (Bloque 3, "Guided Review Session"): banner compacto de repaso
+   guiado, dimensión de navegación SEPARADA de "Tema anterior/siguiente"
+   curricular (nunca el mismo control, PARTE 20) -- texto siempre visible
+   (nunca solo color) para "activo"/"en pausa", botones con aria-label
+   explícito (PARTE 66). */
+.guided-review-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  background: var(--color-primary-subtle);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  font-size: 13.5px;
+}
+
+.guided-review-banner--paused {
+  background: var(--color-bg-muted);
+  border-color: var(--color-border-strong);
+}
+
+.guided-review-banner__label {
+  font-weight: 700;
+  color: var(--color-primary-dark);
+}
+
+.guided-review-banner--paused .guided-review-banner__label {
+  color: var(--color-text-muted);
+}
+
+.guided-review-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.guided-review-banner__action {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-primary);
+  background: #fff;
+  color: var(--color-primary-dark);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.guided-review-banner__action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.guided-review-banner__action--finish {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.guided-review-banner__action--exit {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-muted);
+  background: transparent;
+}
+
+@media (max-width: 640px) {
+  .guided-review-banner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* v1.6.0 (Bloque 3): confirmación de "Repaso completado" en Mi
+   aprendizaje -- mismo estilo de card que el resto de la página
+   (`.learning-section`), nunca un modal/página nueva. */
+.learning-review-completion__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.learning-review-completion__dismiss {
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .settings-card--wide {
   margin-top: 20px;
   max-width: none;
