@@ -1,8 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useCertificationExam } from "../certification/useCertificationExam";
 import { examAnswerKey, loadCertificationResult } from "../certification/certificationStorage";
+import { buildCourseLearningSummary } from "../learning/courseSummary";
+import { findTopicTitle } from "../learning/learningRecommendationEngine";
+import { deriveCourseLearningStates } from "../learning/learningState";
+import {
+  describeLearningStateEvidence,
+  LEARNING_STATE_REASON_COPY,
+  LEARNING_STATE_STATUS_LABEL,
+} from "../learning/learningStateCopy";
+import {
+  clearGuidedReviewVerificationContext,
+  deriveVerificationResults,
+  hasNewVerificationAttempt,
+  loadGuidedReviewVerificationContext,
+  type VerificationTopicResult,
+} from "../learning/guidedReviewVerification";
+import { getCourseLearningProgress } from "../learning/learningProgressStore";
 import type { CertificationPracticeResult, CourseDetail, ExamQuestionView } from "../types/api";
 
 const VERDICT_LABELS: Record<string, string> = {
@@ -10,6 +26,59 @@ const VERDICT_LABELS: Record<string, string> = {
   partially_correct: "Parcialmente correcta",
   incorrect: "Incorrecta",
 };
+
+/** Panel "Estado después de la verificación" (v1.6.0 Bloque 4, PARTE
+ * 18-22): SOLO aparece cuando esta Certification fue iniciada como
+ * verificación posterior a un Guided Review Y ya existe un intento nuevo
+ * REAL persistido (`hasNewVerificationAttempt`, identidad de intento —
+ * nunca un timer). Reutiliza `deriveCourseLearningStates` (Bloque 1, sin
+ * cambios) y `learningStateCopy.ts` (Bloque 2, sin segundo mapping) — el
+ * estado mostrado acá es EXACTAMENTE el mismo que mostrará "Mi
+ * aprendizaje" para estos tópicos (PARTE 30, invariante de consistencia).
+ * Nunca afirma causalidad ("el repaso hizo que..."): describe evidencia
+ * posterior, no un efecto del repaso (PARTE 22). */
+function VerificationResultPanel({
+  results,
+  modules,
+  onReturnToLearningProgress,
+}: {
+  results: VerificationTopicResult[];
+  modules: ReturnType<typeof buildCourseLearningSummary>["modules"];
+  onReturnToLearningProgress: () => void;
+}) {
+  if (results.length === 0) return null;
+  return (
+    <section className="cert-results-section cert-verification-panel" aria-labelledby="verification-heading">
+      <h3 id="verification-heading">Estado después de la verificación</h3>
+      <p>
+        Con la nueva evidencia de esta certificación, este es el estado actual de los temas
+        repasados.
+      </p>
+      <ul className="cert-verification-list">
+        {results.map(({ moduleId, topicId, current, before }) => (
+          <li key={`${moduleId}:${topicId}`} className="cert-verification-item">
+            <span className="cert-verification-item__title">{findTopicTitle(modules, moduleId, topicId)}</span>
+            {before && before.status !== current.status && (
+              <span className="cert-verification-item__before">
+                Antes: {LEARNING_STATE_STATUS_LABEL[before.status]}
+              </span>
+            )}
+            <span className={`cert-verification-item__status cert-verification-item__status--${current.status}`}>
+              Ahora: {LEARNING_STATE_STATUS_LABEL[current.status]}
+            </span>
+            <span className="cert-verification-item__reason">{LEARNING_STATE_REASON_COPY[current.reasonCode]}</span>
+            {describeLearningStateEvidence(current) && (
+              <span className="cert-verification-item__evidence">{describeLearningStateEvidence(current)}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+      <button type="button" className="course-card__cta" onClick={onReturnToLearningProgress}>
+        Volver a Mi aprendizaje
+      </button>
+    </section>
+  );
+}
 
 /** Results Page (Fase 6, sección 49): SIEMPRE "Resultado de práctica",
  * nunca lenguaje de aprobación oficial de certificación. */
@@ -28,6 +97,20 @@ export function CertificationResultsPage() {
       .then(setCourse)
       .catch(() => {});
   }, [courseId]);
+
+  // v1.6.0 Bloque 4 (PARTE 15/16/30): SIEMPRE recalculado desde cero a
+  // partir del progreso REAL actual (nunca un patch manual sobre un
+  // estado anterior) -- exactamente la misma derivación que usa "Mi
+  // aprendizaje", así que ambos SIEMPRE muestran el mismo resultado para
+  // el mismo progreso (invariante de consistencia, PARTE 30). Estos hooks
+  // deben llamarse ANTES de cualquier `return` temprano (reglas de React)
+  // -- por eso van acá, no después de los early returns de abajo.
+  const progress = courseId ? getCourseLearningProgress(courseId) : null;
+  const summary = useMemo(() => (course && courseId ? buildCourseLearningSummary(course, progress) : null), [course, courseId, progress]);
+  const learningStates = useMemo(
+    () => (summary && courseId ? deriveCourseLearningStates(courseId, summary.modules, progress) : []),
+    [summary, progress, courseId]
+  );
 
   if (!courseId) return null;
 
@@ -53,8 +136,35 @@ export function CertificationResultsPage() {
     (exam.session?.questions ?? []).map((q) => [examAnswerKey(q.bank_id, q.question_id), q])
   );
 
+  // Panel de verificación: SOLO si esta Certification fue iniciada desde
+  // "Evaluar progreso" (contexto real en sessionStorage, PARTE 5) Y ya
+  // hay un intento NUEVO real persistido para este curso (PARTE 36/38 --
+  // nunca un resultado de verificación falso si el alumno abandonó antes
+  // de entregar). `latestAttempt` es el más reciente porque
+  // `recordCertificationAttempt` ya ordena por `completedAt` desc al
+  // guardar.
+  const verificationContext = loadGuidedReviewVerificationContext(courseId);
+  const latestAttempt = progress?.certificationAttempts[0] ?? null;
+  const verificationResults =
+    verificationContext && latestAttempt && hasNewVerificationAttempt(verificationContext, latestAttempt.attemptId)
+      ? deriveVerificationResults(
+          verificationContext,
+          learningStates,
+          latestAttempt.performanceByTopic.map((t) => ({ moduleId: t.module_id, topicId: t.topic_id }))
+        )
+      : [];
+
+  function handleReturnToLearningProgress() {
+    clearGuidedReviewVerificationContext();
+    navigate("/mi-aprendizaje");
+  }
+
   function handleNewPractice() {
     exam.clearSession();
+    // Abandona explícitamente este resultado (PARTE 31): un contexto de
+    // verificación viejo nunca debe sobrevivir a una práctica nueva sin
+    // relación con el repaso que lo originó.
+    clearGuidedReviewVerificationContext();
     navigate(`/certificacion/${courseId}`);
   }
 
@@ -81,6 +191,14 @@ export function CertificationResultsPage() {
           material del curso. No es una predicción de aprobación de ninguna certificación oficial.
         </p>
       </div>
+
+      {summary && (
+        <VerificationResultPanel
+          results={verificationResults}
+          modules={summary.modules}
+          onReturnToLearningProgress={handleReturnToLearningProgress}
+        />
+      )}
 
       <section className="cert-results-section">
         <h3>Desempeño por tópico</h3>

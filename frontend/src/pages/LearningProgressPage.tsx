@@ -16,18 +16,21 @@ import {
 } from "../learning/learningRecommendationEngine";
 import {
   deriveCourseLearningStates,
+  deriveTopicLearningState,
   getReviewCandidates,
   summarizeLearningStates,
   type LearningState,
   type LearningStateSummary,
 } from "../learning/learningState";
+import { getTopicLearningSignal } from "../learning/topicLearningSignal";
 import {
   describeLearningStateEvidence,
   LEARNING_STATE_REASON_COPY,
   LEARNING_STATE_STATUS_LABEL,
 } from "../learning/learningStateCopy";
-import { buildGuidedReviewPlan } from "../learning/guidedReviewPlan";
+import { buildGuidedReviewPlan, type GuidedReviewTopicRef } from "../learning/guidedReviewPlan";
 import { startGuidedReviewSession } from "../learning/guidedReviewSession";
+import { startGuidedReviewVerification } from "../learning/guidedReviewVerification";
 import { getCourseLearningProgress } from "../learning/learningProgressStore";
 import type { CertificationAttemptSummary } from "../learning/types";
 import type { CourseDetail, CourseSummary } from "../types/api";
@@ -431,17 +434,16 @@ function ProgressingSection({
  * flujo EXISTENTE de Certification (PARTE 38, nunca una evaluación
  * nueva), acotado a los tópicos recién repasados. */
 function ReviewCompletionCard({
-  courseId,
   topicCount,
-  topicIds,
+  topics,
+  onStartVerification,
   onDismiss,
 }: {
-  courseId: string;
   topicCount: number;
-  topicIds: string[];
+  topics: GuidedReviewTopicRef[];
+  onStartVerification: (topics: GuidedReviewTopicRef[]) => void;
   onDismiss: () => void;
 }) {
-  const navigate = useNavigate();
   return (
     <section className="learning-section learning-review-completion" role="status">
       <h2>Repaso completado</h2>
@@ -450,11 +452,7 @@ function ReviewCompletionCard({
         estado de aprendizaje se actualizará cuando haya nueva evidencia evaluativa.
       </p>
       <div className="learning-review-completion__actions">
-        <button
-          type="button"
-          className="course-card__cta"
-          onClick={() => navigate(certificationSetupRoute(courseId, "practice", topicIds))}
-        >
+        <button type="button" className="course-card__cta" onClick={() => onStartVerification(topics)}>
           Evaluar progreso
         </button>
         <button type="button" className="learning-review-completion__dismiss" onClick={onDismiss}>
@@ -582,7 +580,13 @@ function CourseProgressSection({
 interface ReviewCompletionState {
   courseId: string;
   topicCount: number;
-  topicIds: string[];
+  topics: GuidedReviewTopicRef[];
+}
+
+function isTopicRef(value: unknown): value is GuidedReviewTopicRef {
+  if (typeof value !== "object" || value === null) return false;
+  const t = value as Record<string, unknown>;
+  return typeof t.moduleId === "string" && typeof t.topicId === "string";
 }
 
 function isReviewCompletionState(value: unknown): value is ReviewCompletionState & { reviewCompleted: true } {
@@ -592,7 +596,8 @@ function isReviewCompletionState(value: unknown): value is ReviewCompletionState
     v.reviewCompleted === true &&
     typeof v.courseId === "string" &&
     typeof v.topicCount === "number" &&
-    Array.isArray(v.topicIds)
+    Array.isArray(v.topics) &&
+    v.topics.every(isTopicRef)
   );
 }
 
@@ -724,6 +729,44 @@ export function LearningProgressPage() {
     navigate(`/aula/${selectedCourseId}/${first.moduleId}/${first.topicId}?review=true`);
   }
 
+  // v1.6.0 Bloque 4: "Evaluar progreso" reutiliza el flujo EXISTENTE de
+  // Certification (`certificationSetupRoute`, ya usado desde el Bloque 3)
+  // -- lo único nuevo acá es crear el `GuidedReviewVerificationContext`
+  // (PARTE 10) para que `CertificationResultsPage` pueda mostrar, al
+  // volver, el estado ACTUAL de estos tópicos puntuales.
+  //
+  // Bug real encontrado en QA real (no en un test): una primera versión
+  // de este handler exigía `selectedCourseId === reviewCompletion.courseId`
+  // antes de crear el contexto (PARTE 12, aislamiento de curso) y
+  // reutilizaba `learningStates`/`progress` (ambos atados a
+  // `selectedCourseId`). Pero `selectedCourseId` se resuelve de forma
+  // ASÍNCRONA (`api.getCourses()`) apenas se remonta la página tras
+  // terminar el repaso -- la tarjeta "Repaso completado" puede aparecer
+  // ANTES de que ese efecto termine, así que un click real y rápido en
+  // "Evaluar progreso" corría contra `selectedCourseId` todavía null (o
+  // el curso previamente seleccionado), perdiendo la creación del
+  // contexto en silencio. Fix: derivar el snapshot SIEMPRE directamente
+  // contra `reviewCompletion.courseId` (nunca contra el curso
+  // actualmente seleccionado en el dropdown) -- alcanza con
+  // `getTopicLearningSignal` (progreso + intentos de ESE curso), sin
+  // necesitar `CourseDetail`/`learningStates` de ningún curso. Aislamiento
+  // de curso sigue garantizado por construcción: nunca se lee ni se
+  // escribe nada de otro courseId.
+  function handleStartVerification(topics: GuidedReviewTopicRef[]) {
+    if (!reviewCompletion) return;
+    const targetCourseId = reviewCompletion.courseId;
+    const targetProgress = getCourseLearningProgress(targetCourseId);
+    const targetAttempts = targetProgress?.certificationAttempts ?? [];
+    const preVerificationStates = topics.map((t) => {
+      const signal = getTopicLearningSignal(t.moduleId, t.topicId, targetProgress, targetAttempts);
+      const { status, reasonCode } = deriveTopicLearningState(signal);
+      return { moduleId: t.moduleId, topicId: t.topicId, status, reasonCode };
+    });
+    const latestAttemptIdAtStart = targetAttempts[0]?.attemptId ?? null;
+    startGuidedReviewVerification(targetCourseId, topics, latestAttemptIdAtStart, preVerificationStates);
+    navigate(certificationSetupRoute(targetCourseId, "practice", topics.map((t) => t.topicId)));
+  }
+
   return (
     <div className="page">
       <div className="page-header">
@@ -734,9 +777,9 @@ export function LearningProgressPage() {
 
       {reviewCompletion && (
         <ReviewCompletionCard
-          courseId={reviewCompletion.courseId}
           topicCount={reviewCompletion.topicCount}
-          topicIds={reviewCompletion.topicIds}
+          topics={reviewCompletion.topics}
+          onStartVerification={handleStartVerification}
           onDismiss={() => setReviewCompletion(null)}
         />
       )}

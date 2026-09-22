@@ -26,6 +26,7 @@ import {
   markTopicStarted,
   recordCertificationAttempt,
 } from "../../learning/learningProgressStore";
+import { loadGuidedReviewVerificationContext } from "../../learning/guidedReviewVerification";
 import type { CertificationAttemptSummary } from "../../learning/types";
 
 const mockedGetCourses = api.getCourses as unknown as ReturnType<typeof vi.fn>;
@@ -91,6 +92,7 @@ function attempt(overrides: Partial<CertificationAttemptSummary> = {}): Certific
 
 beforeEach(() => {
   window.localStorage.clear();
+  window.sessionStorage.clear();
   mockedGetCourses.mockReset();
   mockedGetCourse.mockReset();
   mockNavigate.mockReset();
@@ -98,6 +100,7 @@ beforeEach(() => {
 
 afterEach(() => {
   window.localStorage.clear();
+  window.sessionStorage.clear();
 });
 
 describe("LearningProgressPage", () => {
@@ -584,7 +587,18 @@ describe("LearningProgressPage — v1.6.0 Bloque 3 (Guided Review Session)", () 
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
     mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
     const { container } = renderPage([
-      { pathname: "/mi-aprendizaje", state: { reviewCompleted: true, courseId: "curso-demo", topicCount: 2, topicIds: ["topico-a", "topico-b"] } },
+      {
+        pathname: "/mi-aprendizaje",
+        state: {
+          reviewCompleted: true,
+          courseId: "curso-demo",
+          topicCount: 2,
+          topics: [
+            { moduleId: "modulo-1", topicId: "topico-a" },
+            { moduleId: "modulo-1", topicId: "topico-b" },
+          ],
+        },
+      },
     ]);
     await waitFor(() => expect(screen.getByText("Repaso completado")).toBeInTheDocument());
     expect(
@@ -601,7 +615,18 @@ describe("LearningProgressPage — v1.6.0 Bloque 3 (Guided Review Session)", () 
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
     mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
     renderPage([
-      { pathname: "/mi-aprendizaje", state: { reviewCompleted: true, courseId: "curso-demo", topicCount: 2, topicIds: ["topico-a", "topico-b"] } },
+      {
+        pathname: "/mi-aprendizaje",
+        state: {
+          reviewCompleted: true,
+          courseId: "curso-demo",
+          topicCount: 2,
+          topics: [
+            { moduleId: "modulo-1", topicId: "topico-a" },
+            { moduleId: "modulo-1", topicId: "topico-b" },
+          ],
+        },
+      },
     ]);
     await waitFor(() => expect(screen.getByRole("button", { name: "Evaluar progreso" })).toBeInTheDocument());
 
@@ -609,11 +634,76 @@ describe("LearningProgressPage — v1.6.0 Bloque 3 (Guided Review Session)", () 
     expect(mockNavigate).toHaveBeenCalledWith("/certificacion/curso-demo?mode=practice&topics=topico-a%2Ctopico-b");
   });
 
+  it("'Evaluar progreso' crea un GuidedReviewVerificationContext real con el snapshot de estado actual", async () => {
+    markTopicCompleted("curso-demo", "modulo-1", "topico-a");
+    recordCertificationAttempt("curso-demo", scoreAttempt("topico-a", 30, "2026-01-01T00:00:00.000Z", "att-1"));
+    mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
+    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    renderPage([
+      {
+        pathname: "/mi-aprendizaje",
+        state: {
+          reviewCompleted: true,
+          courseId: "curso-demo",
+          topicCount: 1,
+          topics: [{ moduleId: "modulo-1", topicId: "topico-a" }],
+        },
+      },
+    ]);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Evaluar progreso" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Evaluar progreso" }));
+
+    const context = loadGuidedReviewVerificationContext("curso-demo");
+    expect(context?.topics).toEqual([{ moduleId: "modulo-1", topicId: "topico-a" }]);
+    expect(context?.preVerificationStates).toEqual([
+      { moduleId: "modulo-1", topicId: "topico-a", status: "needs_review", reasonCode: "LOW_CERTIFICATION_SCORE" },
+    ]);
+    expect(context?.latestAttemptIdAtStart).toBe("att-1");
+  });
+
+  it("bug real (QA v1.6.0 Bloque 4): 'Evaluar progreso' crea el contexto aunque getCourses() todavía no haya resuelto (carrera con selectedCourseId)", async () => {
+    markTopicCompleted("curso-demo", "modulo-1", "topico-a");
+    recordCertificationAttempt("curso-demo", scoreAttempt("topico-a", 30, "2026-01-01T00:00:00.000Z", "att-1"));
+    // getCourses() NUNCA resuelve durante este test -- selectedCourseId
+    // se queda en null indefinidamente, simulando el click real y rápido
+    // que originó el bug (la tarjeta "Repaso completado" ya se ve porque
+    // depende únicamente del router state, no de selectedCourseId).
+    mockedGetCourses.mockReturnValue(new Promise(() => {}));
+    mockedGetCourse.mockReturnValue(new Promise(() => {}));
+    renderPage([
+      {
+        pathname: "/mi-aprendizaje",
+        state: {
+          reviewCompleted: true,
+          courseId: "curso-demo",
+          topicCount: 1,
+          topics: [{ moduleId: "modulo-1", topicId: "topico-a" }],
+        },
+      },
+    ]);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Evaluar progreso" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Evaluar progreso" }));
+
+    expect(mockNavigate).toHaveBeenCalledWith("/certificacion/curso-demo?mode=practice&topics=topico-a");
+    const context = loadGuidedReviewVerificationContext("curso-demo");
+    expect(context?.latestAttemptIdAtStart).toBe("att-1");
+  });
+
   it("'Entendido' cierra la confirmación sin efectos secundarios", async () => {
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
     mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
     renderPage([
-      { pathname: "/mi-aprendizaje", state: { reviewCompleted: true, courseId: "curso-demo", topicCount: 1, topicIds: ["topico-a"] } },
+      {
+        pathname: "/mi-aprendizaje",
+        state: {
+          reviewCompleted: true,
+          courseId: "curso-demo",
+          topicCount: 1,
+          topics: [{ moduleId: "modulo-1", topicId: "topico-a" }],
+        },
+      },
     ]);
     await waitFor(() => expect(screen.getByText("Repaso completado")).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Entendido" }));

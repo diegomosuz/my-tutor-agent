@@ -359,12 +359,18 @@ export function ClassroomPage() {
   // limpieza de tópico que sí cubre goToTopic).
   function handleFinishReview() {
     if (!guidedReviewSession) return;
-    const topicIds = guidedReviewSession.topics.map((t) => t.topicId);
+    // v1.6.0 Bloque 4: se viaja `topics` completo (moduleId+topicId), no
+    // solo `topicId` -- "Evaluar progreso" necesita la identidad real de
+    // módulo para construir `VerificationTopicRef[]` sin ambigüedad ante
+    // un `topicId` que coincida en dos módulos distintos del mismo curso
+    // (mismo caso real ya resuelto en otras pantallas, ver
+    // `course_diagnostics.py::duplicate_slug`).
+    const topics = guidedReviewSession.topics;
     const topicCount = guidedReviewStep?.total ?? guidedReviewSession.topics.length;
     clearGuidedReviewSession();
     cancelAllSpeech();
     claimAiAudioPriority();
-    navigate("/mi-aprendizaje", { state: { reviewCompleted: true, topicCount, topicIds, courseId } });
+    navigate("/mi-aprendizaje", { state: { reviewCompleted: true, topicCount, topics, courseId } });
   }
 
   function handleExitReview() {

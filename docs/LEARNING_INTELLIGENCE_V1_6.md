@@ -665,3 +665,194 @@ datos nueva, backend de usuario, evaluación generada especialmente para
 review, persistencia de Checkpoint, review score, mastery artificial,
 gamification (XP/badges/streaks), telemetry, analytics, historial de
 reviews completados.
+
+## 16. Verification & Learning-State Refresh (Bloque 4, último bloque
+funcional de v1.6.0)
+
+Cierra el loop: `Guided Review → Evaluar progreso → Certification REAL →
+nuevo attempt persistido → LearningState recalculado → Mi aprendizaje
+actualizado`. Dos principios críticos, idénticos en espíritu a la
+sección 15.1: **review != improvement** y **review != mastery** (recorrer
+un repaso nunca cambia el estado por sí solo) y **verification !=
+guaranteed improvement** (una Certification real después de un repaso
+puede producir `needs_review → mastered`, pero también
+`needs_review → needs_review` o cualquier otro resultado que las reglas
+determinísticas ya aprobadas (Bloque 1, sin cambios) permitan — la UI
+muestra el resultado real, nunca uno optimista).
+
+### 16.1 Auditoría del flujo E2E de Certification (hecha antes de
+implementar)
+
+`useCertificationExam.submitExam()` (`frontend/src/certification/
+useCertificationExam.ts`) es el ÚNICO punto de persistencia:
+`recordCertificationAttempt(courseId, buildAttemptSummary(session,
+result))` se llama de forma síncrona (`await`) ANTES de devolver el
+`result` a la página que navega a Resultados — así que cuando
+`CertificationResultsPage` se monta, el nuevo attempt YA está en
+`localStorage`. `CertificationResultsPage` no conocía `progress`/
+`LearningState` antes de este bloque (solo `course` + el `result` de
+`sessionStorage`). El route `/certificacion/:courseId?mode=&topics=` YA
+soportaba scope acotado a tópicos desde v1.1.0
+(`certificationSetupRoute`, reutilizado sin cambios desde el Bloque 3) —
+confirmado leyendo `CertificationSetupPage.tsx`: valida cada id contra
+`course.modules` real, nunca confía ciegamente en el query param.
+`CertificationAttemptSummary.attemptId` (`certificationSummary.ts`) ya
+es `session.practiceId` — identidad estable y real, reutilizada tal cual
+para detectar "hay un intento nuevo" (nunca un UUID nuevo, nunca
+`Date.now()`).
+
+### 16.2 `GuidedReviewVerificationContext`
+(`frontend/src/learning/guidedReviewVerification.ts`)
+
+Documento mínimo en `sessionStorage` (mismo patrón de saneamiento que
+`guidedReviewSession.ts`): `{schemaVersion, courseId, topics:
+{moduleId,topicId}[], latestAttemptIdAtStart: string | null,
+preVerificationStates: {moduleId,topicId,status,reasonCode}[]}`. Nunca
+scores, respuestas, `question_results`, Markdown ni conversación del
+Tutor. Es un concepto DISTINTO de `GuidedReviewSession` (Bloque 3, que ya
+se limpia sola al terminar el repaso): el contexto de verificación se
+crea recién al pulsar "Evaluar progreso" en la tarjeta "Repaso
+completado" — nunca reutiliza ni depende de la sesión de repaso ya
+terminada.
+
+`latestAttemptIdAtStart`: snapshot del `attemptId` más reciente del curso
+(o `null` si el curso no tenía ningún intento) al momento de iniciar la
+verificación — único mecanismo real de "¿hay un intento NUEVO?"
+(`hasNewVerificationAttempt`, comparación de identidad, nunca un timer).
+`preVerificationStates`: snapshot de presentación únicamente (PARTE 8 de
+la especificación) — **nunca** participa en `deriveTopicLearningState`
+ni en ninguna regla de clasificación; solo permite que la UI muestre
+"Antes: ... / Ahora: ..." de forma factual cuando el status cambió.
+
+**Bug real encontrado y corregido durante la implementación (no en un
+test, en QA real de punta a punta)**: la primera versión de
+`handleStartVerification` (`LearningProgressPage.tsx`) exigía
+`selectedCourseId === reviewCompletion.courseId` antes de crear el
+contexto (aislamiento de curso) y reutilizaba `learningStates`/`progress`
+ya cargados en la página — ambos atados a `selectedCourseId`. Pero
+`selectedCourseId` se resuelve de forma ASÍNCRONA (`api.getCourses()`)
+apenas se remonta la página tras terminar un repaso, mientras que la
+tarjeta "Repaso completado" aparece de inmediato (depende solo del
+`router state`, no de `selectedCourseId`) — un click real y rápido en
+"Evaluar progreso" corría contra `selectedCourseId` todavía `null`,
+perdiendo la creación del contexto en silencio (navegaba a Certification
+igual, pero sin panel de verificación posible más adelante). Corregido
+derivando el snapshot SIEMPRE contra `reviewCompletion.courseId`
+directamente vía `getTopicLearningSignal` (que solo necesita
+`progress`+`attempts` de ESE curso, nunca `CourseDetail`) — elimina la
+carrera por construcción, sin depender de qué curso esté seleccionado en
+el dropdown. Reproducido con un test de regresión que nunca resuelve
+`getCourses()`/`getCourse()` (`LearningProgressPage.test.tsx`, "bug real
+(QA v1.6.0 Bloque 4)") antes de aplicar el fix.
+
+### 16.3 `deriveVerificationResults` — derivación PURA
+(`guidedReviewVerification.ts`)
+
+`deriveVerificationResults(context, currentLearningStates:
+LearningState[], evaluatedTopics)`: sin storage, sin navegación, sin
+React. Devuelve solo los tópicos que están en `context.topics` **Y**
+fueron efectivamente evaluados por el intento nuevo (`evaluatedTopics`,
+derivado de `latestAttempt.performanceByTopic` — nunca inventa una
+verificación de un tópico que el alumno no rindió, p. ej. si cambió el
+alcance manualmente en Setup) **Y** siguen existiendo en el curriculum
+real actual (`currentLearningStates`, mismo criterio anti-stale que
+`resolveGuidedReviewStep` de Bloque 3). `[]` si la intersección es vacía
+— el llamador lo trata como "sin panel", nunca un panel vacío raro.
+`hasNewVerificationAttempt(context, latestAttemptIdNow)`: `true`
+únicamente cuando `latestAttemptIdNow !== null &&
+latestAttemptIdNow !== context.latestAttemptIdAtStart` — cubre
+"abandonó Certification antes de submit" (nunca un falso resultado) sin
+usar timestamps.
+
+### 16.4 `CertificationResultsPage` — panel "Estado después de la
+verificación"
+
+Gate exacto para mostrarlo: contexto real cargado para `courseId` **Y**
+`hasNewVerificationAttempt` **Y** `deriveVerificationResults(...).length
+> 0`. `learningStates` se recalcula EN ESTA PÁGINA con la misma función
+pura (`deriveCourseLearningStates`, Bloque 1, sin cambios) que usa "Mi
+aprendizaje" — invariante de consistencia por construcción: ambas
+pantallas llaman exactamente a la misma derivación sobre el mismo
+`progress` real, nunca dos fuentes de verdad. Copy reutilizado 100% de
+`learningStateCopy.ts` (Bloque 2, sin segundo mapping). La línea "Antes:"
+solo se muestra cuando `before.status !== current.status` (si el status
+no cambió, mostrar "Antes: X / Ahora: X" sería ruido, no información
+nueva). Nunca afirma causalidad ("el repaso hizo que..."): el copy dice
+"Con la nueva evidencia de esta certificación, este es el estado
+actual...". El score global de Certification (`result.practice_score_percent`)
+sigue mostrándose igual que siempre — el panel es una sección ADICIONAL,
+nunca lo sustituye (son conceptos distintos: score de esta práctica
+puntual vs. estado pedagógico por tópico).
+
+`handleNewPractice` y el nuevo CTA "Volver a Mi aprendizaje" (dentro del
+panel) llaman a `clearGuidedReviewVerificationContext()`: el contexto se
+limpia al abandonar explícitamente el resultado o al volver a Mi
+aprendizaje, nunca automáticamente al hacer submit (Results todavía lo
+necesita). Sin contexto (Certification iniciada normalmente, sin pasar
+por "Evaluar progreso"): la UI de Certification es exactamente la
+histórica, sin cambios — confirmado con un test dedicado y con QA real.
+
+### 16.5 Ventana de 3 observaciones — comportamiento real, no asumido
+
+`TopicLearningSignal` sigue promediando hasta las 3 observaciones más
+recientes (Bloque 1, sin cambios). Confirmado con QA real usando el curso
+"spec-driven-design-expert": un tópico `needs_review` con un intento
+previo del 25% que recibió una certificación NUEVA con 100% de aciertos
+NO saltó a `mastered` — el promedio reciente (25%+100%)/2 = 62.5% cayó en
+el rango `developing` (60-79%) de `classifyScore`, produciendo
+`progressing` con `MEDIUM_CERTIFICATION_SCORE`. Este es el comportamiento
+REAL de una función ya aprobada en Bloque 1 (no se tocó ni un umbral para
+este bloque) — documentado acá porque es la prueba más clara de que "un
+único resultado alto no garantiza mastery" no es una afirmación teórica.
+
+### 16.6 QA real (Playwright, LLM real configurado, curso
+"spec-driven-design-expert")
+
+Flujo completo ejecutado de punta a punta: 2 tópicos `needs_review`
+reales (evidencia pre-sembrada) → Guided Review de los 2 → "Evaluar
+progreso" (scope preseleccionado confirmado: "Tópicos específicos" con
+ambos tópicos marcados) → `prepare()` real contra OpenAI (5 preguntas
+reales, 2 tópicos) → respuestas correctas determinadas vía brute-force
+contra el endpoint YA determinístico `evaluate-question` (nunca contra
+el LLM) → una respondida deliberadamente MAL (tópico 1, para probar "no
+mejora") y otra siempre CORRECTA (tópico 2) → submit real → panel
+"Estado después de la verificación" con resultado MIXTO real: tópico 1
+"Ahora: Necesita repaso" (`REPEATED_LOW_CERTIFICATION_SCORE`, sin línea
+"Antes" porque no cambió), tópico 2 "Antes: Necesita repaso / Ahora: En
+progreso" (`MEDIUM_CERTIFICATION_SCORE`, ver 16.5) → refresh real (panel
+sobrevive) → "Volver a Mi aprendizaje" → contexto limpiado
+(`sessionStorage` confirmado sin la key) → Mi aprendizaje muestra
+`needs_review: 1` (antes 2) y `mastered: 0` — coincide EXACTAMENTE con
+el panel. Cero errores de consola en todo el recorrido.
+
+### 16.7 Tests
+
+`guidedReviewVerification.test.ts` (18 tests): storage (save/load/clear/
+wrong-course/corrupt/wrong-schema/topics-vacío-inválido),
+`hasNewVerificationAttempt` (con/sin intento nuevo, `null` inicial),
+`deriveVerificationResults` (intersección real, topic isolation, stale
+skip, all-stale, mixed results, same-status, before=null defensivo).
+`CertificationResultsPage.test.tsx` (+7): sin contexto nunca muestra el
+panel (regresión normal), con contexto pero sin intento nuevo nunca
+muestra el panel (nunca falso resultado), con intento nuevo real
+`needs_review → mastered` (construido con datos reales, nunca mockeando
+`deriveTopicLearningState`), `needs_review → needs_review` sin línea
+"Antes" cuando no cambia, "Volver a Mi aprendizaje" limpia el contexto,
+"Nueva práctica" también lo limpia, refresh recupera el panel.
+`LearningProgressPage.test.tsx` (+2): contexto real creado con snapshot
+correcto, y el test de regresión del bug real (16.2) que nunca resuelve
+`getCourses()`/`getCourse()`.
+
+### 16.8 Explícitamente fuera de este bloque
+
+Nuevo endpoint de Certification, nuevas preguntas específicas de review,
+evaluación con LLM, recomendaciones con LLM, Tutor adaptativo, cambios a
+`tutor-v4`/`lesson-v3.3.1`, embeddings, vector DB, agentes, LangGraph,
+knowledge graph, persistencia de Checkpoint, historial de verificaciones
+permanente, analytics, telemetry, badges/XP/gamification, nueva DB,
+backend de usuario. `learningState.ts`/`learningStateCopy.ts`/
+`guidedReviewPlan.ts`/`guidedReviewSession.ts` sin ningún cambio — Bloque
+4 es exclusivamente: un módulo nuevo
+(`guidedReviewVerification.ts`) + wiring en `LearningProgressPage.tsx`/
+`ClassroomPage.tsx`/`CertificationResultsPage.tsx` + CSS. Cero cambios de
+backend.
