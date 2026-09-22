@@ -7,22 +7,23 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **v1.4.0** publicado (`master`/`origin/master`, tag `v1.4.0`). **v1.5.0**
-> está preparado como release candidate local (`release/v1.5.0-rc`, sin
+> **v1.5.0** publicado (`master`/`origin/master`, tag `v1.5.0`). **v1.6.0**
+> está preparado como release candidate local (`release/v1.6.0-rc`, sin
 > push/tag/merge todavía — release gate pendiente, decisión separada).
-> v1.5.0 agrega **Guided Markdown Read Aloud**: el alumno puede escuchar
-> el Markdown del tópico (no la clase generada por IA) leído en voz alta,
-> con resaltado progresivo de la frase activa y control de velocidad,
-> reutilizando la misma arquitectura de voz ya existente (TTS neural
-> OpenAI / Web Speech API del navegador) — sin modelo nuevo, sin forced
-> alignment, sin speech-to-text. La voz de la IA (narración de clase,
-> tutor, checkpoint, certificación) siempre tiene prioridad absoluta:
-> arranca de inmediato en cuanto empieza a sintetizar/hablar, y el Reader
-> permanece deshabilitado durante toda esa sesión, nunca solo el instante
-> inicial. Ver
-> [`docs/RELEASE_NOTES_v1.5.0.md`](./docs/RELEASE_NOTES_v1.5.0.md) y
-> [`docs/GUIDED_READ_ALOUD_V1_5.md`](./docs/GUIDED_READ_ALOUD_V1_5.md)
+> v1.6.0 agrega **Learning Intelligence & Guided Review**: un `LearningState`
+> determinístico por tópico (`not_started`/`progressing`/`needs_review`/
+> `mastered`, derivado de Learning Progress + historial de Certification,
+> sin LLM), visible y accionable en "Mi aprendizaje"; una ruta de repaso
+> guiado (`Comenzar repaso → Topic A → Topic B → ... → Fin del repaso`)
+> reutilizando el aula existente; y el cierre del loop con una
+> Certification real acotada a los tópicos repasados que recalcula el
+> estado desde cero — nunca `Guided Review != Mastery`, la única evidencia
+> que puede cambiar la interpretación de dominio es una nueva Certification
+> real. Ver
+> [`docs/RELEASE_NOTES_v1.6.0.md`](./docs/RELEASE_NOTES_v1.6.0.md) y
+> [`docs/LEARNING_INTELLIGENCE_V1_6.md`](./docs/LEARNING_INTELLIGENCE_V1_6.md)
 > (y, para el historial previo,
+> [`docs/RELEASE_NOTES_v1.5.0.md`](./docs/RELEASE_NOTES_v1.5.0.md) /
 > [`docs/RELEASE_NOTES_v1.4.0.md`](./docs/RELEASE_NOTES_v1.4.0.md) /
 > [`docs/RELEASE_NOTES_v1.3.0.md`](./docs/RELEASE_NOTES_v1.3.0.md) /
 > [`docs/RELEASE_NOTES_v1.2.0.md`](./docs/RELEASE_NOTES_v1.2.0.md) /

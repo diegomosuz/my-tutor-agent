@@ -856,3 +856,76 @@ backend de usuario. `learningState.ts`/`learningStateCopy.ts`/
 (`guidedReviewVerification.ts`) + wiring en `LearningProgressPage.tsx`/
 `ClassroomPage.tsx`/`CertificationResultsPage.tsx` + CSS. Cero cambios de
 backend.
+
+## 17. Hardening / release candidate (release/v1.6.0-rc)
+
+Auditoría del diff acumulado completo `v1.5.0..HEAD` (los 4 bloques de
+desarrollo, no solo el último commit). Sin features nuevas.
+
+**Freeze del core confirmado por diff exacto, no por inspección
+visual**: `git diff <commit-de-aprobación>..HEAD` da **0 líneas** para
+`learningState.ts` (desde `59bd48f`, Bloque 1),
+`learningStateCopy.ts` (desde `06b5aed`, Bloque 2), y
+`guidedReviewPlan.ts`/`guidedReviewSession.ts` (desde `caba6a9`, Bloque
+3) — los cuatro archivos permanecen byte-por-byte idénticos a su versión
+aprobada a lo largo de toda la cadena. Cero drift.
+
+**Bug real corregido durante el hardening**: ninguno nuevo. El único bug
+real de todo el release (la carrera `selectedCourseId` vs. click en
+"Evaluar progreso", sección 16.2) se encontró y corrigió durante el
+desarrollo del Bloque 4, no durante esta pasada de hardening —
+reconfirmado acá con: (a) el test de regresión dedicado sigue pasando,
+y (b) un smoke real nuevo contra el build Docker `--no-cache` de este
+hardening (click inmediato en "Evaluar progreso" apenas carga la
+página, sin esperar sincronización del selector de curso) confirma el
+fix en runtime real, no solo en test.
+
+**Auditoría de limpieza** (`git diff --check`, búsqueda de
+`console.log`/`debugger`/`TODO`/`FIXME`/`eval`/`new Function`/
+`dangerouslySetInnerHTML`/telemetría/analytics/datos de curso
+hardcodeados fuera de archivos de test): sin hallazgos. Backend: 0
+archivos funcionales tocados en todo `v1.5.0..HEAD` — los únicos
+cambios de backend de todo el release son las 3 ubicaciones canónicas
+de `APP_VERSION` (`backend/app/config.py`, `docker-compose.yml`,
+`.env.example`), hechas en esta misma pasada de hardening.
+
+**`doctor.ps1`**: un fallo transitorio de `GET /api/system/status`
+apareció en la primera corrida inmediatamente después de un `docker
+compose up`/restart — investigado (no ignorado): medido con `curl`
+directo, la primera request a ese endpoint tras un arranque frío tarda
+~2.3-3.5s (escanea diagnósticos de los 5 cursos reales del volumen
+montado), cerca del timeout de 5s que usa el cliente PowerShell
+(`Invoke-RestMethod -TimeoutSec 5`) sumado a su propio overhead de
+arranque de módulo — con el backend ya tibio (segunda corrida, containers
+con más tiempo arriba), la misma llamada resuelve en ~0.5s y `doctor.ps1`
+reporta "Todo en orden" de forma consistente. No relacionado con ningún
+cambio de este release (0 archivos de backend funcionales tocados);
+comportamiento pre-existente del endpoint bajo cold-start, no un defecto
+introducido acá — no se modificó `course_diagnostics.py` ni
+`doctor.ps1` (ninguno estaba en el objetivo del hardening, y el
+comportamiento real de la app es correcto: el endpoint SIEMPRE responde
+200 con datos correctos, solo tarda más en la primerísima llamada).
+
+**Resto de la auditoría** (statuses/thresholds/window-of-3/max-5-policy/
+plan snapshot/session storage safety/off-plan navigation/browser
+Back/refresh/no-auto-completion/finish-cancel semantics/Reader
+regression/audio ownership/Certification scoped/VerificationContext/
+attempt identity/no-false-result/submit ordering/state
+recomputation/verification filtering/copy reuse/before-after/no-causal
+claims/mixed results/score-vs-state distinction/consistency
+invariant/context cleanup/refresh result/normal Certification
+regression/stale-corrupt-wrong-course context/Learning Insights
+regression/RecommendedForYou coexistence/accessibility/mobile
+overflow/privacy/security/Tutor freeze/Lesson freeze/Reader freeze) sin
+hallazgos nuevos — ya cerrada correctamente por los 4 bloques de
+desarrollo, reconfirmada con QA real repetida (ver secciones 15/16
+arriba) y con un smoke adicional real contra el build `--no-cache` de
+este hardening (catálogo → Mi aprendizaje → Comenzar repaso → Finalizar
+→ Evaluar progreso con click inmediato, 0 errores de consola).
+
+`APP_VERSION` `1.5.0` → `1.6.0`. `LESSON_PROMPT_VERSION`/
+`TUTOR_PROMPT_VERSION` sin cambios (`lesson-v3.3.1`/`tutor-v4`). 585
+tests de backend (sin cambios) / 632 de frontend (+27 vs. v1.5.0), sin
+regresiones; build de producción limpio; build Docker `--no-cache`
+limpio; `doctor.ps1` → "Todo en orden". Ver
+`docs/RELEASE_NOTES_v1.6.0.md`.
