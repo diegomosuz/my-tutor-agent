@@ -21,20 +21,39 @@ import type {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
-/** URL absoluta y segura de un asset (imagen) relativo de un tópico (Fase
- * 7, sección 13): nunca construye una ruta de filesystem, solo delega en
- * el endpoint contextual del backend. `assetPath` se codifica segmento a
- * segmento para preservar "/" internos del path relativo. */
+/** Bug real de v1.6.1, dos intentos hasta llegar acá (ver
+ * `docs/RICH_MARKDOWN_RENDERING_V1_6_1.md` para el detalle completo):
+ *
+ * 1. Codificar segmento a segmento (preservando "/" literales) no
+ *    alcanza: un browser real (WHATWG URL Standard, no solo RFC 3986)
+ *    aplica "remove_dot_segments" sobre el PATH de la URL antes de
+ *    enviar el request, y ese algoritmo reconoce un segmento como "."/
+ *    ".." incluso si sus puntos vienen percent-encoded (`%2E`/`%2e`) --
+ *    confirmado en runtime real: `new URL(".../assets/%2E%2E/foo.png")`
+ *    sigue colapsando a `.../foo.png`, perdiendo el segmento `assets`
+ *    que precede al `..`.
+ * 2. La única codificación que sobrevive intacta es tratar TODO
+ *    `assetPath` (incluidos los "/" internos) como UN ÚNICO segmento de
+ *    URL: `encodeURIComponent` sobre el string completo. Como el
+ *    resultado nunca contiene un "/" literal, "remove_dot_segments"
+ *    nunca lo reconoce como segmento "."/".." (el chequeo es sobre el
+ *    segmento completo, no un prefijo) sin importar cuántos `../` tenga
+ *    `assetPath` al principio. El backend ya sabe decodificar esto:
+ *    Starlette hace `unquote()` del parámetro `{asset_path:path}` antes
+ *    de que `resolve_topic_asset` lo use, reconstruyendo los "/"
+ *    internos correctamente (mismo mecanismo ya cubierto por
+ *    `test_encoded_traversal_returns_404` en el backend, que usa
+ *    exactamente este patrón). La seguridad real nunca dependió de que
+ *    el string de la URL contuviera o no "..": `resolve_topic_asset`
+ *    valida con `Path.resolve()` + `is_relative_to(course_root)` sobre
+ *    la ruta REAL en disco. */
 export function getTopicAssetUrl(
   courseId: string,
   moduleId: string,
   topicId: string,
   assetPath: string
 ): string {
-  const encodedPath = assetPath
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
+  const encodedPath = encodeURIComponent(assetPath);
   return `${API_BASE_URL}/api/courses/${courseId}/modules/${moduleId}/topics/${topicId}/assets/${encodedPath}`;
 }
 

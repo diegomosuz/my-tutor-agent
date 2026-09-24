@@ -44,7 +44,21 @@ _IGNORED_NAMES = {"__macosx", "thumbs.db", "desktop.ini", "node_modules"}
 
 
 def _is_ignored(name: str) -> bool:
-    return name.startswith(".") or name.lower() in _IGNORED_NAMES
+    # v1.6.1: un nombre que empieza con "_" (además de "." ya ignorado
+    # desde Fase 7) es la misma convención de autor que "esto no es
+    # contenido de curso" -- confirmado con un curso real
+    # (`LangGraph_Sistemas_Agenticos_Reales`) que usa `_recursos/` (assets
+    # compartidos entre módulos) y `_laboratorio/` (scripts de apoyo, con
+    # su propio README.md) como directorios de nivel de curso, sibling de
+    # los módulos reales. Sin esta regla, `_list_subdirs` los trataba como
+    # módulos fantasma (`_recursos` con 0 tópicos; `_laboratorio` con un
+    # único tópico "Readme" derivado de su README.md) -- un bug real de
+    # course discovery, no solo cosmético: inflaba `module_count` y los
+    # exponía como rutas de módulo navegables sin contenido pedagógico
+    # real. Extiende la convención ya existente en vez de bloquear nombres
+    # específicos por keyword (PARTE 9 de la especificación: exclusión
+    # basada en convención de autor, nunca en un blocklist de palabras).
+    return name.startswith(".") or name.startswith("_") or name.lower() in _IGNORED_NAMES
 
 
 def _list_subdirs(path: Path) -> list[Path]:
@@ -315,10 +329,11 @@ def iter_all_canonical_topics(
 
 class AssetNotFoundError(Exception):
     """El asset no existe, es de un tipo no soportado, o el path pedido
-    intenta salir del directorio del módulo (path traversal). Se usa un
-    único tipo de error para las tres causas: el cliente nunca debe poder
-    distinguir "existe pero está bloqueado" de "no existe" (ver sección 13
-    de la especificación de Fase 7)."""
+    intenta salir del CURSO (path traversal; hasta v1.6.0 el límite era
+    el módulo, ver `resolve_topic_asset`). Se usa un único tipo de error
+    para las tres causas: el cliente nunca debe poder distinguir "existe
+    pero está bloqueado" de "no existe" (ver sección 13 de la
+    especificación de Fase 7)."""
 
 
 # Allow-list explícita (no block-list): solo raster seguro. .svg queda
@@ -342,18 +357,33 @@ def resolve_topic_asset(
     Reglas duras: el tópico se resuelve SIEMPRE con el mismo repositorio
     seguro que el resto de la app (`_resolve_topic`, nunca acepta una ruta
     de filesystem del cliente); el asset se resuelve relativo al directorio
-    del MÓDULO (donde vive el .md que lo referencia) y `Path.resolve()` +
-    `is_relative_to(...)` garantizan que el resultado nunca pueda escapar
-    de ese directorio, sin importar `../`, rutas absolutas o codificación.
-    Solo se sirven extensiones de la allow-list (`ASSET_MIME_TYPES`).
-    Devuelve (path_real_en_disco, mime_type); lanza `AssetNotFoundError` en
-    cualquier otro caso (no existe / tipo no soportado / traversal)."""
-    _course_dir, module_dir, _topic_file = _resolve_topic(
+    del MÓDULO (donde vive el .md que lo referencia), pero el resultado
+    puede terminar en CUALQUIER lugar dentro del CURSO (v1.6.1 -- antes
+    solo se permitía dentro del propio módulo). `Path.resolve()` +
+    `is_relative_to(course_root)` garantizan que el resultado nunca pueda
+    escapar de ese curso, sin importar cuántos `../` tenga `asset_path`,
+    rutas absolutas o codificación -- la contención se verifica sobre la
+    ruta canónica REAL en disco, nunca comparando el string de la ruta
+    pedida (por eso ya no hace falta, y de hecho sería más débil, un
+    rechazo temprano tipo `".." in requested.parts`).
+
+    Motivo real del cambio (v1.6.1, encontrado con un curso real): algunos
+    cursos comparten assets entre varios módulos en un directorio de nivel
+    de curso (ej. `_recursos/`, sibling de los módulos) y los referencian
+    desde el Markdown de un tópico con una ruta relativa que sube un nivel
+    (`../_recursos/diagrama.png`) -- eso es exactamente lo que
+    `is_relative_to(module_root)` (el criterio anterior) rechazaba
+    incorrectamente, aunque el archivo nunca saliera del curso. Solo se
+    sirven extensiones de la allow-list (`ASSET_MIME_TYPES`). Devuelve
+    (path_real_en_disco, mime_type); lanza `AssetNotFoundError` en
+    cualquier otro caso (no existe / tipo no soportado / traversal fuera
+    del curso)."""
+    course_dir, module_dir, _topic_file = _resolve_topic(
         content_path, course_id, module_id, topic_id
     )
 
     requested = Path(asset_path)
-    if requested.is_absolute() or not asset_path or ".." in requested.parts:
+    if requested.is_absolute() or not asset_path:
         raise AssetNotFoundError(asset_path)
 
     suffix = requested.suffix.lower()
@@ -361,9 +391,9 @@ def resolve_topic_asset(
     if mime_type is None:
         raise AssetNotFoundError(asset_path)
 
-    module_root = module_dir.resolve()
+    course_root = course_dir.resolve()
     candidate = (module_dir / requested).resolve()
-    if not candidate.is_relative_to(module_root):
+    if not candidate.is_relative_to(course_root):
         raise AssetNotFoundError(asset_path)
 
     if not candidate.is_file():

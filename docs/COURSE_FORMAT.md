@@ -79,6 +79,12 @@ una ruta relativa:
   subdirectorio del propio módulo), y se resuelve de forma segura en el
   backend a través de un endpoint contextual (nunca se acepta una ruta de
   filesystem arbitraria desde el navegador).
+- **Desde v1.6.1**, una ruta relativa puede subir uno o más niveles
+  (`../otro-directorio/imagen.png`) para referenciar un asset compartido
+  a nivel de **curso** (por ejemplo, una carpeta `_recursos/` sibling de
+  los módulos) — el único límite real es que el archivo resuelto siga
+  estando DENTRO del curso; nunca puede escapar a otro curso ni al resto
+  del filesystem, sin importar cuántos `../` tenga la ruta.
 - Formatos soportados: **`.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`**.
 - **No soportado todavía**: `.svg` (puede contener contenido activo) y
   cualquier tipo no-raster. Tampoco se sirven `.html`, `.js`, `.exe`,

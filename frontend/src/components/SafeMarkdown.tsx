@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+import { isValidElement } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { getTopicAssetUrl } from "../api/client";
@@ -19,6 +21,22 @@ function isSafeLinkHref(href: string): boolean {
 function isExternalImageSrc(src: string): boolean {
   const lowered = src.trim().toLowerCase();
   return lowered.startsWith("http://") || lowered.startsWith("https://") || lowered.startsWith("data:");
+}
+
+/** v1.6.1 (Rich Markdown Rendering): extrae el lenguaje de un fenced code
+ * block (```python -> "python") a partir de la clase `language-xxx` que
+ * remark ya agrega al `<code>` hijo de `<pre>` -- nunca un syntax
+ * highlighter nuevo (ver docs/RICH_MARKDOWN_RENDERING_V1_6_1.md: se
+ * evaluó agregar una dependencia y se decidió que un code block
+ * profesional con CSS + esta etiqueta de lenguaje ya cubre el
+ * requerimiento sin el riesgo/peso de una librería nueva). `children` de
+ * `pre` es siempre el elemento `<code>` que react-markdown ya renderizó;
+ * `isValidElement` evita asumir su forma sin chequear. */
+function extractCodeLanguage(children: ReactNode): string | null {
+  if (!isValidElement(children)) return null;
+  const codeProps = children.props as { className?: string };
+  const match = /language-(\S+)/.exec(codeProps.className ?? "");
+  return match ? match[1] : null;
 }
 
 /** Renderiza el Markdown fuente de un tópico como texto React (nunca HTML
@@ -72,6 +90,15 @@ export function SafeMarkdown({ markdown, courseId, moduleId, topicId }: SafeMark
             <a href={href} target="_blank" rel="noopener noreferrer">
               {children}
             </a>
+          );
+        },
+        pre({ children }) {
+          const language = extractCodeLanguage(children);
+          return (
+            <div className="safe-markdown__code-block">
+              {language && <span className="safe-markdown__code-lang">{language}</span>}
+              <pre>{children}</pre>
+            </div>
           );
         },
       }}

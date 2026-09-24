@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,7 +18,8 @@ _JPG_BYTES = b"\xff\xd8\xff\xe0" + b"\x00" * 16
 
 def _make_content_dir(tmp_path: Path) -> Path:
     content_dir = tmp_path / "content"
-    module_dir = content_dir / "curso-demo" / "01-modulo"
+    course_dir = content_dir / "curso-demo"
+    module_dir = course_dir / "01-modulo"
     images_dir = module_dir / "images"
     images_dir.mkdir(parents=True)
     (module_dir / "01-topico.md").write_text(
@@ -28,7 +30,30 @@ def _make_content_dir(tmp_path: Path) -> Path:
     (images_dir / "vector.svg").write_text("<svg><script>alert(1)</script></svg>", encoding="utf-8")
     (images_dir / "page.html").write_text("<html></html>", encoding="utf-8")
     (images_dir / "script.js").write_text("alert(1)", encoding="utf-8")
-    # Un archivo real FUERA del module_dir, para probar traversal.
+    # v1.6.1: asset compartido a NIVEL DE CURSO (sibling de los módulos,
+    # mismo patrón real encontrado en un curso real -- `_recursos/`),
+    # referenciado desde un tópico con una ruta que sube un nivel. Debe
+    # poder servirse porque sigue dentro del curso (aunque salga del
+    # módulo), a diferencia de antes de v1.6.1.
+    shared_dir = course_dir / "_recursos"
+    shared_dir.mkdir(parents=True)
+    (shared_dir / "diagrama-compartido.png").write_bytes(_PNG_BYTES)
+    # Un segundo módulo real, para probar acceso cruzado módulo->módulo
+    # dentro del MISMO curso (debe seguir bloqueado: un asset nunca se
+    # resuelve relativo a otro módulo, solo relativo al propio módulo o
+    # a un directorio de nivel de curso).
+    other_module_images = course_dir / "02-otro-modulo" / "images"
+    other_module_images.mkdir(parents=True)
+    (course_dir / "02-otro-modulo" / "02-topico.md").write_text("# Otro tema\n", encoding="utf-8")
+    (other_module_images / "solo-del-otro-modulo.png").write_bytes(_PNG_BYTES)
+    # Un curso HERMANO real (para probar que un asset nunca cruza de un
+    # curso a otro, incluso si el archivo existe de verdad).
+    sibling_course_dir = content_dir / "otro-curso"
+    sibling_course_dir.mkdir(parents=True)
+    (sibling_course_dir / "secreto-de-otro-curso.png").write_bytes(_PNG_BYTES)
+    # Un archivo real FUERA de cualquier curso (arriba del content root),
+    # para probar traversal que escapa por completo del filesystem de
+    # cursos.
     (content_dir / "secret.png").write_bytes(_PNG_BYTES)
     return content_dir
 
@@ -115,3 +140,75 @@ def test_resolve_topic_asset_raises_for_nonexistent_topic(tmp_path):
         course_service.resolve_topic_asset(
             content_dir, "curso-demo", "modulo", "no-existe", "images/architecture.png"
         )
+
+
+# --- v1.6.1: asset compartido a nivel de curso (bug real corregido) ------
+
+
+def _encode_asset_path(path: str) -> str:
+    """Misma codificación que `getTopicAssetUrl` en el frontend (v1.6.1):
+    TODO `path` (incluidos los "/" internos) como un único segmento
+    percent-encoded. Un intento previo de codificar solo los puntos
+    (`%2E`) NO alcanzaba: un browser real (WHATWG URL Standard) aplica
+    remove_dot_segments sobre el PATH de la URL reconociendo un segmento
+    "."/".." incluso con los puntos percent-encoded -- confirmado en
+    runtime real con Chromium. Encodear el "/" también (`%2F`) evita que
+    exista un segmento literal igual a "." o ".." en absoluto. El backend
+    decodifica esto vía `unquote()` sobre el parámetro `{asset_path:path}`
+    (mismo mecanismo que ya cubre `test_encoded_traversal_returns_404`);
+    la seguridad real sigue dependiendo exclusivamente de
+    `Path.resolve()` + `is_relative_to(...)` en `resolve_topic_asset`,
+    nunca de qué caracteres tenga el string de la URL."""
+    return quote(path, safe="")
+
+
+def test_course_level_shared_asset_via_parent_relative_path_is_served(client):
+    # Bug real encontrado en v1.6.1: antes, `../_recursos/foo.png` se
+    # rechazaba (la contención era solo contra el directorio del MÓDULO).
+    # Ahora debe servirse porque sigue dentro del CURSO.
+    response = client.get(_ASSET_URL.format(_encode_asset_path("../_recursos/diagrama-compartido.png")))
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content == _PNG_BYTES
+
+
+def test_asset_from_another_module_of_the_same_course_is_allowed(client):
+    # El límite de seguridad real es el CURSO (PARTE 37/67 de la
+    # especificación de v1.6.1), no el módulo: un asset de OTRO módulo del
+    # mismo curso debe poder resolverse igual, el mismo criterio que ya
+    # usa el resto de la app para tratar "curso" como la unidad de
+    # contención (grounding packets, course-wide retrieval del tutor,
+    # etc. -- todos scoped por curso, nunca por módulo).
+    response = client.get(
+        _ASSET_URL.format(_encode_asset_path("../02-otro-modulo/images/solo-del-otro-modulo.png"))
+    )
+    assert response.status_code == 200
+    assert response.content == _PNG_BYTES
+
+
+def test_asset_never_crosses_into_another_course(client):
+    # El archivo EXISTE de verdad (en otro curso real) -- debe seguir
+    # bloqueado igual: la contención es por curso, nunca por content root
+    # completo.
+    response = client.get(_ASSET_URL.format(_encode_asset_path("../../otro-curso/secreto-de-otro-curso.png")))
+    assert response.status_code == 404
+
+
+def test_traversal_above_content_root_still_blocked_even_if_file_exists(client):
+    # secret.png EXISTE de verdad, un nivel arriba del content root visto
+    # desde el módulo -- confirma que el límite real es el curso, no solo
+    # "el archivo existe en algún lado del disco".
+    response = client.get(_ASSET_URL.format(_encode_asset_path("../../../secret.png")))
+    assert response.status_code == 404
+
+
+# --- v1.6.1: course discovery no confunde directorios "_prefijo" con módulos ---
+
+
+def test_underscore_prefixed_directory_never_becomes_a_phantom_module(tmp_path):
+    content_dir = _make_content_dir(tmp_path)
+    course_detail = course_service.get_course_detail(content_dir, "curso-demo")
+    module_ids = [m.id for m in course_detail.modules]
+    assert "recursos" not in module_ids
+    # Los 2 módulos reales (01-modulo, 02-otro-modulo) SÍ deben seguir apareciendo.
+    assert len(module_ids) == 2

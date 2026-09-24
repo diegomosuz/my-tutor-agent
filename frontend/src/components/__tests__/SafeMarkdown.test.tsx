@@ -17,9 +17,13 @@ describe("SafeMarkdown", () => {
     );
     const img = container.querySelector("img");
     expect(img).not.toBeNull();
-    expect(img?.getAttribute("src")).toContain(
-      "/api/courses/curso-demo/modules/modulo-demo/topics/topico-demo/assets/images/architecture.png"
-    );
+    // v1.6.1: el path completo se codifica como un único segmento
+    // percent-encoded (ver `client.test.ts`), así que el "/" interno de
+    // "images/architecture.png" llega como "%2F" en la URL -- el browser
+    // real lo decodifica de vuelta al pedir el recurso.
+    const src = img?.getAttribute("src") ?? "";
+    expect(src).toContain("/api/courses/curso-demo/modules/modulo-demo/topics/topico-demo/assets/");
+    expect(decodeURIComponent(src.split("/assets/")[1])).toBe("images/architecture.png");
   });
 
   it("NUNCA carga automáticamente una imagen externa http(s)", () => {
@@ -78,5 +82,59 @@ describe("SafeMarkdown", () => {
       <SafeMarkdown markdown={"Texto <script>alert(1)</script> normal"} {...IDS} />
     );
     expect(container.querySelector("script")).toBeNull();
+  });
+
+  // v1.6.1: Rich Markdown Rendering -- fenced code blocks con etiqueta de
+  // lenguaje (CSS, sin librería de syntax highlighting nueva, ver
+  // docs/RICH_MARKDOWN_RENDERING_V1_6_1.md).
+  it("un fenced code block con lenguaje muestra la etiqueta y preserva estructura pre>code", () => {
+    const { container } = render(
+      <SafeMarkdown markdown={"```python\ndef foo():\n    return True\n```"} {...IDS} />
+    );
+    expect(screen.getByText("python")).toHaveClass("safe-markdown__code-lang");
+    const pre = container.querySelector("pre");
+    expect(pre).not.toBeNull();
+    const code = pre?.querySelector("code");
+    expect(code).not.toBeNull();
+    expect(code?.className).toContain("language-python");
+    // whitespace/indentación preservados (nunca colapsados a una línea).
+    expect(code?.textContent).toBe("def foo():\n    return True\n");
+  });
+
+  it("un fenced code block SIN lenguaje declarado no muestra etiqueta pero sigue siendo pre>code", () => {
+    const { container } = render(<SafeMarkdown markdown={"```\nplain text\n```"} {...IDS} />);
+    expect(container.querySelector(".safe-markdown__code-lang")).toBeNull();
+    expect(container.querySelector("pre > code")).not.toBeNull();
+  });
+
+  it("inline code nunca queda envuelto en un <pre> (se distingue de un fenced block)", () => {
+    const { container } = render(<SafeMarkdown markdown={"Usá `foo()` acá."} {...IDS} />);
+    expect(container.querySelector("pre")).toBeNull();
+    expect(container.querySelector("code")?.textContent).toBe("foo()");
+  });
+
+  it("nunca inyecta HTML dentro de un code block (el código se muestra como texto plano)", () => {
+    const { container } = render(
+      <SafeMarkdown markdown={"```html\n<script>alert(1)</script>\n```"} {...IDS} />
+    );
+    expect(container.querySelector("pre script")).toBeNull();
+    expect(container.querySelector("pre code")?.textContent).toContain("<script>alert(1)</script>");
+  });
+
+  it("una tabla GFM se renderiza con estructura semántica real (table/thead/tbody)", () => {
+    const { container } = render(
+      <SafeMarkdown
+        markdown={"| Modelo | Uso |\n| --- | --- |\n| Haiku | Rápido |\n"}
+        {...IDS}
+      />
+    );
+    expect(container.querySelector("table")).not.toBeNull();
+    expect(container.querySelector("thead th")?.textContent).toBe("Modelo");
+    expect(container.querySelector("tbody td")?.textContent).toBe("Haiku");
+  });
+
+  it("un blockquote se renderiza como <blockquote>", () => {
+    const { container } = render(<SafeMarkdown markdown={"> Una cita del material."} {...IDS} />);
+    expect(container.querySelector("blockquote")).not.toBeNull();
   });
 });
