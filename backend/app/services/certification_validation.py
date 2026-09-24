@@ -35,6 +35,8 @@ _EXECUTABLE_MARKERS = ("<script", "javascript:", "<iframe", "onerror=", "onclick
 # REGLA 21 del prompt (`app/prompts/certification.py`), no el mecanismo
 # principal.
 _META_PEDAGOGICAL_STEM_PATTERNS = [
+    # Español (los cursos reales de este proyecto son mayormente en
+    # español).
     re.compile(r"qu[eé]\s+(vas a |vamos a |podr[aá]s?\s+)?aprender", re.IGNORECASE),
     re.compile(
         r"(objetivo|prop[oó]sito)(s)?\s+(pedag[oó]gic[oa]\s+)?(de(l)?\s+)?(este\s+|el\s+)?"
@@ -48,6 +50,28 @@ _META_PEDAGOGICAL_STEM_PATTERNS = [
     re.compile(r"competencia(s)?\s+(que\s+)?se\s+espera(n)?\s+desarrollar", re.IGNORECASE),
     re.compile(r"qu[eé]\s+veremos", re.IGNORECASE),
     re.compile(r"qu[eé]\s+aprender[aá](s)?\s+el\s+(estudiante|alumno)", re.IGNORECASE),
+    # v1.6.1 hardening (PASO 11): mismos 7 patrones, equivalente en
+    # inglés -- ningún curso real de este proyecto está en inglés hoy,
+    # pero el LLM puede producir un stem en inglés si el material fuente
+    # lo tiene (comentarios de código, términos técnicos), y esta red de
+    # seguridad no debe quedar con cero cobertura en ese caso. Sigue
+    # siendo una lista chica y conservadora (14 patrones en total, nunca
+    # un diccionario de 100 keywords ni un i18n framework nuevo).
+    re.compile(r"what\s+(will\s+you\s+|are\s+you\s+going\s+to\s+)?learn", re.IGNORECASE),
+    re.compile(
+        r"(learning\s+)?(objective|purpose)s?\s+of\s+(this|the)\s+"
+        r"(module|course|topic|unit|lesson|section)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"what\s+(topics\s+)?(will\s+be\s+)?(covered|discussed|addressed)", re.IGNORECASE),
+    re.compile(
+        r"by\s+the\s+end\s+of\s+(this|the)\s+(module|course|topic|unit)|"
+        r"after\s+completing\s+(this|the)\s+(module|course)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"(skills|competenc(y|ies))\s+(you\s+are\s+)?expected\s+to\s+develop", re.IGNORECASE),
+    re.compile(r"what\s+(we\s+)?will\s+(see|cover)\s+next", re.IGNORECASE),
+    re.compile(r"what\s+will\s+the\s+(student|learner)\s+learn", re.IGNORECASE),
 ]
 
 

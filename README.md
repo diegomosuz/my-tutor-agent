@@ -7,22 +7,25 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **v1.5.0** publicado (`master`/`origin/master`, tag `v1.5.0`). **v1.6.0**
-> está preparado como release candidate local (`release/v1.6.0-rc`, sin
+> **v1.6.0** publicado (`master`/`origin/master`, tag `v1.6.0`). **v1.6.1**
+> está preparado como release candidate local (`release/v1.6.1-rc`, sin
 > push/tag/merge todavía — release gate pendiente, decisión separada).
-> v1.6.0 agrega **Learning Intelligence & Guided Review**: un `LearningState`
-> determinístico por tópico (`not_started`/`progressing`/`needs_review`/
-> `mastered`, derivado de Learning Progress + historial de Certification,
-> sin LLM), visible y accionable en "Mi aprendizaje"; una ruta de repaso
-> guiado (`Comenzar repaso → Topic A → Topic B → ... → Fin del repaso`)
-> reutilizando el aula existente; y el cierre del loop con una
-> Certification real acotada a los tópicos repasados que recalcula el
-> estado desde cero — nunca `Guided Review != Mastery`, la única evidencia
-> que puede cambiar la interpretación de dominio es una nueva Certification
-> real. Ver
-> [`docs/RELEASE_NOTES_v1.6.0.md`](./docs/RELEASE_NOTES_v1.6.0.md) y
-> [`docs/LEARNING_INTELLIGENCE_V1_6.md`](./docs/LEARNING_INTELLIGENCE_V1_6.md)
+> v1.6.1 corrige dos defectos reales: Certification generaba preguntas
+> meta-pedagógicas ("¿qué aprenderás en este módulo?") en vez de evaluar
+> contenido técnico real (`CERTIFICATION_PROMPT_VERSION` →
+> `certification-v2`, más un validador conservador); e imágenes locales
+> referenciadas con una ruta que sube un nivel desde el módulo (un patrón
+> real de curso con assets compartidos) no cargaban — la contención de
+> seguridad de assets pasó de "módulo" a "curso" (`Path.resolve()` +
+> `is_relative_to(course_root)`, nunca un blocklist de `..`), además de
+> CSS real nuevo para tablas/blockquotes/code blocks/headings 4-6. Ver
+> [`docs/RELEASE_NOTES_v1.6.1.md`](./docs/RELEASE_NOTES_v1.6.1.md),
+> [`docs/CERTIFICATION_QUALITY_V1_6_1.md`](./docs/CERTIFICATION_QUALITY_V1_6_1.md)
+> y
+> [`docs/RICH_MARKDOWN_RENDERING_V1_6_1.md`](./docs/RICH_MARKDOWN_RENDERING_V1_6_1.md)
 > (y, para el historial previo,
+> [`docs/RELEASE_NOTES_v1.6.0.md`](./docs/RELEASE_NOTES_v1.6.0.md) /
+> [`docs/LEARNING_INTELLIGENCE_V1_6.md`](./docs/LEARNING_INTELLIGENCE_V1_6.md) /
 > [`docs/RELEASE_NOTES_v1.5.0.md`](./docs/RELEASE_NOTES_v1.5.0.md) /
 > [`docs/RELEASE_NOTES_v1.4.0.md`](./docs/RELEASE_NOTES_v1.4.0.md) /
 > [`docs/RELEASE_NOTES_v1.3.0.md`](./docs/RELEASE_NOTES_v1.3.0.md) /

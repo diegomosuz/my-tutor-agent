@@ -54,7 +54,7 @@ variable y funciona siempre que el navegador la soporte.
 |---|---|---|
 | `LESSON_CACHE_DIR` | `/app/data/lesson-cache` | Cache de `LessonPlan` generadas. |
 | `LESSON_PROMPT_VERSION` | `lesson-v3.3.1` | Forma parte de la cache key de lecciones; cambiarla invalida la cache existente por diseño. |
-| `CERTIFICATION_PROMPT_VERSION` | `certification-v1` | Forma parte de la cache key de bancos de preguntas. |
+| `CERTIFICATION_PROMPT_VERSION` | `certification-v2` | Forma parte de la cache key de bancos de preguntas. |
 | `CERTIFICATION_ITEMS_PER_TOPIC` | `6` | Cantidad objetivo de preguntas por tópico (1-10). También forma parte de la cache key. |
 | `CERTIFICATION_CACHE_DIR` | `/app/data/certification-cache` | Cache de `QuestionBank` generados. |
 | `CERTIFICATION_MAX_CONCURRENCY` | `2` | Máximo de `QuestionBank` generados en paralelo cuando faltan varios (1-4). `1` = estrictamente secuencial. Ver `docs/PERFORMANCE.md`. |
@@ -76,7 +76,7 @@ solo informativo.
 
 | Variable | Default | Descripción |
 |---|---|---|
-| `APP_VERSION` | `1.6.0` | Versión mostrada en `GET /api/system/status` y en la pantalla de Configuración. Sin automatización de semver. |
+| `APP_VERSION` | `1.6.1` | Versión mostrada en `GET /api/system/status` y en la pantalla de Configuración. Sin automatización de semver. |
 
 ## Performance (v1.1.0)
 

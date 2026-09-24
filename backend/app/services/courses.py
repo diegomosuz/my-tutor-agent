@@ -392,11 +392,28 @@ def resolve_topic_asset(
         raise AssetNotFoundError(asset_path)
 
     course_root = course_dir.resolve()
-    candidate = (module_dir / requested).resolve()
-    if not candidate.is_relative_to(course_root):
-        raise AssetNotFoundError(asset_path)
+    try:
+        # v1.6.1 hardening: un `asset_path` extremadamente largo (o con
+        # algún otro componente que el filesystem real rechace) hace que
+        # `.resolve()`/`.is_file()` toquen el disco y el SO puede lanzar
+        # `OSError` (ej. ENAMETOOLONG, "File name too long") -- encontrado
+        # real en QA de seguridad, no hipotético. Un byte nulo embebido
+        # (`%00`, técnica histórica de truncar un path en implementaciones
+        # basadas en C) hace que `.resolve()` lance `ValueError: embedded
+        # null byte` -- también encontrado real en la misma pasada de QA.
+        # Sin este `try`, cualquiera de las dos excepciones no capturadas
+        # producía un 500 sin control en vez del 404 uniforme que el
+        # resto de esta función ya garantiza para cualquier otro path
+        # inválido (nunca debe distinguirse "el nombre era demasiado
+        # largo"/"tenía un byte nulo" de "no existe" -- mismo principio
+        # que ya aplica a not-found/tipo-no-soportado/traversal).
+        candidate = (module_dir / requested).resolve()
+        is_contained = candidate.is_relative_to(course_root)
+        exists_as_file = is_contained and candidate.is_file()
+    except (OSError, ValueError) as exc:
+        raise AssetNotFoundError(asset_path) from exc
 
-    if not candidate.is_file():
+    if not is_contained or not exists_as_file:
         raise AssetNotFoundError(asset_path)
 
     return candidate, mime_type

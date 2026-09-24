@@ -61,6 +61,74 @@ def test_substantive_stems_are_never_flagged(stem):
 
 
 # --------------------------------------------------------------------------
+# Hardening v1.6.1 (PASO 10, "RELEASE GATE CRÍTICO"): "módulo" como
+# término TÉCNICO legítimo (módulo de Python/Terraform/sistema/
+# arquitectura) nunca debe confundirse con "módulo" como unidad
+# curricular. Ejemplos EXACTOS de la especificación de hardening.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "stem",
+    [
+        "¿Qué módulo de Python permite manejar fechas y horas?",
+        "¿Qué función cumple el módulo de autenticación?",
+        "¿Qué módulo del sistema procesa eventos entrantes?",
+        "¿Qué módulos de Terraform se utilizan para provisionar la red descrita?",
+        "¿Qué módulo de una arquitectura contiene la lógica de negocio?",
+    ],
+)
+def test_technical_module_word_is_never_a_false_positive(stem):
+    assert _is_meta_pedagogical_stem(stem) is False
+
+
+# PASO 11: cobertura en inglés -- las mismas frases meta-pedagógicas
+# deben detectarse igual que en español (los cursos reales de este
+# proyecto son mayormente en español, pero el validador no debe fallar
+# silenciosamente ante contenido en inglés).
+@pytest.mark.parametrize(
+    "stem",
+    [
+        "What will you learn in this module?",
+        "What is the learning objective of this module?",
+        "What topics will be covered in this course?",
+    ],
+)
+def test_english_meta_pedagogical_stems_are_detected(stem):
+    assert _is_meta_pedagogical_stem(stem) is True
+
+
+# PASO 13: términos potencialmente ambiguos en contexto técnico legítimo
+# -- ninguno debe rechazarse solo por contener "objetivo"/"learning"/
+# "módulo"/"finalizar".
+@pytest.mark.parametrize(
+    "stem",
+    [
+        "¿Cuál es el objetivo de la función de optimización utilizada en el entrenamiento?",
+        "What does the objective function measure in this training setup?",
+        "¿Qué controla el learning rate durante el entrenamiento del modelo?",
+        "¿Qué hace el módulo `datetime` en Python?",
+        "What does the authentication module do in this system?",
+        "¿Qué ocurre en la finalización de un proceso según el material?",
+        "¿Cuál es la diferencia entre un modelo de aprendizaje supervisado y uno no supervisado?",
+    ],
+)
+def test_ambiguous_technical_terms_are_never_false_positives(stem):
+    assert _is_meta_pedagogical_stem(stem) is False
+
+
+# Límite conocido y documentado (docs/CERTIFICATION_QUALITY_V1_6_1.md):
+# "objetivo" + "módulo" combinados en la MISMA pregunta puede disparar un
+# falso positivo incluso cuando "módulo" es un término técnico (ej.
+# Python), porque el patrón 2 no distingue esa ambigüedad. Este test
+# documenta el comportamiento REAL (no lo esconde) -- mitigado por el
+# retry existente, nunca "arreglado" con una heurística más compleja sin
+# necesidad demostrada más allá de este único caso.
+def test_known_limitation_objetivo_plus_modulo_ambiguity_is_documented():
+    assert _is_meta_pedagogical_stem("¿Cuál es el objetivo del módulo `os` en Python?") is True
+
+
+# --------------------------------------------------------------------------
 # validate_question_bank: integración con el resto de la validación
 # --------------------------------------------------------------------------
 

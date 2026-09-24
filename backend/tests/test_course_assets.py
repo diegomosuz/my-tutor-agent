@@ -202,6 +202,32 @@ def test_traversal_above_content_root_still_blocked_even_if_file_exists(client):
     assert response.status_code == 404
 
 
+def test_embedded_null_byte_returns_safe_404_not_500(client):
+    # Bug real encontrado en hardening (v1.6.1), misma familia que el
+    # anterior: un byte nulo embebido en el path (técnica histórica de
+    # truncar un path en implementaciones basadas en C) hace que
+    # `.resolve()` lance `ValueError: embedded null byte` en Python --
+    # sin capturarla, 500 sin control en vez del 404 uniforme.
+    response = client.get(_ASSET_URL.format(_encode_asset_path("images/architecture.png\x00.svg")))
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Asset no encontrado"}
+
+
+def test_extremely_long_asset_path_returns_safe_404_not_500(client):
+    # Bug real encontrado en hardening (v1.6.1): un nombre de archivo muy
+    # largo hace que `.is_file()` toque el disco y el SO lance
+    # `OSError` (ENAMETOOLONG, "File name too long" en Linux) -- sin
+    # capturarla, esto producía un 500 sin control en vez del 404
+    # uniforme que el resto de esta función ya garantiza para cualquier
+    # otro path inválido. La respuesta nunca debe distinguir "nombre
+    # demasiado largo" de "no existe" (mismo principio de "un único tipo
+    # de error" que ya aplica a not-found/tipo-no-soportado/traversal).
+    long_name = "a" * 3000 + ".png"
+    response = client.get(_ASSET_URL.format(_encode_asset_path(long_name)))
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Asset no encontrado"}
+
+
 # --- v1.6.1: course discovery no confunde directorios "_prefijo" con módulos ---
 
 
