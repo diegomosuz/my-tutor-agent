@@ -9,7 +9,7 @@ vi.mock("../../api/client", () => ({
 }));
 
 import { api } from "../../api/client";
-import { markTopicCompleted, markTopicStarted } from "../learningProgressStore";
+import { markTopicCompleted, markTopicStarted, resetCourseProgress } from "../learningProgressStore";
 import { useServerTopicProgress } from "../useServerTopicProgress";
 
 const mockedGetCourseProgress = api.getCourseProgress as unknown as ReturnType<typeof vi.fn>;
@@ -124,6 +124,42 @@ describe("useServerTopicProgress", () => {
 
     act(() => result.current.refetch());
     await waitFor(() => expect(mockedGetCourseProgress).toHaveBeenCalledTimes(2));
+  });
+
+  it("REGRESIÓN (auditoría pre-Bloque 3): reset + reload nunca resucita progreso legacy ya reseteado", async () => {
+    // v1.7.0 Bloque 2, escenario auditado antes de empezar Bloque 3: (1)
+    // legacy topic progress importado, (2) server progress existe, (3) el
+    // alumno resetea (SettingsPage.tsx: DELETE server + resetCourseProgress
+    // local -- que borra `topics` Y el marcador `serverProgressImportedAt`
+    // JUNTOS, atómicamente, al eliminar el objeto de curso completo), (4)
+    // reload (nueva instancia del hook). Esperado: el import legacy NUNCA
+    // se reintenta y el progreso reseteado NUNCA reaparece -- no porque el
+    // marcador siga en pie, sino porque el propio reset ya destruyó el
+    // snapshot legacy que hubiera alimentado un reimport.
+    markTopicCompleted(COURSE, "modulo-1", "topico-1");
+    mockedGetCourseProgress.mockResolvedValue({ course_id: COURSE, topics: [] });
+    mockedImportLegacyProgress.mockResolvedValue({
+      course_id: COURSE,
+      topics: [
+        { module_id: "modulo-1", topic_id: "topico-1", status: "completed", started_at: null, completed_at: null },
+      ],
+    });
+
+    const first = renderHook(() => useServerTopicProgress(COURSE));
+    await waitFor(() => expect(first.result.current.loading).toBe(false));
+    expect(mockedImportLegacyProgress).toHaveBeenCalledTimes(1);
+    expect(first.result.current.topics?.["modulo-1:topico-1"].status).toBe("completed");
+
+    // Reset real (mismo flujo que SettingsPage.tsx).
+    resetCourseProgress(COURSE);
+    mockedGetCourseProgress.mockResolvedValue({ course_id: COURSE, topics: [] }); // server ya vacío tras el DELETE
+
+    // Reload = nueva instancia del hook (F5 real remonta todo el árbol).
+    const second = renderHook(() => useServerTopicProgress(COURSE));
+    await waitFor(() => expect(second.result.current.loading).toBe(false));
+
+    expect(mockedImportLegacyProgress).toHaveBeenCalledTimes(1); // nunca un segundo import
+    expect(second.result.current.topics).toEqual({}); // nunca resucita
   });
 
   it("courseId null nunca dispara ninguna llamada de red", () => {
