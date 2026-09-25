@@ -83,6 +83,34 @@ def test_ready_never_requires_llm_credential(tmp_path):
     app.dependency_overrides.clear()
 
 
+def test_ready_reports_db_reachable_true_when_postgres_up(tmp_path):
+    """v1.7.0: a diferencia de la credencial LLM/TTS, Postgres SÍ es una
+    dependencia interna requerida -- este test corre contra el Postgres
+    real levantado por docker-compose (mismo host que usa el resto de la
+    app en este entorno de test)."""
+    client = _client(tmp_path)
+    response = client.get("/api/ready")
+    body = response.json()
+    assert body["db_reachable"] is True
+    assert body["status"] == "ready"
+    app.dependency_overrides.clear()
+
+
+def test_ready_reports_db_reachable_false_and_not_ready_when_postgres_down(tmp_path):
+    """Un DATABASE_URL que apunta a un host inexistente nunca debe colgar
+    ni romper /api/ready con un 500 -- debe reflejarse como 'not_ready'."""
+    client = _client(
+        tmp_path,
+        database_url="postgresql+psycopg://baduser:badpass@nonexistent-host-pwc-tutor:5432/nodb",
+    )
+    response = client.get("/api/ready")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["db_reachable"] is False
+    assert body["status"] == "not_ready"
+    app.dependency_overrides.clear()
+
+
 def test_health_endpoint_still_works(tmp_path):
     client = _client(tmp_path)
     response = client.get("/api/health")

@@ -1,0 +1,5 @@
+# v1.7.0: docker-entrypoint.sh se ejecuta dentro de un container Linux; en
+# Windows, core.autocrlf=true convertiría sus saltos de línea a CRLF al
+# hacer checkout, rompiendo el shebang ("$'\r': command not found"). Fuerza
+# LF sin importar la plataforma de checkout.
+*.sh text eol=lf

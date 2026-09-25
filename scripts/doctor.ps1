@@ -168,6 +168,10 @@ function Invoke-Doctor {
     if ($ready) {
         Write-Check -Label "Directorio de cursos legible" -Ok $ready.content_readable
         Write-Check -Label "Cache local escribible (/app/data)" -Ok $ready.data_writable
+        # v1.7.0: Postgres (identidad de aplicacion) es una dependencia
+        # interna requerida -- a diferencia de la credencial LLM/TTS
+        # (opcional), su ausencia si debe verse como un problema real acá.
+        Write-Check -Label "Postgres alcanzable (identidad de aplicacion)" -Ok $ready.db_reachable
     } else {
         Write-Check -Label "GET /api/ready" -Ok $false -Detail "backend no respondio"
     }
@@ -187,7 +191,7 @@ function Invoke-Doctor {
     Write-Check -Label "Frontend alcanzable ($FrontendUrl)" -Ok $frontendOk
 
     Write-Host ""
-    if ($health -and $ready -and $ready.content_readable -and $ready.data_writable -and $frontendOk) {
+    if ($health -and $ready -and $ready.content_readable -and $ready.data_writable -and $ready.db_reachable -and $frontendOk) {
         Write-Host "Todo en orden." -ForegroundColor Green
     } else {
         Write-Host "Hay problemas que revisar arriba. Proba 'docker compose up -d' o revisa el README." -ForegroundColor Yellow

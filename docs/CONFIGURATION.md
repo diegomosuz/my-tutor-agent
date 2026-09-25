@@ -72,6 +72,41 @@ del container, alineadas con sus bind mounts (`./data:/app/data` y
 `COURSES_HOST_PATH:/content`) — no se leen desde `.env`; ponerlos ahí es
 solo informativo.
 
+## PostgreSQL + identidad de aplicación (v1.7.0) — requerida
+
+Ver [`SERVER_SIDE_PROFILE_V1_7.md`](./SERVER_SIDE_PROFILE_V1_7.md) para la
+arquitectura completa. A diferencia de la credencial LLM/TTS (opcional),
+Postgres es una dependencia interna REQUERIDA desde esta versión: sin ella,
+`GET /api/ready` responde `not_ready` (el resto de la app — catálogo,
+cursos, tópicos — sigue funcionando igual, esto solo afecta identidad).
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `POSTGRES_DB` | `pwc_tutor` | Nombre de la base de datos. Credencial de INFRAESTRUCTURA del proceso Postgres, nunca de un usuario funcional. |
+| `POSTGRES_USER` | `pwc_tutor` | Usuario de Postgres. |
+| `POSTGRES_PASSWORD` | `pwc_tutor_dev_password` | Password de Postgres. Cambiar el placeholder de desarrollo antes de cualquier uso fuera del equipo local. |
+| `DATABASE_URL` | `postgresql+psycopg://pwc_tutor:pwc_tutor_dev_password@postgres:5432/pwc_tutor` | Cadena de conexión que usa el backend (SQLAlchemy 2.x + driver `psycopg` 3, síncrono). Única fuente de verdad: nunca se reconstruye a partir de piezas sueltas en otro módulo. |
+| `AUTH_MODE` | `dev` | Único valor soportado hoy. `"entra"` (Microsoft Entra ID, fase futura) falla explícitamente con un error de configuración — nunca una implementación falsa. Cualquier otro valor también falla explícitamente. |
+
+`docker compose up -d` levanta Postgres automáticamente (imagen
+`postgres:17-alpine`, volumen nombrado `postgres_data` que persiste entre
+`down`/`up`) — no hace falta instalar Postgres en el host. Las migraciones
+de Alembic corren automáticamente al arrancar el backend (fail-fast: si
+fallan, el backend nunca llega a levantar uvicorn como si estuviera listo).
+
+Comandos útiles:
+
+```bash
+# Ver el estado real de las migraciones aplicadas
+docker compose exec backend alembic current
+
+# Aplicar migraciones manualmente (ya ocurre automáticamente al arrancar)
+docker compose exec backend alembic upgrade head
+
+# Solo los tests de identidad/Postgres (requieren Postgres real, nunca SQLite)
+docker compose run --rm backend pytest tests/test_db_session.py tests/test_identity_provider.py tests/test_identity_resolver.py tests/test_me_endpoint.py tests/test_no_password_schema.py
+```
+
 ## Aplicación
 
 | Variable | Default | Descripción |

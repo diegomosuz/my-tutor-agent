@@ -481,4 +481,7 @@ export interface ReadyResponse {
   status: "ready" | "not_ready";
   content_readable: boolean;
   data_writable: boolean;
+  // v1.7.0: Postgres (identidad de aplicación) es una dependencia interna
+  // requerida -- ver docs/SERVER_SIDE_PROFILE_V1_7.md.
+  db_reachable: boolean;
 }

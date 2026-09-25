@@ -82,6 +82,17 @@ class Settings(BaseSettings):
     # v1.0.1/v1.1.0-learning-progress.
     certification_max_concurrency: int = 2
 
+    # v1.7.0: PostgreSQL (identidad de aplicación) + modo de autenticación.
+    # Ver docs/SERVER_SIDE_PROFILE_V1_7.md. El backend nunca reconstruye
+    # esta cadena de conexión a partir de piezas sueltas en más de un
+    # lugar: este campo es la única fuente de verdad (mismo criterio que
+    # LESSON_CACHE_DIR).
+    database_url: str = "postgresql+psycopg://pwc_tutor:pwc_tutor_dev_password@postgres:5432/pwc_tutor"
+    # Único valor soportado hoy: "dev". Ver app/services/identity_provider.py
+    # (get_identity_provider) para la validación explícita -- nunca un
+    # fallback silencioso a un modo distinto del configurado.
+    auth_mode: str = "dev"
+
     @property
     def content_path(self) -> Path:
         return Path(self.content_dir)

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.middleware import RequestIDMiddleware, SecurityHeadersMiddleware
-from app.routers import ai, certification, courses, health, speech, system
+from app.routers import ai, certification, courses, health, me, speech, system
 
 # Configura un handler básico para que los logs de la app (ej.
 # "pwc_tutor.lesson": lesson_generation_started/completed/failed,
@@ -44,3 +44,4 @@ app.include_router(ai.router)
 app.include_router(certification.router)
 app.include_router(speech.router)
 app.include_router(system.router)
+app.include_router(me.router)

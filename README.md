@@ -38,8 +38,10 @@ puede inventar información que no esté en ese contenido. Ver
 
 ## Requisitos
 
-- **Docker Desktop** corriendo. No hace falta tener Python ni Node
-  instalados en el host: todo corre encapsulado en contenedores.
+- **Docker Desktop** corriendo. No hace falta tener Python, Node ni
+  PostgreSQL instalados en el host: todo corre encapsulado en containers
+  (`docker compose up -d` levanta Postgres automáticamente junto con
+  backend/frontend — ver [`docs/SERVER_SIDE_PROFILE_V1_7.md`](./docs/SERVER_SIDE_PROFILE_V1_7.md)).
 - (Opcional) una credencial de PwC GenAI Shared Service u OpenAI para que
   la generación de clases con IA funcione de verdad. **Sin ninguna
   credencial, el resto de la aplicación (catálogo, cursos, tópicos)

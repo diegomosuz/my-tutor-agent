@@ -1,9 +1,40 @@
 services:
+  postgres:
+    # Versión pinneada explícitamente (nunca "latest", ver CLAUDE.md
+    # sección 5/v1.7.0 PASO 5). alpine reduce superficie/tamaño de imagen
+    # sin perder ninguna feature usada acá (sin extensiones exóticas).
+    image: postgres:17-alpine
+    container_name: pwc-tutor-postgres
+    environment:
+      # v1.7.0: credenciales de INFRAESTRUCTURA de base de datos, nunca
+      # credenciales de un usuario funcional de la aplicación (ver
+      # docs/SERVER_SIDE_PROFILE_V1_7.md). Nunca hardcodear una contraseña
+      # real acá: los defaults son valores de desarrollo local documentados
+      # en .env.example.
+      POSTGRES_DB: ${POSTGRES_DB:-pwc_tutor}
+      POSTGRES_USER: ${POSTGRES_USER:-pwc_tutor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pwc_tutor_dev_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      # Volumen nombrado (no bind mount): persiste entre `down`/`up` sin
+      # depender de una ruta de filesystem de Windows.
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pwc_tutor} -d ${POSTGRES_DB:-pwc_tutor}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: pwc-tutor-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8000:8000"
     environment:
@@ -29,6 +60,15 @@ services:
       OPENAI_TTS_INSTRUCTIONS: ${OPENAI_TTS_INSTRUCTIONS:-}
       SPEECH_CACHE_DIR: /app/data/speech-cache
       APP_VERSION: ${APP_VERSION:-1.6.1}
+      # v1.7.0: identidad + persistencia server-side (ver
+      # docs/SERVER_SIDE_PROFILE_V1_7.md). El host "postgres" es el nombre
+      # del service de arriba, resuelto vía la red interna de Compose.
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://pwc_tutor:pwc_tutor_dev_password@postgres:5432/pwc_tutor}
+      # Único valor soportado en esta versión: "dev". Cualquier otro valor
+      # (incluido "entra", reservado para una fase futura) falla el
+      # arranque de la identidad con un error de configuración explícito
+      # -- nunca un fallback silencioso (ver app/services/identity_provider.py).
+      AUTH_MODE: ${AUTH_MODE:-dev}
     volumes:
       # Bind mount long-form: evita problemas de interpretación de rutas de
       # Windows que ocurren con la sintaxis corta "host:container".
@@ -44,6 +84,14 @@ services:
       - type: bind
         source: ./backend/tests
         target: /app/tests
+      # v1.7.0: hot-reload de migraciones Alembic (mismo patrón que app/tests).
+      - type: bind
+        source: ./backend/alembic
+        target: /app/alembic
+      - type: bind
+        source: ./backend/alembic.ini
+        target: /app/alembic.ini
+        read_only: true
       # Cache local de LessonPlans (filesystem, lectura/escritura). Separado
       # del mount read-only de /content: acá el backend SÍ escribe.
       - type: bind
@@ -95,3 +143,9 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+
+volumes:
+  # v1.7.0: datos de Postgres (app_users/user_identities). Persiste entre
+  # `docker compose down` (sin -v) y `up`; solo se destruye con `down -v`
+  # explícito.
+  postgres_data:

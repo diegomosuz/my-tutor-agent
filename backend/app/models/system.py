@@ -66,3 +66,8 @@ class ReadyResponse(BaseModel):
     status: str
     content_readable: bool
     data_writable: bool
+    # v1.7.0: a diferencia de la credencial LLM/TTS (opcional, nunca afecta
+    # readiness), Postgres es una dependencia INTERNA requerida desde este
+    # bloque -- su ausencia sí debe reflejarse como "not_ready" (ver
+    # docs/SERVER_SIDE_PROFILE_V1_7.md).
+    db_reachable: bool

@@ -3,6 +3,7 @@ import os
 from fastapi import APIRouter, Depends
 
 from app.config import Settings, get_settings
+from app.db.session import check_db_reachable
 from app.models.schemas import HealthResponse
 from app.models.system import ReadyResponse
 
@@ -16,10 +17,12 @@ def get_health() -> HealthResponse:
 
 @router.get("/api/ready", response_model=ReadyResponse)
 def get_ready(settings: Settings = Depends(get_settings)) -> ReadyResponse:
-    """Readiness LOCAL únicamente (Fase 7, sección 42): nunca hace una
+    """Readiness (Fase 7, sección 42, extendida v1.7.0): nunca hace una
     llamada externa (a un LLM o a OpenAI TTS) para decidir si la app está
-    lista. La app funciona sin ninguna credencial de IA configurada — eso
-    nunca debe considerarse "not ready"."""
+    lista -- esas credenciales son opcionales, su ausencia nunca es
+    "not ready". Postgres es distinto: es una dependencia INTERNA requerida
+    desde este bloque, así que su falta de disponibilidad sí se refleja
+    acá."""
     content_readable = settings.content_path.is_dir() and os.access(settings.content_path, os.R_OK)
 
     data_writable = True
@@ -31,5 +34,12 @@ def get_ready(settings: Settings = Depends(get_settings)) -> ReadyResponse:
     except OSError:
         data_writable = False
 
-    status = "ready" if (content_readable and data_writable) else "not_ready"
-    return ReadyResponse(status=status, content_readable=content_readable, data_writable=data_writable)
+    db_reachable = check_db_reachable(settings.database_url)
+
+    status = "ready" if (content_readable and data_writable and db_reachable) else "not_ready"
+    return ReadyResponse(
+        status=status,
+        content_readable=content_readable,
+        data_writable=data_writable,
+        db_reachable=db_reachable,
+    )
