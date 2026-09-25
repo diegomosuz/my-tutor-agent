@@ -58,13 +58,17 @@ def _test_database() -> None:
 
 @pytest.fixture(autouse=True)
 def _clean_identity_tables() -> None:
-    """Aísla cada test de identidad: trunca app_users/user_identities antes
-    de cada test (CASCADE cubre la FK). Nunca corre contra la base de datos
-    de desarrollo (siempre TEST_DATABASE_URL)."""
+    """Aísla cada test de identidad/progreso: trunca las tablas de
+    aplicación antes de cada test (CASCADE cubre las FK: truncar
+    `app_users` arrastra `user_identities`/`topic_progress`, pero se listan
+    las tres explícitamente por claridad). Nunca corre contra la base de
+    datos de desarrollo (siempre TEST_DATABASE_URL)."""
     engine = create_engine(TEST_DATABASE_URL)
     try:
         with engine.begin() as conn:
-            conn.execute(text("TRUNCATE TABLE user_identities, app_users RESTART IDENTITY CASCADE"))
+            conn.execute(
+                text("TRUNCATE TABLE topic_progress, user_identities, app_users RESTART IDENTITY CASCADE")
+            )
     finally:
         engine.dispose()
     yield

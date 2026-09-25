@@ -228,9 +228,169 @@ infraestructura de Postgres, nunca de un usuario funcional),
 reconstruida en otro módulo), `AUTH_MODE` (`dev` únicamente soportado en
 esta versión).
 
-### 2.14. Roadmap para el próximo bloque
+### 2.14. Roadmap para el próximo bloque (cerrado en el Bloque 2 — ver abajo)
 
-Bloque 2 (no iniciado): migrar progreso de tópicos a Postgres detrás de
-`app_user.id`, manteniendo `LearningState` derivado. `localStorage` deja de
-ser la fuente de verdad para progreso (Certification/Guided Review/
-Verification siguen sin tocarse hasta bloques posteriores).
+## 3. Bloque 2 — Server-Side Topic Progress
+
+### 3.1. Alcance
+
+PostgreSQL pasa a ser la **fuente de verdad de progreso curricular por
+tópico** (`not_started`/`in_progress`/`completed` + timestamps), detrás de
+`app_user.id` (Bloque 1). **Certification history sigue en
+`localStorage`** en este bloque — arquitectura híbrida explícitamente
+TRANSITORIA: `LearningState` se sigue derivando (nunca persistiendo) a
+partir de `topic progress` server-side + evidencia de Certification local.
+Guided Review y Verification siguen funcionando sin cambios de algoritmo
+(solo cambia de dónde viene el status curricular que consumen).
+
+### 3.2. Esquema (migración `0002`)
+
+`topic_progress`: `id UUID PK`, `user_id UUID FK -> app_users.id ON DELETE
+CASCADE`, `course_id`/`module_id`/`topic_id` (slugs, nunca contenido),
+`status` (`"in_progress"`/`"completed"` únicamente — **sin fila =
+`not_started`**, decisión documentada: evita escribir una fila para la
+inmensa mayoría de tópicos que un alumno nunca abre), `started_at`/
+`completed_at` nullable, `created_at`/`updated_at`. `UNIQUE(user_id,
+course_id, module_id, topic_id)` — su prefijo `(user_id, course_id)` ya
+sirve como índice eficiente para "progreso de un curso", por lo que no se
+agrega un índice adicional (evita over-indexing).
+
+### 3.3. Ratchet, idempotencia y carreras
+
+Mismo criterio que la identidad (Bloque 1): `start` nunca degrada
+`completed`, y de hecho **nunca toca `.status` de una fila ya existente**
+(solo `completed` puede cambiar el status) — esto hace la lógica
+correcta ante carreras SIN necesitar `SELECT FOR UPDATE`: una carrera de
+creación (fila no existe todavía) se resuelve con el mismo patrón
+`IntegrityError` + retry ya probado en `identity_resolver.py`; una carrera
+de actualización sobre una fila existente nunca puede perder un
+`completed` porque `start` simplemente no escribe esa columna. Probado con
+threads reales + Postgres real (`tests/test_topic_progress_concurrency.py`).
+
+`completed_at`/`started_at` preservan el PRIMER valor real (nunca se
+pisan por una repetición de la misma acción).
+
+### 3.4. API
+
+```
+GET    /api/progress/{course_id}                       -> progreso persistido del curso
+PUT    /api/progress/{course_id}/{module_id}/{topic_id} -> {action: "start"|"complete"}
+POST   /api/progress/{course_id}/legacy-import          -> fusiona un snapshot legacy
+DELETE /api/progress/{course_id}                        -> borra el progreso del curso
+```
+
+Los cuatro dependen de `get_current_app_user` (Bloque 1) — ninguno acepta
+`user_id` desde el cliente ni tiene `user_id` en la URL (PASO 15: nunca
+`/users/{user_id}/progress`). `module_id`/`topic_id` se validan contra el
+curriculum real (`course_service.get_course_detail`) antes de escribir o
+importar — nunca se permiten IDs arbitrarios en la tabla.
+
+### 3.5. Legacy import / merge
+
+**Trigger**: la primera vez que el frontend carga el progreso de un curso
+para el usuario actual (`useServerTopicProgress`), si hay un snapshot
+legacy en `localStorage` (`learningProgressStore.ts`) que todavía no se
+importó, se envía a `POST .../legacy-import` antes de usar el resultado.
+
+**Marcador de import — decisión: CLIENTE, no servidor.** El enunciado
+original prefería un marcador server-side; se optó por uno cliente
+(`CourseLearningProgress.serverProgressImportedAt`, mismo patrón que el ya
+existente `migratedLegacyAt`) por tres razones: (1) el merge es
+idempotente por diseño (reimportar nunca degrada nada), así que el único
+costo de omitir el marcador sería una llamada de red redundante, nunca un
+bug de datos; (2) evita una tabla nueva (`profile_migrations`) que solo
+guardaría un timestamp sin otro valor de negocio; (3) el frontend real
+nunca envía `X-Dev-User` por sí mismo (solo se usa para QA vía curl/tests),
+así que no existe el caso "un mismo navegador alterna entre identidades" en
+la práctica — el marcador por-curso en `localStorage` es seguro.
+
+**Política de merge** (`topic_progress_service.import_legacy_progress`):
+`completed` > `in_progress` > ausencia (nunca degrada); timestamps: el
+valor más antiguo válido gana (representa la primera ocurrencia histórica
+real, nunca `datetime.now()` reemplazando un dato histórico). Entradas que
+referencian un módulo/tópico que ya no existe en el curriculum real se
+descartan en silencio (nunca rompen el import completo). Entradas
+mal-formadas (shape inválido, nunca enviadas por un frontend bien
+comportado — el parser defensivo de `learningProgressStore.ts` ya filtra
+localStorage corrupto antes de construir el payload) sí rechazan la
+request completa vía Pydantic (422) — distinto del caso "tópico stale",
+ver test correspondiente.
+
+### 3.6. Frontend: arquitectura híbrida
+
+- `learning/topicProgressClient.ts`: `markTopicStartedServer`/
+  `markTopicCompletedServer` (best-effort, nunca lanzan — mismo espíritu
+  que la versión local anterior: "Learning Progress nunca debe romper el
+  aula") + `resetCourseProgressServer` (SÍ propaga errores: es una acción
+  explícita del alumno con su propio confirm).
+- `learning/useServerTopicProgress.ts`: hook de lectura + import legacy.
+  `topics === null` SIEMPRE significa "cargando" (nunca "0 progreso");
+  `error` se expone aparte, sin pisar el último valor conocido.
+- `ClassroomPage.tsx`: "started" se dispara UNA vez por apertura de tópico
+  (ya no en cada cambio de escena — currentScene/totalScenes nunca
+  viajaron al servidor, siguen siendo puramente device-local vía
+  `classroomStorage.ts`, Fase 4, sin cambios). `contentUpdatedSinceCompletion`
+  (aviso "el contenido cambió desde que completaste esto") pasó de leer
+  `learningProgressStore` a leer `classroomStorage.loadTopicProgress` —
+  degradación documentada y aceptada: pasa de una comparación teóricamente
+  cross-device a una estrictamente device-local (`classroomStorage` nunca
+  sincronizó entre dispositivos, ni antes ni ahora).
+- `LearningProgressPage.tsx`/`CertificationResultsPage.tsx`: combinan
+  `useServerTopicProgress(courseId).topics` (server) con
+  `getCourseLearningProgress(courseId)?.certificationAttempts` (local) en
+  un objeto `CourseLearningProgress` armado en memoria — **cero cambios**
+  en `courseSummary.ts`/`topicLearningSignal.ts`/`learningState.ts` (las
+  funciones puras de derivación no saben ni les importa de dónde vino cada
+  mitad del dato).
+- `SettingsPage.tsx` ("Restablecer mi progreso"): sigue siendo UNA acción
+  de producto (mismo confirm de siempre: borra topic progress +
+  Certification juntos — comportamiento histórico preservado a propósito,
+  la propia UI ya lo anunciaba así). Por debajo llama primero al DELETE
+  server-side; si falla, aborta sin tocar Certification local (nunca un
+  reset parcial ambiguo).
+
+### 3.7. Bugs reales encontrados y corregidos en este bloque
+
+1. **CORS no permitía PUT/DELETE.** `CORSMiddleware.allow_methods` solo
+   tenía `["GET", "POST"]` desde Fase 3 — nunca se había notado porque
+   ningún endpoint anterior usaba PUT/DELETE. `curl`/`TestClient` no
+   aplican CORS (solo lo hace un browser real), así que ni los tests ni el
+   smoke manual con curl lo habrían detectado; se encontró por auditoría
+   de `main.py` antes de tocar el frontend. Corregido:
+   `["GET", "POST", "PUT", "DELETE"]`.
+2. **Postgres caído durante una query de progreso (no de identidad) devolvía
+   un 500 crudo.** El catch de `app/dependencies.py` (Bloque 1) solo
+   cubría la resolución de identidad, no las queries de
+   `topic_progress_service`. Corregido con un `@app.exception_handler
+   (SQLAlchemyError)` GLOBAL en `main.py` — cierra esta clase de bug para
+   cualquier router futuro, no solo para progreso.
+
+### 3.8. QA real ejecutada
+
+Contra Postgres/Docker reales (curl): ciclo started→completed→ratchet
+(start después de complete no degrada), aislamiento entre dos identidades
+dev (`student-progress-a`/`-b`), 404 de curso/módulo/tópico inválido,
+merge de legacy-import (server completed + legacy in_progress -> se
+mantiene completed con el timestamp más antiguo), reset (DELETE) y
+verificación de que solo afecta ese curso. Persistencia real: progreso
+sobrevive un restart del container backend y un `docker compose down`
+(sin `-v`) + `up -d` completo (mismo volumen), con el mismo `alembic
+current` en `0002` tras el ciclo. Postgres caído: `/api/progress/*`
+devuelve `503` limpio (nunca 500 ni datos vacíos fingidos) y se recupera
+solo al volver Postgres, sin intervención manual.
+
+**Limitación honesta**: no se ejecutó QA con un browser real (sin
+Playwright/chromium-cli disponible en este entorno) — la cobertura
+equivalente viene de: (a) QA real vía `curl` contra Postgres/Docker reales
+para TODO el backend (idéntico a lo que un browser terminaría llamando),
+y (b) la suite Vitest/RTL, que monta los componentes React reales
+(`ClassroomPage`, `LearningProgressPage`, `CertificationResultsPage`,
+`SettingsPage`) y ejercita el hook/cliente reales con la capa de red
+mockeada — no es un click-through humano, pero sí ejecuta el código de
+producción real, no un doble simplificado.
+
+### 3.9. Roadmap para el próximo bloque
+
+Bloque 3 (no iniciado): candidato natural es migrar el historial de
+Certification a Postgres (mismo patrón: tabla nueva detrás de
+`app_user.id`, `LearningState` sigue derivado, nunca persistido).

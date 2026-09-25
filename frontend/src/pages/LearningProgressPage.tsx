@@ -23,6 +23,7 @@ import {
   type LearningStateSummary,
 } from "../learning/learningState";
 import { getTopicLearningSignal } from "../learning/topicLearningSignal";
+import { useServerTopicProgress } from "../learning/useServerTopicProgress";
 import {
   describeLearningStateEvidence,
   LEARNING_STATE_REASON_COPY,
@@ -32,7 +33,7 @@ import { buildGuidedReviewPlan, type GuidedReviewTopicRef } from "../learning/gu
 import { startGuidedReviewSession } from "../learning/guidedReviewSession";
 import { startGuidedReviewVerification } from "../learning/guidedReviewVerification";
 import { getCourseLearningProgress } from "../learning/learningProgressStore";
-import type { CertificationAttemptSummary } from "../learning/types";
+import type { CertificationAttemptSummary, CourseLearningProgress } from "../learning/types";
 import type { CourseDetail, CourseSummary } from "../types/api";
 
 const DISCLAIMER =
@@ -673,9 +674,24 @@ export function LearningProgressPage() {
     };
   }, [selectedCourseId]);
 
-  const progress = selectedCourseId ? getCourseLearningProgress(selectedCourseId) : null;
+  // v1.7.0 Bloque 2: topic progress (status/timestamps) es server-side
+  // (PostgreSQL) desde este bloque; Certification history sigue en
+  // localStorage (arquitectura híbrida TRANSITORIA, ver
+  // docs/SERVER_SIDE_PROFILE_V1_7.md). `serverTopics.topics === null`
+  // mientras carga -- nunca se interpreta como "0% real" (PASO 27).
+  const serverTopics = useServerTopicProgress(selectedCourseId);
+  const localProgress = selectedCourseId ? getCourseLearningProgress(selectedCourseId) : null;
+  const progress = useMemo(() => {
+    if (!selectedCourseId || serverTopics.topics === null) return null;
+    return {
+      courseId: selectedCourseId,
+      topics: serverTopics.topics,
+      certificationAttempts: localProgress?.certificationAttempts ?? [],
+      serverProgressImportedAt: localProgress?.serverProgressImportedAt ?? null,
+    };
+  }, [selectedCourseId, serverTopics.topics, localProgress]);
   const summary = useMemo(
-    () => (courseDetail ? buildCourseLearningSummary(courseDetail, progress) : null),
+    () => (courseDetail && progress ? buildCourseLearningSummary(courseDetail, progress) : null),
     [courseDetail, progress]
   );
   const certificationOverview = useMemo(
@@ -752,11 +768,41 @@ export function LearningProgressPage() {
   // necesitar `CourseDetail`/`learningStates` de ningún curso. Aislamiento
   // de curso sigue garantizado por construcción: nunca se lee ni se
   // escribe nada de otro courseId.
-  function handleStartVerification(topics: GuidedReviewTopicRef[]) {
+  // v1.7.0 Bloque 2: topics ahora se resuelve con una llamada puntual a
+  // GET /api/progress/{course} (server-side, PostgreSQL) en vez de
+  // `getCourseLearningProgress` síncrono -- Certification (`targetAttempts`)
+  // sigue siendo local. El aislamiento de curso sigue garantizado por
+  // construcción (mismo criterio de siempre: nunca se lee/escribe otro
+  // courseId que no sea `targetCourseId`).
+  async function handleStartVerification(topics: GuidedReviewTopicRef[]) {
     if (!reviewCompletion) return;
     const targetCourseId = reviewCompletion.courseId;
-    const targetProgress = getCourseLearningProgress(targetCourseId);
-    const targetAttempts = targetProgress?.certificationAttempts ?? [];
+    let targetTopics: CourseLearningProgress["topics"] = {};
+    try {
+      const response = await api.getCourseProgress(targetCourseId);
+      for (const entry of response.topics) {
+        targetTopics[`${entry.module_id}:${entry.topic_id}`] = {
+          moduleId: entry.module_id,
+          topicId: entry.topic_id,
+          status: entry.status,
+          startedAt: entry.started_at,
+          lastAccessedAt: entry.completed_at ?? entry.started_at ?? new Date(0).toISOString(),
+          completedAt: entry.completed_at,
+          currentScene: null,
+          totalScenes: null,
+          contentSha256: null,
+        };
+      }
+    } catch {
+      targetTopics = {};
+    }
+    const targetProgress: CourseLearningProgress = {
+      courseId: targetCourseId,
+      topics: targetTopics,
+      certificationAttempts: getCourseLearningProgress(targetCourseId)?.certificationAttempts ?? [],
+      serverProgressImportedAt: null,
+    };
+    const targetAttempts = targetProgress.certificationAttempts;
     const preVerificationStates = topics.map((t) => {
       const signal = getTopicLearningSignal(t.moduleId, t.topicId, targetProgress, targetAttempts);
       const { status, reasonCode } = deriveTopicLearningState(signal);
@@ -772,7 +818,7 @@ export function LearningProgressPage() {
       <div className="page-header">
         <div className="page-header__eyebrow">Mi aprendizaje</div>
         <h1>Mi aprendizaje</h1>
-        <p>Progreso consolidado de tus cursos, guardado localmente en este navegador.</p>
+        <p>Progreso consolidado de tus cursos.</p>
       </div>
 
       {reviewCompletion && (
@@ -788,6 +834,16 @@ export function LearningProgressPage() {
         <div className="state-box state-box--error">
           <h3>No pudimos cargar tu progreso</h3>
           <p>{error}</p>
+        </div>
+      )}
+
+      {!error && serverTopics.error && (
+        <div className="state-box state-box--error">
+          <h3>No pudimos cargar tu progreso de tópicos</h3>
+          <p>
+            El servidor no respondió correctamente. Tu progreso no se perdió — probá recargar la
+            página en un momento.
+          </p>
         </div>
       )}
 

@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   getCourseIdsWithProgress,
   getCourseLearningProgress,
+  getLegacyTopicsSnapshot,
+  hasImportedServerProgress,
+  markServerProgressImported,
   markTopicCompleted,
   markTopicStarted,
   MAX_CERTIFICATION_ATTEMPTS_PER_COURSE,
@@ -262,5 +265,36 @@ describe("learningProgressStore", () => {
 
     const progress = getCourseLearningProgress("curso-demo");
     expect(progress?.topics["modulo-1:topico-1"].status).toBe("completed");
+  });
+
+  // v1.7.0 Bloque 2: marcador cliente de import legacy -> servidor.
+  describe("hasImportedServerProgress / markServerProgressImported / getLegacyTopicsSnapshot", () => {
+    it("un curso nunca tocado nunca reporta import ya hecho", () => {
+      expect(hasImportedServerProgress("curso-demo")).toBe(false);
+    });
+
+    it("markServerProgressImported queda marcado para ESE curso, nunca para otro", () => {
+      markServerProgressImported("curso-demo");
+      expect(hasImportedServerProgress("curso-demo")).toBe(true);
+      expect(hasImportedServerProgress("otro-curso")).toBe(false);
+    });
+
+    it("getLegacyTopicsSnapshot nunca incluye entradas not_started por ausencia", () => {
+      markTopicStarted("curso-demo", "modulo-1", "topico-1");
+      markTopicCompleted("curso-demo", "modulo-1", "topico-2");
+      const snapshot = getLegacyTopicsSnapshot("curso-demo");
+      expect(snapshot).toHaveLength(2);
+      expect(snapshot.map((t) => t.status).sort()).toEqual(["completed", "in_progress"]);
+    });
+
+    it("getLegacyTopicsSnapshot de un curso sin progreso es []", () => {
+      expect(getLegacyTopicsSnapshot("curso-que-no-existe")).toEqual([]);
+    });
+
+    it("marcar el import importado nunca afecta el historial de Certification", () => {
+      recordCertificationAttempt("curso-demo", sampleAttempt({ courseId: "curso-demo" }));
+      markServerProgressImported("curso-demo");
+      expect(getCourseLearningProgress("curso-demo")?.certificationAttempts).toHaveLength(1);
+    });
   });
 });

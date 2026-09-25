@@ -40,6 +40,7 @@ function progressWith(status: "not_started" | "in_progress" | "completed"): Cour
       },
     },
     certificationAttempts: [],
+    serverProgressImportedAt: null,
   };
 }
 

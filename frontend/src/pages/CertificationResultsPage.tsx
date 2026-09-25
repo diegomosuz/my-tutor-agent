@@ -19,6 +19,7 @@ import {
   type VerificationTopicResult,
 } from "../learning/guidedReviewVerification";
 import { getCourseLearningProgress } from "../learning/learningProgressStore";
+import { useServerTopicProgress } from "../learning/useServerTopicProgress";
 import type { CertificationPracticeResult, CourseDetail, ExamQuestionView } from "../types/api";
 
 const VERDICT_LABELS: Record<string, string> = {
@@ -105,8 +106,24 @@ export function CertificationResultsPage() {
   // el mismo progreso (invariante de consistencia, PARTE 30). Estos hooks
   // deben llamarse ANTES de cualquier `return` temprano (reglas de React)
   // -- por eso van acá, no después de los early returns de abajo.
-  const progress = courseId ? getCourseLearningProgress(courseId) : null;
-  const summary = useMemo(() => (course && courseId ? buildCourseLearningSummary(course, progress) : null), [course, courseId, progress]);
+  // v1.7.0 Bloque 2: topic progress es server-side (PostgreSQL);
+  // Certification history sigue en localStorage (híbrido TRANSITORIO, ver
+  // docs/SERVER_SIDE_PROFILE_V1_7.md). `serverTopics.topics === null`
+  // mientras carga -- `summary`/`learningStates` quedan gateados por eso
+  // (nunca se muestra un needs_review/mastered basado en 0 tópicos como si
+  // fuera un resultado real, PASO 27/88).
+  const serverTopics = useServerTopicProgress(courseId ?? null);
+  const localProgress = courseId ? getCourseLearningProgress(courseId) : null;
+  const progress = useMemo(() => {
+    if (!courseId || serverTopics.topics === null) return null;
+    return {
+      courseId,
+      topics: serverTopics.topics,
+      certificationAttempts: localProgress?.certificationAttempts ?? [],
+      serverProgressImportedAt: localProgress?.serverProgressImportedAt ?? null,
+    };
+  }, [courseId, serverTopics.topics, localProgress]);
+  const summary = useMemo(() => (course && progress ? buildCourseLearningSummary(course, progress) : null), [course, progress]);
   const learningStates = useMemo(
     () => (summary && courseId ? deriveCourseLearningStates(courseId, summary.modules, progress) : []),
     [summary, progress, courseId]

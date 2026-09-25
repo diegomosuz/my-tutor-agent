@@ -41,7 +41,7 @@ function progressDoc(
 ): CourseLearningProgress {
   const topicsMap: Record<string, TopicLearningProgress> = {};
   for (const t of topics) topicsMap[`${t.moduleId}:${t.topicId}`] = t;
-  return { courseId, topics: topicsMap, certificationAttempts: attempts };
+  return { courseId, topics: topicsMap, certificationAttempts: attempts, serverProgressImportedAt: null };
 }
 
 function attempt(overrides: Partial<CertificationAttemptSummary> = {}): CertificationAttemptSummary {
@@ -186,6 +186,7 @@ describe("getLearningRecommendations", () => {
       courseId: "otro-curso",
       topics: { "modulo-1:t1": topicProgress({ moduleId: "modulo-1", topicId: "t1", status: "completed" }) },
       certificationAttempts: [attempt({ courseId: "otro-curso", performanceByTopic: [perf("modulo-1", "t1", 10)] })],
+      serverProgressImportedAt: null,
     };
     // Progress pertenece a "otro-curso" pero se pasa igual: el engine no
     // debe usar `progress.courseId`, usa el id del curso real (course.id)

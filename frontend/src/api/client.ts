@@ -7,13 +7,17 @@ import type {
   CheckpointRequest,
   CourseDetail,
   CourseDiagnosticsResponse,
+  CourseProgressResponse,
   CourseSummary,
   EvaluateSimulationRequest,
   GroundingResponse,
+  LegacyImportRequest,
   LessonPlan,
+  MarkProgressRequest,
   QuestionEvaluation,
   ReadyResponse,
   SystemStatusResponse,
+  TopicProgressEntry,
   TopicResponse,
   TutorReplyBody,
   TutorRequest,
@@ -67,7 +71,7 @@ export class ApiError extends Error {
 
 async function request<T>(
   path: string,
-  options?: { method?: "GET" | "POST"; body?: unknown; signal?: AbortSignal }
+  options?: { method?: "GET" | "POST" | "PUT" | "DELETE"; body?: unknown; signal?: AbortSignal }
 ): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: options?.method ?? "GET",
@@ -84,6 +88,11 @@ async function request<T>(
       // ignore, keep statusText
     }
     throw new ApiError(response.status, detail);
+  }
+  // v1.7.0: DELETE /api/progress/{course_id} responde 204 No Content (sin
+  // body) -- .json() sobre una respuesta vacía lanzaría una excepción real.
+  if (response.status === 204) {
+    return undefined as T;
   }
   return response.json() as Promise<T>;
 }
@@ -174,6 +183,31 @@ export const api = {
       body,
       signal,
     }),
+  // v1.7.0 Bloque 2: progreso curricular server-side (PostgreSQL). El
+  // usuario actual se resuelve siempre server-side (identidad, Bloque 1) --
+  // estos métodos nunca envían un user_id.
+  getCourseProgress: (courseId: string, signal?: AbortSignal) =>
+    request<CourseProgressResponse>(`/api/progress/${courseId}`, { signal }),
+  markTopicProgress: (
+    courseId: string,
+    moduleId: string,
+    topicId: string,
+    body: MarkProgressRequest,
+    signal?: AbortSignal
+  ) =>
+    request<TopicProgressEntry>(`/api/progress/${courseId}/${moduleId}/${topicId}`, {
+      method: "PUT",
+      body,
+      signal,
+    }),
+  importLegacyProgress: (courseId: string, body: LegacyImportRequest, signal?: AbortSignal) =>
+    request<CourseProgressResponse>(`/api/progress/${courseId}/legacy-import`, {
+      method: "POST",
+      body,
+      signal,
+    }),
+  resetCourseProgressServer: (courseId: string, signal?: AbortSignal) =>
+    request<undefined>(`/api/progress/${courseId}`, { method: "DELETE", signal }),
   // Fase 7: estado del sistema (nunca expone secretos/paths completos).
   getSystemStatus: () => request<SystemStatusResponse>("/api/system/status"),
   getCourseDiagnostics: () => request<CourseDiagnosticsResponse>("/api/system/course-diagnostics"),

@@ -86,3 +86,47 @@ class UserIdentity(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped[AppUser] = relationship(back_populates="identities")
+
+
+class TopicProgress(Base):
+    """Progreso curricular de UN tópico para UN `AppUser` (v1.7.0, Bloque 2).
+    PostgreSQL es la fuente de verdad de este dato desde este bloque (antes
+    vivía en `localStorage` del navegador -- ver
+    docs/SERVER_SIDE_PROFILE_V1_7.md sección "Bloque 2").
+
+    Sin fila = `not_started` (nunca se inserta una fila para un tópico
+    jamás iniciado -- decisión documentada: evita escribir basura para la
+    inmensa mayoría de tópicos que un alumno nunca abre). `status` solo
+    toma dos valores reales: `"in_progress"`/`"completed"` (nunca
+    `"not_started"` como valor de columna).
+
+    `course_id`/`module_id`/`topic_id` son los mismos slugs que ya expone
+    el repositorio seguro de cursos (`app/services/courses.py`) -- NUNCA
+    contenido pedagógico: el Markdown sigue viviendo exclusivamente en el
+    filesystem de cursos, esta tabla solo referencia identidad curricular.
+
+    `LearningState` sigue sin persistirse en ningún lado: se deriva del
+    lado del frontend a partir de este progreso + evidencia de
+    certificación (todavía en `localStorage` en este bloque)."""
+
+    __tablename__ = "topic_progress"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "course_id", "module_id", "topic_id", name="uq_topic_progress_identity"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("app_users.id", ondelete="CASCADE"), nullable=False
+    )
+    course_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    module_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    topic_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )

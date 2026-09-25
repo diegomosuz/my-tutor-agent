@@ -2,8 +2,19 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// v1.7.0 Bloque 2: topic progress es server-side (PostgreSQL) -- este
+// archivo nunca siembra estado de tópico vía `markTopicStarted`/
+// `markTopicCompleted` (solo Certification, todavía local), así que un
+// backend fake "siempre vacío" es suficiente (ver
+// docs/SERVER_SIDE_PROFILE_V1_7.md): la derivación needs_review/mastered
+// de estos tests depende de `performanceByTopic` de la certificación, no
+// del status curricular.
 vi.mock("../../api/client", () => ({
-  api: { getCourse: vi.fn().mockResolvedValue({ id: "curso-demo", title: "Demo Curso IA", description: "", order: 1, modules: [] }) },
+  api: {
+    getCourse: vi.fn().mockResolvedValue({ id: "curso-demo", title: "Demo Curso IA", description: "", order: 1, modules: [] }),
+    getCourseProgress: vi.fn().mockResolvedValue({ course_id: "curso-demo", topics: [] }),
+    importLegacyProgress: vi.fn().mockResolvedValue({ course_id: "curso-demo", topics: [] }),
+  },
 }));
 
 vi.mock("../../certification/certificationStorage", async () => {

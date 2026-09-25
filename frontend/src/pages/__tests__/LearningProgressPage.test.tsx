@@ -2,8 +2,66 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// v1.7.0 Bloque 2: topic progress es server-side (PostgreSQL). Estos tests
+// siguen sembrando progreso vía `markTopicStarted`/`markTopicCompleted`
+// (localStorage) -- eso ahora representa el snapshot LEGACY que
+// `useServerTopicProgress` importa una sola vez contra el servidor (ver
+// docs/SERVER_SIDE_PROFILE_V1_7.md). `mockGetCourseProgress`/
+// `mockImportLegacyProgress` simulan un backend en memoria mínimo (mismo
+// criterio de merge que el servicio real: completed > in_progress, nunca
+// degrada) para que estos tests seleccionen exactamente el mismo
+// comportamiento observable sin requerir Postgres real.
+interface FakeProgressEntry {
+  module_id: string;
+  topic_id: string;
+  status: "in_progress" | "completed";
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+let fakeServerProgress: Record<string, Record<string, FakeProgressEntry>> = {};
+
+function fakeTopicKey(moduleId: string, topicId: string): string {
+  return `${moduleId}:${topicId}`;
+}
+
+const mockGetCourseProgress = vi.fn(async (courseId: string) => ({
+  course_id: courseId,
+  topics: Object.values(fakeServerProgress[courseId] ?? {}),
+}));
+const mockImportLegacyProgress = vi.fn(
+  async (courseId: string, body: { topics: FakeProgressEntry[] }) => {
+    const course = (fakeServerProgress[courseId] ??= {});
+    for (const entry of body.topics) {
+      const key = fakeTopicKey(entry.module_id, entry.topic_id);
+      const existing = course[key];
+      if (!existing) {
+        course[key] = { ...entry };
+        continue;
+      }
+      if (entry.status === "completed") existing.status = "completed";
+      if (entry.started_at && (!existing.started_at || entry.started_at < existing.started_at)) {
+        existing.started_at = entry.started_at;
+      }
+      if (existing.status === "completed") {
+        const candidate = entry.status === "completed" ? entry.completed_at : null;
+        if (candidate && (!existing.completed_at || candidate < existing.completed_at)) {
+          existing.completed_at = candidate;
+        }
+      }
+    }
+    return { course_id: courseId, topics: Object.values(course) };
+  }
+);
+
 vi.mock("../../api/client", () => ({
-  api: { getCourses: vi.fn(), getCourse: vi.fn() },
+  api: {
+    getCourses: vi.fn(),
+    getCourse: vi.fn(),
+    getCourseProgress: (courseId: string) => mockGetCourseProgress(courseId),
+    importLegacyProgress: (courseId: string, body: { topics: FakeProgressEntry[] }) =>
+      mockImportLegacyProgress(courseId, body),
+  },
   ApiError: class ApiError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -96,6 +154,9 @@ beforeEach(() => {
   mockedGetCourses.mockReset();
   mockedGetCourse.mockReset();
   mockNavigate.mockReset();
+  fakeServerProgress = {};
+  mockGetCourseProgress.mockClear();
+  mockImportLegacyProgress.mockClear();
 });
 
 afterEach(() => {
@@ -631,7 +692,12 @@ describe("LearningProgressPage — v1.6.0 Bloque 3 (Guided Review Session)", () 
     await waitFor(() => expect(screen.getByRole("button", { name: "Evaluar progreso" })).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "Evaluar progreso" }));
-    expect(mockNavigate).toHaveBeenCalledWith("/certificacion/curso-demo?mode=practice&topics=topico-a%2Ctopico-b");
+    // v1.7.0 Bloque 2: handleStartVerification ahora es async (una llamada
+    // real a GET /api/progress/{course} antes de navegar), ver
+    // LearningProgressPage.tsx.
+    await waitFor(() =>
+      expect(mockNavigate).toHaveBeenCalledWith("/certificacion/curso-demo?mode=practice&topics=topico-a%2Ctopico-b")
+    );
   });
 
   it("'Evaluar progreso' crea un GuidedReviewVerificationContext real con el snapshot de estado actual", async () => {
@@ -654,6 +720,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 3 (Guided Review Session)", () 
 
     fireEvent.click(screen.getByRole("button", { name: "Evaluar progreso" }));
 
+    await waitFor(() => expect(loadGuidedReviewVerificationContext("curso-demo")).not.toBeNull());
     const context = loadGuidedReviewVerificationContext("curso-demo");
     expect(context?.topics).toEqual([{ moduleId: "modulo-1", topicId: "topico-a" }]);
     expect(context?.preVerificationStates).toEqual([
@@ -686,7 +753,9 @@ describe("LearningProgressPage — v1.6.0 Bloque 3 (Guided Review Session)", () 
 
     fireEvent.click(screen.getByRole("button", { name: "Evaluar progreso" }));
 
-    expect(mockNavigate).toHaveBeenCalledWith("/certificacion/curso-demo?mode=practice&topics=topico-a");
+    await waitFor(() =>
+      expect(mockNavigate).toHaveBeenCalledWith("/certificacion/curso-demo?mode=practice&topics=topico-a")
+    );
     const context = loadGuidedReviewVerificationContext("curso-demo");
     expect(context?.latestAttemptIdAtStart).toBe("att-1");
   });

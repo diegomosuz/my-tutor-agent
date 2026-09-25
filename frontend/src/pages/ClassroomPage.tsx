@@ -13,6 +13,7 @@ import { SceneRenderer } from "../classroom/SceneRenderer";
 import { TutorPanel } from "../classroom/TutorPanel";
 import { buildSourceBlockLookup } from "../classroom/sourceBlockLookup";
 import {
+  loadTopicProgress,
   loadVoiceEnabled,
   loadVoiceSpeed,
   saveVoiceEnabled,
@@ -37,11 +38,7 @@ import {
   resolveGuidedReviewStep,
   updateGuidedReviewSessionIndex,
 } from "../learning/guidedReviewSession";
-import {
-  getCourseLearningProgress,
-  markTopicCompleted,
-  markTopicStarted,
-} from "../learning/learningProgressStore";
+import { markTopicCompletedServer, markTopicStartedServer } from "../learning/topicProgressClient";
 import type {
   AiStatusResponse,
   CourseDetail,
@@ -140,27 +137,26 @@ export function ClassroomPage() {
   // progreso local y estado de reproducción.
   const engine = useClassroomEngine({ lesson, courseId, moduleId, topicId });
 
-  // v1.1.0 — Learning Progress ("Mi aprendizaje"): capa ADITIVA e
-  // independiente de classroomStorage.ts (que sigue intacta). Nunca lee
-  // `engine.isCompleted` de forma continua (ese flag se resetea al
-  // navegar hacia atrás o repetir — ver useClassroomEngine.ts): reacciona
-  // solo al EVENTO de que pasó a `true`, y lo registra como un ratchet de
-  // una sola dirección en learningProgressStore, así "Previo"/"Repetir
-  // tema" nunca pueden borrar un `completed` ya alcanzado.
+  // v1.7.0 Bloque 2 — Learning Progress ("Mi aprendizaje"): PostgreSQL es
+  // la fuente de verdad de topic progress desde este bloque (antes,
+  // v1.1.0-v1.6.x, era `learningProgressStore.ts`/localStorage — ver
+  // docs/SERVER_SIDE_PROFILE_V1_7.md). "Started" se dispara UNA vez por
+  // apertura de tópico (nunca por cambio de escena: currentScene/
+  // totalScenes ya no viajan al servidor, ver useClassroomEngine.ts/
+  // classroomStorage.ts, que siguen siendo la fuente device-local de "en
+  // qué escena me quedé"). Nunca lee `engine.isCompleted` de forma
+  // continua (ese flag se resetea al navegar hacia atrás o repetir): solo
+  // reacciona al EVENTO de que pasó a `true`. Ambas escrituras son
+  // best-effort (ver topicProgressClient.ts): un fallo de red acá nunca
+  // rompe el aula.
   useEffect(() => {
     if (!lesson || !courseId || !moduleId || !topicId) return;
-    markTopicStarted(courseId, moduleId, topicId, {
-      currentScene: engine.currentSceneIndex,
-      totalScenes: engine.totalScenes,
-      contentSha256: lesson.content_sha256,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lesson, courseId, moduleId, topicId, engine.currentSceneIndex, engine.totalScenes]);
+    markTopicStartedServer(courseId, moduleId, topicId);
+  }, [lesson, courseId, moduleId, topicId]);
 
   useEffect(() => {
     if (!engine.isCompleted || !courseId || !moduleId || !topicId) return;
-    markTopicCompleted(courseId, moduleId, topicId, lesson?.content_sha256);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    markTopicCompletedServer(courseId, moduleId, topicId);
   }, [engine.isCompleted, courseId, moduleId, topicId]);
 
   useClassroomVoice({
@@ -392,13 +388,14 @@ export function ClassroomPage() {
   // dispara esta secuencia en dos pasos (nunca en el mismo tick que la
   // navegación, para evitar una condición de carrera real: si
   // engine.nextScene() y navigate() corrieran en el mismo render, el
-  // efecto que marca el tópico como completado en learningProgressStore
-  // -- ver más abajo, "markTopicCompleted" -- podría leer accidentalmente
-  // el courseId/moduleId/topicId del PRÓXIMO tópico en vez del que
-  // realmente se acaba de terminar). `pendingTopicAdvance` deja que el
-  // ratchet de finalización existente (engine.isCompleted -> el useEffect
-  // de markTopicCompleted, sin duplicar esa lógica acá) se complete en su
-  // propio render, y solo DESPUÉS de confirmarlo navega al próximo tópico.
+  // efecto que marca el tópico como completado server-side (ver más abajo,
+  // "markTopicCompletedServer") podría leer accidentalmente el
+  // courseId/moduleId/topicId del PRÓXIMO tópico en vez del que realmente
+  // se acaba de terminar). `pendingTopicAdvance` deja que el ratchet de
+  // finalización existente (engine.isCompleted -> el useEffect de
+  // markTopicCompletedServer, sin duplicar esa lógica acá) se complete en
+  // su propio render, y solo DESPUÉS de confirmarlo navega al próximo
+  // tópico.
   const [pendingTopicAdvance, setPendingTopicAdvance] = useState(false);
 
   useEffect(() => {
@@ -491,10 +488,18 @@ export function ClassroomPage() {
   // bloqueante — nunca se desmarca "completed" automáticamente, eso
   // requeriría asumir que el cambio invalida el logro del alumno, lo cual
   // no siempre es cierto (puede ser una corrección menor).
+  //
+  // v1.7.0 Bloque 2: la fuente pasó de `learningProgressStore` (que ya no
+  // trackea contentSha256) a `classroomStorage.ts` (Fase 4, siempre
+  // mantenido por useClassroomEngine en cada cambio de escena/completado,
+  // ver saveTopicProgress ahí) — puramente device-local por diseño desde
+  // siempre (nunca sincronizado entre navegadores), así que este aviso
+  // ahora es explícitamente "desde que completaste esto EN ESTE
+  // dispositivo", una degradación aceptada y documentada.
   const contentUpdatedSinceCompletion = useMemo(() => {
     if (!courseId || !moduleId || !topicId || !topic) return false;
-    const stored = getCourseLearningProgress(courseId)?.topics[`${moduleId}:${topicId}`];
-    if (!stored || stored.status !== "completed" || !stored.contentSha256) return false;
+    const stored = loadTopicProgress(courseId, moduleId, topicId);
+    if (!stored || !stored.completed || !stored.contentSha256) return false;
     return stored.contentSha256 !== topic.canonical.content_sha256;
   }, [courseId, moduleId, topicId, topic]);
 

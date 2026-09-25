@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { isSpeechSupported } from "../classroom/speech";
 import { getCourseLearningProgress, resetCourseProgress } from "../learning/learningProgressStore";
+import { resetCourseProgressServer } from "../learning/topicProgressClient";
 import type { CourseSummary, SystemStatusResponse } from "../types/api";
 
 /** Pantalla "Configuración del sistema" (Fase 7, secciones 16/46).
@@ -42,20 +43,46 @@ export function SettingsPage() {
     };
   }, []);
 
-  function handleResetProgress() {
+  // v1.7.0 Bloque 2: "Restablecer mi progreso" sigue siendo UNA acción de
+  // producto (mismo confirm, mismo texto: borra topic progress +
+  // Certification history juntos, comportamiento histórico preservado a
+  // propósito -- ver docs/SERVER_SIDE_PROFILE_V1_7.md), pero por debajo
+  // ahora toca DOS sistemas distintos: PostgreSQL (topic progress, server
+  // DELETE) y localStorage (Certification history, sigue local en este
+  // bloque). Orden: primero el servidor: si falla, se aborta por completo
+  // (nunca un reset parcial ambiguo) y el alumno puede reintentar.
+  async function handleResetProgress() {
     if (!resetCourseId) return;
     const course = courses.find((c) => c.id === resetCourseId);
-    const hasProgress = getCourseLearningProgress(resetCourseId) !== null;
-    if (!hasProgress) {
+
+    let hasServerProgress = false;
+    try {
+      const response = await api.getCourseProgress(resetCourseId);
+      hasServerProgress = response.topics.length > 0;
+    } catch {
+      hasServerProgress = false;
+    }
+    const hasLocalCertification = (getCourseLearningProgress(resetCourseId)?.certificationAttempts.length ?? 0) > 0;
+    if (!hasServerProgress && !hasLocalCertification) {
       setResetMessage(`No hay progreso guardado para "${course?.title ?? resetCourseId}".`);
       return;
     }
+
     const confirmed = window.confirm(
       `¿Restablecer tu progreso de "${course?.title ?? resetCourseId}"? Se van a borrar el ` +
         "progreso de tópicos y el historial de prácticas/simulacros de este curso guardados " +
         "en este navegador. Esta acción no se puede deshacer."
     );
     if (!confirmed) return;
+
+    try {
+      await resetCourseProgressServer(resetCourseId);
+    } catch {
+      setResetMessage(
+        `No se pudo restablecer el progreso de "${course?.title ?? resetCourseId}" (el servidor no respondió). Intentá nuevamente.`
+      );
+      return;
+    }
     resetCourseProgress(resetCourseId);
     setResetMessage(`Progreso de "${course?.title ?? resetCourseId}" restablecido.`);
   }

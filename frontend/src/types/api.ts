@@ -485,3 +485,36 @@ export interface ReadyResponse {
   // requerida -- ver docs/SERVER_SIDE_PROFILE_V1_7.md.
   db_reachable: boolean;
 }
+
+// v1.7.0 Bloque 2: progreso curricular server-side (PostgreSQL). Espejo de
+// backend/app/models/progress.py.
+export type TopicProgressStatus = "in_progress" | "completed";
+
+export interface TopicProgressEntry {
+  module_id: string;
+  topic_id: string;
+  status: TopicProgressStatus;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface CourseProgressResponse {
+  course_id: string;
+  topics: TopicProgressEntry[];
+}
+
+export interface MarkProgressRequest {
+  action: "start" | "complete";
+}
+
+export interface LegacyImportTopicEntry {
+  module_id: string;
+  topic_id: string;
+  status: TopicProgressStatus;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface LegacyImportRequest {
+  topics: LegacyImportTopicEntry[];
+}

@@ -126,8 +126,17 @@ function sanitizeDocument(raw: unknown): LearningProgressDocumentV1 {
     }
 
     const certificationAttempts = courseValue.certificationAttempts.filter(isValidAttempt);
+    // `isValidCourseProgress` no valida este campo en tiempo de ejecución
+    // (documentos anteriores al Bloque 2 nunca lo tienen) -- se lee de
+    // forma defensiva vía `unknown`, nunca asumiendo que ya está presente
+    // solo porque el tipo estático `CourseLearningProgress` lo declare.
+    const rawCourseValue = courseValueRaw as unknown as Record<string, unknown>;
+    const serverProgressImportedAt =
+      typeof rawCourseValue.serverProgressImportedAt === "string"
+        ? rawCourseValue.serverProgressImportedAt
+        : null;
 
-    courses[courseId] = { courseId, topics, certificationAttempts };
+    courses[courseId] = { courseId, topics, certificationAttempts, serverProgressImportedAt };
   }
 
   return { schemaVersion: LEARNING_PROGRESS_SCHEMA_VERSION, migratedLegacyAt, courses };
@@ -218,6 +227,7 @@ function migrateLegacyIfNeeded(doc: LearningProgressDocumentV1): LearningProgres
       courseId: legacy.courseId,
       topics: {},
       certificationAttempts: [],
+      serverProgressImportedAt: null,
     };
     const key = topicKey(legacy.moduleId, legacy.topicId);
     // Nunca pisar un tópico que el documento nuevo ya conozca (evita que
@@ -256,7 +266,14 @@ function getOrCreateCourse(
   doc: LearningProgressDocumentV1,
   courseId: string
 ): CourseLearningProgress {
-  return doc.courses[courseId] ?? { courseId, topics: {}, certificationAttempts: [] };
+  return (
+    doc.courses[courseId] ?? {
+      courseId,
+      topics: {},
+      certificationAttempts: [],
+      serverProgressImportedAt: null,
+    }
+  );
 }
 
 /** Tópico abierto / clase iniciada / escena cambiada (PARTE 2). Nunca
@@ -366,6 +383,37 @@ export function getCourseLearningProgress(courseId: string): CourseLearningProgr
 export function getCourseIdsWithProgress(): string[] {
   const doc = load();
   return Object.keys(doc.courses);
+}
+
+// --------------------------------------------------------------------------
+// v1.7.0 Bloque 2: marcador CLIENTE de import legacy -> server (PostgreSQL).
+// Ver docs/SERVER_SIDE_PROFILE_V1_7.md. Nunca relacionado con Certification.
+// --------------------------------------------------------------------------
+
+/** true si ESTE navegador ya envió su snapshot legacy de topic progress de
+ * este curso al servidor (idempotente: aunque se reintentara, el merge
+ * server-side nunca degrada nada — este marcador solo evita una llamada de
+ * red redundante en cada carga, ver PASO 33 de la especificación). */
+export function hasImportedServerProgress(courseId: string): boolean {
+  const doc = load();
+  return doc.courses[courseId]?.serverProgressImportedAt != null;
+}
+
+export function markServerProgressImported(courseId: string): void {
+  const doc = load();
+  const course = getOrCreateCourse(doc, courseId);
+  course.serverProgressImportedAt = new Date().toISOString();
+  doc.courses = { ...doc.courses, [courseId]: course };
+  writeDocument(doc);
+}
+
+/** Snapshot legacy de topics (`in_progress`/`completed`, nunca
+ * `not_started` por ausencia) de este curso, para armar el body de
+ * `POST /api/progress/{course_id}/legacy-import`. Nunca incluye
+ * Certification (PASO 31: fuera de alcance del import). */
+export function getLegacyTopicsSnapshot(courseId: string): TopicLearningProgress[] {
+  const doc = load();
+  return Object.values(doc.courses[courseId]?.topics ?? {}).filter((t) => t.status !== "not_started");
 }
 
 /** Borra el progreso de aprendizaje/certificación de UN curso (PARTE 14).

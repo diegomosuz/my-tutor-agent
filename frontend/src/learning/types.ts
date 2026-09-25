@@ -61,6 +61,14 @@ export interface CourseLearningProgress {
   courseId: string;
   topics: Record<string, TopicLearningProgress>;
   certificationAttempts: CertificationAttemptSummary[];
+  /** v1.7.0 Bloque 2: ISO timestamp de cuándo ESTE navegador ya envió su
+   * snapshot legacy de `topics` al servidor (PostgreSQL, fuente de verdad
+   * de progreso curricular desde este bloque) — `null` significa "todavía
+   * no". Es un marcador puramente CLIENTE (decisión documentada en
+   * docs/SERVER_SIDE_PROFILE_V1_7.md: el import es idempotente por
+   * diseño, así que un marcador server-side sería redundante). Nunca se
+   * usa para Certification, que sigue siendo local en este bloque. */
+  serverProgressImportedAt: string | null;
 }
 
 export const LEARNING_PROGRESS_SCHEMA_VERSION = 1 as const;

@@ -3,9 +3,6 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CANONICAL_INFO, SAMPLE_LESSON } from "../../classroom/__tests__/fixtures";
 import type { LessonPlan, LessonScene } from "../../types/api";
-import {
-  getCourseLearningProgress,
-} from "../../learning/learningProgressStore";
 import { ApiError } from "../../api/client";
 
 const mockGetCourse = vi.fn();
@@ -16,6 +13,18 @@ const mockGetAiStatus = vi.fn();
 const mockAskTutor = vi.fn();
 const mockEvaluateCheckpoint = vi.fn();
 const mockSynthesizeSpeech = vi.fn();
+// v1.7.0 Bloque 2: topic progress (started/completed) es server-side --
+// ClassroomPage llama PUT /api/progress/{course}/{module}/{topic} en vez
+// de escribir en learningProgressStore/localStorage (ver
+// topicProgressClient.ts). Resuelve por default para que el
+// fire-and-forget (`.catch(() => {})`) nunca falle con "not a function".
+const mockMarkTopicProgress = vi.fn().mockResolvedValue({
+  module_id: "x",
+  topic_id: "y",
+  status: "in_progress",
+  started_at: null,
+  completed_at: null,
+});
 
 vi.mock("../../api/client", () => ({
   api: {
@@ -27,6 +36,7 @@ vi.mock("../../api/client", () => ({
     askTutor: (...args: unknown[]) => mockAskTutor(...args),
     evaluateCheckpoint: (...args: unknown[]) => mockEvaluateCheckpoint(...args),
     synthesizeSpeech: (...args: unknown[]) => mockSynthesizeSpeech(...args),
+    markTopicProgress: (...args: unknown[]) => mockMarkTopicProgress(...args),
   },
   ApiError: class ApiError extends Error {
     status: number;
@@ -128,6 +138,13 @@ beforeEach(() => {
   mockAskTutor.mockReset();
   mockEvaluateCheckpoint.mockReset();
   mockSynthesizeSpeech.mockReset();
+  mockMarkTopicProgress.mockReset().mockResolvedValue({
+    module_id: "x",
+    topic_id: "y",
+    status: "in_progress",
+    started_at: null,
+    completed_at: null,
+  });
   mockNavigate.mockReset();
   mockGetSystemStatus.mockReset().mockResolvedValue({
     app_version: "1.1.0",
@@ -358,7 +375,7 @@ describe("ClassroomPage — v1.1.1 navegación del aula", () => {
     expect(mockAskTutor).toHaveBeenCalledTimes(1);
   });
 
-  it("K: Learning Progress sigue registrando completion al terminar el tema", async () => {
+  it("K: Learning Progress sigue registrando completion al terminar el tema (server-side, v1.7.0)", async () => {
     await renderWithLesson();
 
     fireEvent.click(screen.getByRole("button", { name: "Siguiente diapositiva" }));
@@ -368,8 +385,12 @@ describe("ClassroomPage — v1.1.1 navegación del aula", () => {
     fireEvent.click(screen.getByRole("button", { name: "Completar último tema" }));
 
     await waitFor(() => {
-      const progress = getCourseLearningProgress("curso-demo");
-      expect(progress?.topics["modulo-demo:topico-demo"]?.status).toBe("completed");
+      expect(mockMarkTopicProgress).toHaveBeenCalledWith(
+        "curso-demo",
+        "modulo-demo",
+        "topico-demo",
+        { action: "complete" }
+      );
     });
   });
 
@@ -547,8 +568,12 @@ describe("ClassroomPage — v1.3.0 Classroom UX (BLOQUE C: navegación)", () => 
     fireEvent.click(completeButton);
 
     await waitFor(() => {
-      const progress = getCourseLearningProgress("curso-demo");
-      expect(progress?.topics["modulo-1:topico-a"]?.status).toBe("completed");
+      expect(mockMarkTopicProgress).toHaveBeenCalledWith(
+        "curso-demo",
+        "modulo-1",
+        "topico-a",
+        { action: "complete" }
+      );
     });
     expect(mockNavigate).toHaveBeenCalledWith("/aula/curso-demo/modulo-1/topico-b");
   });
@@ -1001,10 +1026,14 @@ describe("ClassroomPage — v1.6.0 Bloque 3 (Guided Review Session)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Siguiente del repaso" }));
     // "Siguiente de repaso" es un simple navigate() (mockeado en este
-    // archivo) -- nunca llama markTopicCompleted/markTopicStarted por sí
-    // mismo. Confirmamos que Learning Progress de t1 sigue sin `completed`.
-    const progress = getCourseLearningProgress("curso-review");
-    expect(progress?.topics["modulo-1:t1"]?.status).not.toBe("completed");
+    // archivo) -- nunca llama mark started/completed por sí mismo.
+    // Confirmamos que nunca se reportó t1 como completado server-side.
+    expect(mockMarkTopicProgress).not.toHaveBeenCalledWith(
+      "curso-review",
+      "modulo-1",
+      "t1",
+      { action: "complete" }
+    );
   });
 
   it("PASO 62: tópico stale en el snapshot -- se salta determinísticamente, sin romper el banner", async () => {
