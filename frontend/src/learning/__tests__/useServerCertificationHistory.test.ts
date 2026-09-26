@@ -9,7 +9,7 @@ vi.mock("../../api/client", () => ({
 }));
 
 import { api } from "../../api/client";
-import { recordCertificationAttempt } from "../learningProgressStore";
+import { recordCertificationAttempt, resetCourseProgress } from "../learningProgressStore";
 import type { CertificationAttemptSummary } from "../types";
 import {
   fetchCourseCertificationHistory,
@@ -202,6 +202,51 @@ describe("useServerCertificationHistory", () => {
       const { result } = renderHook(() => useServerCertificationHistory(COURSE));
       await waitFor(() => expect(result.current.loading).toBe(false));
       expect(mockedImportLegacyCertificationHistory).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("REGRESIÓN (v1.7.0 Bloque 6, cierre de migración): reset + reload nunca resucita Certification history legacy", () => {
+    it("mismo patrón ya probado para topic progress (useServerTopicProgress.test.ts) -- nunca había un test dedicado para Certification history", async () => {
+      // (1) legacy attempt importado, (2) server history existe, (3) el
+      // alumno resetea (SettingsPage.tsx: DELETE server + resetCourseProgress
+      // local -- borra `certificationAttempts` Y el marcador
+      // `certificationHistoryImportedAt` JUNTOS, atómicamente, al eliminar
+      // el objeto de curso completo), (4) reload (nueva instancia del
+      // hook). Esperado: el import legacy NUNCA se reintenta y el intento
+      // reseteado NUNCA reaparece -- no porque el marcador siga en pie,
+      // sino porque el propio reset ya destruyó el snapshot legacy que
+      // hubiera alimentado un reimport.
+      recordCertificationAttempt(COURSE, attempt());
+      mockedGetCertificationHistory.mockResolvedValue({ course_id: COURSE, attempts: [] });
+      mockedImportLegacyCertificationHistory.mockResolvedValue({
+        course_id: COURSE,
+        attempts: [
+          {
+            attempt_id: "attempt-1", course_id: COURSE, mode: "practice", module_ids: ["modulo-1"],
+            topic_ids: ["topico-1"], question_count: 2, answered_count: 2, correct_count: 1, partial_count: 0,
+            incorrect_count: 1, unanswered_count: 0, score_percentage: 50, completed_at: "2026-01-01T00:00:00.000Z",
+            performance_by_topic: [{ module_id: "modulo-1", topic_id: "topico-1", attempted: 2, correct: 1, partially_correct: 0, incorrect: 1, unanswered: 0, practice_score_percent: 50 }],
+            competencies_to_reinforce: [], topics_to_reinforce: [], origin: "legacy_import",
+          },
+        ],
+      });
+
+      const first = renderHook(() => useServerCertificationHistory(COURSE));
+      await waitFor(() => expect(first.result.current.loading).toBe(false));
+      expect(mockedImportLegacyCertificationHistory).toHaveBeenCalledTimes(1);
+      expect(first.result.current.attempts).toHaveLength(1);
+
+      // Reset real (mismo flujo que SettingsPage.tsx: DELETE server-side ya
+      // ejecutado -- acá se simula el lado cliente del reset).
+      resetCourseProgress(COURSE);
+      mockedGetCertificationHistory.mockResolvedValue({ course_id: COURSE, attempts: [] }); // server ya vacío tras el DELETE
+
+      // Reload = nueva instancia del hook (F5 real remonta todo el árbol).
+      const second = renderHook(() => useServerCertificationHistory(COURSE));
+      await waitFor(() => expect(second.result.current.loading).toBe(false));
+
+      expect(mockedImportLegacyCertificationHistory).toHaveBeenCalledTimes(1); // nunca un segundo import
+      expect(second.result.current.attempts).toEqual([]); // nunca resucita
     });
   });
 });

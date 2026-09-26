@@ -1083,3 +1083,256 @@ roadmap de Bloque 4 queda cerrado en su primera mitad; la unificación
 de `RecommendedForYou` con Learning Intelligence permanece como
 candidato de un bloque futuro, sin apuro (no es un requisito funcional
 pendiente).
+
+## 7. Bloque 6 — Migration Closure & Functional Hardening
+
+Bloque de CIERRE, no de features nuevas: audita y demuestra con QA real
+que la migración de todo el perfil funcional del alumno hacia
+PostgreSQL (Bloques 1-5) quedó completa y correcta antes del
+hardening/RC de v1.7.0. Cero cambios de producción salvo dos tests
+nuevos que cerraron un gap real de cobertura (ver 7.3).
+
+### 7.1. Mapa final de source-of-truth
+
+| Dato | Fuente permanente | Notas |
+|---|---|---|
+| Topic Progress | PostgreSQL (`topic_progress`) | Bloque 2 |
+| Certification History + evidencia por tópico | PostgreSQL (`certification_attempts`/`certification_topic_results`) | Bloque 3 |
+| `LearningState`/`LearningStateSummary` | **Nunca persistido** — derivado en cada request desde las dos filas de arriba | Bloques 4-5 |
+| `localStorage` (`pwc-tutor:learning-progress:v1`) | Compatibilidad de migración legacy ÚNICAMENTE | Confirmado, no cambiado en este bloque |
+| `sessionStorage` (`GuidedReviewSession`/`GuidedReviewVerificationContext`) | Transient de sesión, nunca aprendizaje permanente | Sin cambios (v1.6.0) |
+| Identidad (`app_user`/`user_identity`) | PostgreSQL | Bloque 1 |
+
+### 7.2. Auditoría de escritura permanente (RELEASE BLOCKER)
+
+```
+grep -rn "markTopicStarted(\|markTopicCompleted(\|recordCertificationAttempt(" frontend/src --include="*.ts" --include="*.tsx"
+```
+
+Confirmado: cero call-sites de producción para los tres — ya estaban
+muertos desde los Bloques 2/3 respectivamente (Bloque 2 migró
+`ClassroomPage` a `markTopicStartedServer`/`markTopicCompletedServer`;
+Bloque 3 eliminó el dual-write de `submitExam()`). Este bloque no mata
+nada nuevo: **confirma** que sigue así. Cero grep hits de
+`mastered`/`needs_review`/`learning_status`/`reason_code` en
+`backend/app/db/models.py` o en `backend/alembic/versions/*.py` — el
+`LearningState` nunca tuvo, y sigue sin tener, una tabla propia.
+
+### 7.3. Legacy store — decisión final (sin cleanup amplio)
+
+Re-auditados `markTopicStarted`/`markTopicCompleted`/
+`recordCertificationAttempt`/`getCourseLearningProgress`/
+`getCourseIdsWithProgress` (`learningProgressStore.ts`) y
+`buildAttemptSummary` (`certificationSummary.ts`): todos siguen en
+**cero callers de producción**. Decisión final: **NO eliminarlos**.
+Razón concreta, no genérica: `markTopicStarted`/`markTopicCompleted`/
+`recordCertificationAttempt` son la forma establecida en la que
+DECENAS de tests existentes (`LearningProgressPage.test.tsx`,
+`CertificationResultsPage.test.tsx`, `useServerTopicProgress.test.ts`,
+`useServerCertificationHistory.test.ts`, `learningProgressStore.test.ts`)
+siembran "datos legacy de un browser v1.6.1" antes de ejercitar el
+bootstrap — eliminarlos exigiría reescribir esa convención completa en
+inyección cruda de JSON a `localStorage`, un refactor amplio y de bajo
+valor real que el propio bloque prohíbe explícitamente ("no rompen
+tests útiles" es justamente la condición que NO se cumple acá).
+`getCourseLearningProgress`/`getCourseIdsWithProgress` existen
+exclusivamente para verificar esos writers en test — mismo criterio.
+`buildAttemptSummary` sigue sin caller de producción desde Bloque 3, sin
+ningún cambio nuevo que lo justifique; se mantiene documentado como
+deuda conocida, sin tocar (tercera vez que se audita con el mismo
+resultado — Bloques 3, 5 y ahora 6).
+
+**Rol final del documento legacy** (`pwc-tutor:learning-progress:v1`):
+los ÚNICOS campos todavía leídos por código de producción son los que
+alimentan el snapshot de import (`topics`/`certificationAttempts` vía
+`getLegacyTopicsSnapshot`/`getLegacyCertificationAttemptsSnapshot`) y
+los dos marcadores (`serverProgressImportedAt`/
+`certificationHistoryImportedAt`) — nunca como fuente de verdad de
+`LearningState`.
+
+### 7.4. Migration lifecycle — regresión nueva encontrada y cerrada
+
+Auditando la cobertura de test existente para "reset nunca resucita
+legacy" se encontró un gap real: existía el test dedicado para topic
+progress (`useServerTopicProgress.test.ts`, del propio Bloque 2) pero
+**nunca existió el equivalente para Certification history**. Cerrado en
+este bloque con un test nuevo en `useServerCertificationHistory.test.ts`
+que replica exactamente el mismo patrón (import legacy → reset real →
+reload → nunca resucita). Se agregó además un test explícito de
+"mutación legacy después de la migración" (`useServerTopicProgress.test.ts`)
+que hasta ahora solo estaba probado de forma indirecta (el marcador ya
+en `true` salta el import por completo, sin importar el contenido del
+snapshot) — ahora hay un test que efectivamente MUTA el documento
+legacy después del primer bootstrap y confirma que la mutación nunca se
+refleja en ningún fetch posterior.
+
+El resto de la matriz de PARTE C (legacy topic-only, legacy cert-only,
+ambos, sin legacy, bootstrap repetido, partial failure en cualquiera de
+los dos bootstraps, servidor-ya-poblado, downgrade attempt) ya estaba
+cubierta — por unit tests existentes (Bloques 2/3/5) para los casos de
+bootstrap parcial/repetido, y confirmada de nuevo con QA real de browser
+(ver 7.7) para el resto, incluyendo dos escenarios que nunca se habían
+probado con browser real hasta este bloque: legacy topic-only y legacy
+cert-only por separado.
+
+### 7.5. Fresh install QA — Postgres completamente aislado
+
+**Nunca se tocó** `postgres_data` del proyecto de desarrollo real. Se
+levantó un Postgres 17 desechable (`docker run`, unido a la red
+`pwc-tutor-agent_default`, sin volumen nombrado) y una instancia
+backend desechable (misma imagen ya construida, puerto alternativo
+`8099`, `DATABASE_URL` apuntando al Postgres desechable) — ambos
+eliminados al final, cero huella en el proyecto real.
+
+Resultado real: `alembic upgrade head` desde vacío aplica
+`-> 0001 -> 0002 -> 0003` limpio, `alembic heads` confirma un único
+head `0003`. `GET /api/ready` → `ready` real. Primer usuario
+(`dev-user-default`, sin header): `app_user.id` nuevo
+(`1ddc7357-d6a0-476f-8eb8-c820f89a850b`, nunca visto antes). Primer
+`GET .../learning-profile`: 10/10 `not_started` real. Primera mutación
+real (`PUT .../progress/.../introduccion {"action":"complete"}`):
+perfil pasa a `progressing`/`COMPLETED_NO_ASSESSMENT`. Primera
+Certification real (vía el endpoint público `legacy-import`, evita una
+generación LLM innecesaria para esta prueba puntual — la generación
+real ya se probó de punta a punta en 7.7): perfil pasa a
+`needs_review`/`LOW_CERTIFICATION_SCORE`. Restart real (`docker stop`/
+`docker start` del Postgres desechable, sin `-v`): backend reconecta
+solo, `GET .../progress`/`.../certification/history` devuelven
+exactamente los mismos datos de antes del restart.
+
+### 7.6. Upgrade real desde v1.6.1 — simulación
+
+Un browser v1.6.1 real nunca llegó a existir para este proyecto (recién
+alcanza v1.6.1 en este mismo repo), así que la simulación más fiel
+posible es la que ya usa `localStorage` con el shape EXACTO que
+`learningProgressStore.ts` (sin cambios desde v1.1.0) produce —
+exactamente lo mismo que un browser real habría acumulado. Confirmado
+con Playwright real (identidades `qa6-legacy-topic-only`/
+`qa6-legacy-cert-only`/`qa6-legacy-both`, ver 7.7): el bootstrap corre
+ANTES del primer `GET .../learning-profile` visible (nunca un "flash"
+de perfil vacío -- el primer render con datos reales que el usuario ve
+ya es el importado), y las filas reales de `topic_progress`/
+`certification_attempts` se confirmaron con `psql` directo contra
+Postgres (ver 7.7, verificación de ownership).
+
+### 7.7. Browser E2E real — suite completa (Playwright, scratchpad aislado)
+
+Mismo criterio que Bloque 5 (Playwright instalado en un proyecto Node
+aislado en el scratchpad de la sesión, nunca como dependencia de
+`frontend/package.json`; eliminado al finalizar). Antes de correr la
+suite: `docker compose restart frontend` explícito (lección de Bloque
+5: el dev server de Vite sobre bind mount de Docker Desktop/Windows
+puede dejar de recoger cambios en sesiones largas) + verificación
+directa (`curl` sobre el módulo servido) de que el código activo
+corresponde al commit actual, ANTES de confiar en cualquier resultado
+de E2E.
+
+12 escenarios de la especificación, todos ejecutados contra el stack
+Docker real (frontend/backend/Postgres reales, credencial OpenAI real
+configurada):
+
+1. **Fresh user/sin legacy** (`qa6-fresh-user`): perfil real 10/10
+   `not_started`.
+2. **Legacy upgrade** (variantes topic-only/cert-only/ambos — 7.6):
+   perfil real correcto en los tres casos.
+3. **F5 tras migración**: perfil estable (`repeated bootstrap`, sin
+   duplicar evidencia en 3 reloads sucesivos).
+4. **Cross-context, misma identidad**: un segundo contexto de browser
+   (sin copiar `localStorage`/`sessionStorage`) ve el MISMO perfil
+   server-side.
+5. **Aislamiento multiusuario real** (`qa6-student-a`/`qa6-student-b`):
+   confirmado además con `psql` DIRECTO sobre `topic_progress`/
+   `certification_attempts` — 6 identidades distintas, 6 `user_id` UUID
+   distintos, mismo `course_id`/`module_id`/`topic_id`, filas
+   completamente independientes.
+6. **Topic completion real**: lección REAL generada por el proveedor
+   LLM (OpenAI), recorrida escena por escena en el browser, "Completar
+   tema y continuar" real → `topic_progress.status = completed`
+   confirmado.
+7. **Certification real**: práctica real preparada/respondida/enviada
+   en el browser (33.3% en esta corrida) → intento persistido
+   server-side.
+8. **Learning Profile update real**: el mismo tópico pasó de
+   `progressing`/`COMPLETED_NO_ASSESSMENT`/0 observaciones a
+   `needs_review`/`LOW_CERTIFICATION_SCORE`/1 observación, leído ANTES
+   y DESPUÉS del submit.
+9. **Guided Review real**: "Comenzar repaso" navegó de verdad al único
+   tópico `needs_review` real (`?review=true`).
+10. **Verification Before/After real**: "Finalizar repaso" →
+    "Evaluar progreso" → Certification real nueva → panel "Estado
+    después de la verificación" real, mostrando "Ahora: Necesita
+    repaso" (sin línea "Antes" porque el status no cambió — mismo
+    comportamiento documentado en Bloque 4 de v1.6.0, confirmado
+    también con evidencia server-derivada real).
+11. **Reset + reload sin resurrección**: click real en "Restablecer mi
+    progreso" (confirm real aceptado) → perfil recalcula a 10/10
+    `not_started` de inmediato → reload → sigue en 10/10 (nunca
+    resucita).
+12. **Postgres outage/recovery**: `docker compose stop postgres` con
+    la página ya cargada → reload → banner de error real (nunca un
+    perfil falso) → `docker compose start postgres` → reload → perfil
+    correcto recuperado. Confirmado además a nivel HTTP directo: con
+    Postgres caído, `/api/ready` responde `200`
+    (`status:"not_ready"`, nunca 503 — es un probe, por diseño) y
+    `/api/me`/`/api/progress`/`.../certification/history`/
+    `.../learning-profile` responden los cuatro `503` reales. Un
+    intento de mutación real (`PUT .../progress/.../complete`) durante
+    la caída también devuelve `503` — y tras la recuperación, `GET
+    .../progress` confirma que NUNCA quedó una escritura fantasma
+    (`topics: []`, exactamente el estado previo al intento).
+
+Además, dos escenarios NUEVOS de esta sesión que Bloque 5 no había
+probado con browser real: legacy topic-only y legacy cert-only por
+separado (siempre se había probado "ambos juntos"), post-migration
+legacy mutation ignorada, y legacy downgrade attempt (server con
+evidencia buena, legacy mutado a peor + marcador de import reseteado a
+propósito para forzar un reintento de import — el backend igual nunca
+degrada, `import_legacy_progress` ya lo garantizaba desde Bloque 2).
+
+**0 errores de consola** en los ~15 contextos de browser usados a lo
+largo de toda la sesión de QA. **Performance real confirmada**:
+exactamente 1 `GET .../learning-profile` por carga completa de curso
+(instrumentado contando requests HTTP reales), sin storms.
+
+Bug real de test (no de producto) encontrado y corregido durante esta
+sesión: un primer intento de scriptear "Evaluar progreso" usaba
+`waitForURL` con un patrón glob sin wildcard final, que no matcheaba la
+URL real (que sí incluye `?mode=practice&topics=...`, exactamente como
+`certificationSetupRoute` la construye) — corregido usando una regex en
+el script de QA, nunca un cambio de producto.
+
+### 7.8. Performance / seguridad / privacidad — sin hallazgos nuevos
+
+Confirmado sin cambios respecto a Bloques 4-5: ~10ms/3 queries
+constantes en el backend, 1 request de perfil por carga de curso en el
+frontend, cero `user_id` en requests normales, identidad siempre
+resuelta server-side, `AUTH_MODE=entra` sigue fallando explícito
+(`test_get_identity_provider_entra_is_explicitly_not_implemented`,
+Bloque 1, sigue verde), 0 endpoints de auth propia
+(`register`/`login`/`forgot-password`/`reset-password` — grep vacío),
+0 campos de password en el schema (`test_no_password_schema.py`, sigue
+verde). Sin logging de perfil completo (`service_logging.py`, sin
+cambios).
+
+### 7.9. Tests y hallazgo de flakiness de infraestructura
+
++2 tests de frontend (719 vs. 717 de Bloque 5): el gap de cobertura de
+7.4. 799 tests de backend sin cambios (Bloque 6 no tocó ningún archivo
+de backend). Se observó UNA corrida con 1 test fallando de forma
+aislada (no reproducido en dos corridas inmediatamente posteriores,
+bajo la misma carga pesada de Docker/Playwright de esta sesión) —
+documentado con honestidad como flakiness de infraestructura bajo
+carga, no como una regresión real: confirmado 719/719 limpio dos veces
+seguidas después.
+
+### 7.10. Recomendación para hardening/RC de v1.7.0
+
+La migración del perfil funcional a PostgreSQL está funcionalmente
+CERRADA y verificada de punta a punta con QA real (no solo mocks).
+Deuda conocida que sigue pendiente, sin bloquear este cierre:
+unificación de `RecommendedForYou` con Learning Intelligence (Bloque 4),
+`buildAttemptSummary` sin eliminar (Bloque 3). Sugerido para el
+hardening/RC: auditoría de diff acumulado completo `v1.6.1..HEAD`
+(los 6 bloques), `APP_VERSION` → `1.7.0`, `RELEASE_NOTES_v1.7.0.md`,
+y decidir si el hallazgo de flakiness de 7.9 amerita una nota o
+simplemente se descarta por no haber reproducido.

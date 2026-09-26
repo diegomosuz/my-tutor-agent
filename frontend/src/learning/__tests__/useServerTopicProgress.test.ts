@@ -162,6 +162,42 @@ describe("useServerTopicProgress", () => {
     expect(second.result.current.topics).toEqual({}); // nunca resucita
   });
 
+  it("REGRESIÓN (v1.7.0 Bloque 6): mutar el documento legacy DESPUÉS de la migración nunca se refleja -- el marcador ya seteado salta el import por completo, sin importar qué contenga el snapshot legacy en ese momento", async () => {
+    markTopicCompleted(COURSE, "modulo-1", "topico-1");
+    mockedGetCourseProgress.mockResolvedValue({
+      course_id: COURSE,
+      topics: [{ module_id: "modulo-1", topic_id: "topico-1", status: "completed", started_at: null, completed_at: null }],
+    });
+    mockedImportLegacyProgress.mockResolvedValue({
+      course_id: COURSE,
+      topics: [{ module_id: "modulo-1", topic_id: "topico-1", status: "completed", started_at: null, completed_at: null }],
+    });
+
+    const first = renderHook(() => useServerTopicProgress(COURSE));
+    await waitFor(() => expect(first.result.current.loading).toBe(false));
+    expect(mockedImportLegacyProgress).toHaveBeenCalledTimes(1);
+
+    // Manipulación DIRECTA del documento legacy (nunca vía la app real --
+    // simula una pestaña vieja o una edición manual) DESPUÉS de que la
+    // migración ya se consideró terminada: agrega un tópico "dominado"
+    // legacy que el servidor JAMÁS vio.
+    markTopicCompleted(COURSE, "modulo-2", "topico-fantasma-legacy");
+
+    // El servidor sigue devolviendo solo lo que realmente persiste --
+    // nunca ve la mutación legacy de arriba.
+    mockedGetCourseProgress.mockResolvedValue({
+      course_id: COURSE,
+      topics: [{ module_id: "modulo-1", topic_id: "topico-1", status: "completed", started_at: null, completed_at: null }],
+    });
+
+    const second = renderHook(() => useServerTopicProgress(COURSE));
+    await waitFor(() => expect(second.result.current.loading).toBe(false));
+
+    expect(mockedImportLegacyProgress).toHaveBeenCalledTimes(1); // nunca un segundo import
+    expect(second.result.current.topics?.["modulo-2:topico-fantasma-legacy"]).toBeUndefined();
+    expect(Object.keys(second.result.current.topics ?? {})).toEqual(["modulo-1:topico-1"]);
+  });
+
   it("courseId null nunca dispara ninguna llamada de red", () => {
     const { result } = renderHook(() => useServerTopicProgress(null));
     expect(result.current.topics).toBeNull();
