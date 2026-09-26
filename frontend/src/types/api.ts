@@ -571,3 +571,44 @@ export interface LegacyImportTopicEntry {
 export interface LegacyImportRequest {
   topics: LegacyImportTopicEntry[];
 }
+
+// v1.7.0 Bloque 4: Learning Profile server-side derivado (nunca
+// persistido). Espejo de backend/app/models/learning_profile.py. Nunca
+// incluye `answers`/answer key/`question_results`/historial completo de
+// Certification (eso sigue siendo `CertificationHistoryResponse`).
+export type LearningProfileCurricularStatus = "not_started" | "in_progress" | "completed";
+export type LearningProfileLearningStatus = "not_started" | "progressing" | "needs_review" | "mastered";
+export type LearningProfileReasonCode =
+  | "NOT_STARTED"
+  | "STARTED_NOT_COMPLETED"
+  | "COMPLETED_NO_ASSESSMENT"
+  | "LOW_CERTIFICATION_SCORE"
+  | "REPEATED_LOW_CERTIFICATION_SCORE"
+  | "MEDIUM_CERTIFICATION_SCORE"
+  | "HIGH_CERTIFICATION_SCORE";
+
+export interface LearningProfileSummary {
+  total_topics: number;
+  not_started: number;
+  progressing: number;
+  needs_review: number;
+  mastered: number;
+}
+
+export interface LearningProfileTopicEntry {
+  module_id: string;
+  topic_id: string;
+  module_title: string;
+  topic_title: string;
+  curricular_status: LearningProfileCurricularStatus;
+  learning_status: LearningProfileLearningStatus;
+  reason_code: LearningProfileReasonCode;
+  recent_average: number | null;
+  observation_count: number;
+}
+
+export interface LearningProfileResponse {
+  course_id: string;
+  summary: LearningProfileSummary;
+  topics: LearningProfileTopicEntry[];
+}

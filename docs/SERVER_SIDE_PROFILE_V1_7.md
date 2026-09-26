@@ -795,3 +795,291 @@ consuma directamente para recomendar próximos pasos — y, en paralelo,
 evaluar si vale la pena migrar `LearningProgressPage` a consumir el
 endpoint en vez de derivar client-side (decisión de producto separada,
 no técnica: el cálculo ya es idéntico en ambos lados).
+
+## 6. Bloque 5 — Frontend Learning Profile Cutover & Legacy Store Containment
+
+### 6.1. Alcance y principio central
+
+Este bloque ejecuta la decisión que Bloque 4 dejó pendiente: `GET
+.../learning-profile` pasa a ser la ÚNICA fuente productiva de
+`LearningState[]`/`LearningStateSummary` en el frontend. **Backend
+Learning Profile = source of truth pedagógica derivada** — pero sigue
+sin persistirse: cada `GET` recalcula desde cero (Bloque 4, sin
+cambios). El frontend PRESENTA y ORQUESTA; ya no CLASIFICA.
+
+`learningState.ts`/`topicLearningSignal.ts` (v1.1.0/v1.6.0) NO se
+eliminaron — siguen existiendo como (a) oráculo histórico de paridad
+(`fixtures/learning_state_parity.json`, Bloque 4, sin cambios), (b)
+tipos reutilizados por el adapter (`LearningState`/`LearningStateSummary`/
+`TopicLearningSignal`), y (c) `getReviewCandidates` (una función de
+ORDEN/SELECCIÓN sobre `LearningState[]` ya clasificado, nunca de
+clasificación pedagógica — sigue siendo válida sin importar de dónde
+vengan los `states`, PASO 41). Lo único que se retiró de producción es
+la CLASIFICACIÓN client-side (`deriveCourseLearningStates`/
+`deriveTopicLearningState`/`summarizeLearningStates`/
+`getTopicLearningSignal` para decidir el estado ACTUAL de un alumno).
+
+### 6.2. Auditoría de consumidores (mapa final)
+
+| Consumidor | Dato | Fuente ANTES | Fuente DESPUÉS |
+|---|---|---|---|
+| `LearningProgressPage` — Estado de aprendizaje/Prioridad de repaso/Progressing/Mastered | `LearningState[]`/`LearningStateSummary` | `deriveCourseLearningStates` client-side | `useServerLearningProfile` (Learning Profile API) |
+| `LearningProgressPage` — Progreso por módulo / % curricular | `TopicLearningProgress`/`ModuleSummaryView` | `useServerTopicProgress` + `courseSummary.ts` | Sin cambios (curricular, no LearningState) |
+| `LearningProgressPage`/`CertificationResultsPage` — Certification history (evolución, áreas a reforzar) | `CertificationAttemptSummary[]` | `useServerCertificationHistory` | Sin cambios (el perfil no expone attempts individuales) |
+| `RecommendedForYou` (`learningRecommendationEngine.ts`) | `TopicLearningSignal` interno | `getTopicLearningSignal` client-side | Sin cambios — **deuda conocida explícita** (PASO 39: no unificar todavía, fuera de alcance de este bloque) |
+| Guided Review (`buildGuidedReviewPlan`) | `LearningState[]` ya filtrado a `needs_review` | `learningStates` (del punto 1) | Mismo `learningStates`, ahora server-derived — `getReviewCandidates` sin cambios |
+| Verification pre-state (`handleStartVerification`) | `VerificationPreState[]` | `getTopicLearningSignal`+`deriveTopicLearningState` sobre `targetCourseId` | `fetchCourseLearningProfile(targetCourseId)` |
+| Verification post-state (`CertificationResultsPage`) | `LearningState[]` ("Ahora") | `deriveCourseLearningStates` | `useServerLearningProfile(courseId)` (perfil fresco — la página se monta de cero tras `submitExam()`, que ya persistió el intento) |
+| Verification `latestAttemptIdAtStart` | `attemptId` | Certification History | Sin cambios (el perfil no expone attempts) |
+
+### 6.3. `learningProfileClient` / `useServerLearningProfile`
+
+`frontend/src/learning/useServerLearningProfile.ts` (mismo archivo
+contiene client + hook, igual que `useServerTopicProgress.ts`/
+`useServerCertificationHistory.ts` de Bloques 2/3 — no se inventó una
+convención nueva de 3 archivos separados):
+
+- **Tipos** (`frontend/src/types/api.ts`): `LearningProfileResponse`/
+  `LearningProfileSummary`/`LearningProfileTopicEntry`, espejo manual
+  exacto de `backend/app/models/learning_profile.py`.
+- **`fetchCourseLearningProfile(courseId, signal?)`**: la función
+  "cliente" reutilizable puntualmente (PASO 8/14) — bootstrap
+  (`Promise.all([fetchCourseTopicProgress, fetchCourseCertificationHistory])`,
+  reutilizadas TAL CUAL de Bloques 2/3, nunca duplicadas) + `GET
+  .../learning-profile` + adapter.
+- **Adapter puro** (`toLearningState`/`toLearningStateSummary`): SOLO
+  transforma shape/naming (snake_case → camelCase, agrupa en
+  `TopicLearningSignal`/`LearningState`) — nunca aplica thresholds, nunca
+  decide reason code, nunca reclasifica. Los campos de
+  `TopicLearningSignal` que el contrato público de Bloque 4 no expone
+  (`latestScore`/`reinforcementLevel`/`lastObservedAt` — deliberadamente
+  excluidos allá, mismo criterio que `mastered_percentage`) se completan
+  en `null`: auditado que NINGÚN consumidor de producción los lee hoy
+  (`describeLearningStateEvidence` es el único lector de `.evidence` y
+  solo usa `.observations`/`.recentAverage`) — es una ausencia
+  declarada, no un valor inventado.
+- **`useServerLearningProfile(courseId)`**: mismas garantías que los
+  hooks de Bloques 2/3 — `profile === null` mientras carga (nunca un
+  placeholder semántico), error nunca pisa el último perfil bueno,
+  protección de race por cambio de curso (mismo patrón `cancelled` +
+  `AbortController` + dependencia `[courseId, reloadToken]`, sin
+  necesitar un framework de state management nuevo).
+
+### 6.4. Legacy bootstrap barrier
+
+El backend nunca lee `localStorage` — un navegador con progreso/
+Certification legacy locales todavía sin importar podría ver
+temporalmente "todo not_started" si el perfil se pidiera antes del
+import. `fetchCourseLearningProfile` resuelve esto reutilizando EXACTO
+el mismo mecanismo get-or-import de Bloques 2/3
+(`fetchCourseTopicProgress`/`fetchCourseCertificationHistory`, sin
+duplicar el algoritmo de import) en paralelo, y solo pide el perfil
+DESPUÉS de que ambos resolvieron. Si cualquiera de los dos rechaza, el
+perfil nunca se pide (`Promise.all` propaga) y el hook expone
+`error=true` — nunca continúa silenciosamente como si la migración
+hubiera terminado. Marcadores de import: los MISMOS de Bloques 2/3
+(`serverProgressImportedAt`/`certificationHistoryImportedAt`,
+`learningProgressStore.ts`) — no se creó un tercer sistema de marcadores.
+
+### 6.5. Cutover de `LearningProgressPage`/`CertificationResultsPage`
+
+`LearningProgressPage.tsx`: `learningStates`/`learningSummary` pasan de
+un `useMemo` sobre `deriveCourseLearningStates` a
+`learningProfile.profile?.states ?? []`/`?.summary ?? null`
+(`useServerLearningProfile(selectedCourseId)`). El resto de la página
+(summary counts, cards de needs_review/progressing, sección Dominados,
+reason copy vía `learningStateCopy.ts`, `getReviewCandidates`) queda
+**sin cambios** — consume el mismo shape `LearningState[]`/
+`LearningStateSummary` de siempre, ahora poblado por el adapter en vez
+de por `deriveCourseLearningStates`. `handleStartVerification` (PASO
+46-48) se reescribió para resolver `preVerificationStates` con
+`fetchCourseLearningProfile(targetCourseId)` en vez de
+`getTopicLearningSignal`+`deriveTopicLearningState` — `latestAttemptIdAtStart`
+sigue viniendo de `fetchCourseCertificationHistory` (el perfil no
+expone attempts).
+
+`CertificationResultsPage.tsx`: el panel "Estado después de la
+verificación" pasa de `deriveCourseLearningStates(courseId,
+summary.modules, progress)` a `useServerLearningProfile(courseId)`. Como
+esta página se monta de cero DESPUÉS de que `submitExam()` ya persistió
+el intento server-side (Bloque 3) y ANTES de navegar acá, el primer
+fetch del hook ya refleja la evidencia nueva — no hizo falta ningún
+mecanismo de "force refresh" adicional. El score global de la práctica
+sigue viniendo exclusivamente de `result` (Certification result vía
+`certificationStorage.ts`), nunca del perfil (PASO 42/56: dimensiones
+conceptualmente separadas). Los gráficos de historial
+(`ResultsEvolution`/`ReinforceAreas`, en `LearningProgressPage.tsx`)
+siguen usando Certification History server-side sin cambios (PASO 6/57
+— el perfil deliberadamente no tiene historia completa).
+
+### 6.6. RELEASE BLOCKER verificado: cero re-derivación productiva
+
+```
+grep -rn "deriveCourseLearningStates(" frontend/src --include="*.ts" --include="*.tsx"
+```
+
+Confirmado: el único caller es `learning/__tests__/learningState.test.ts`
+(el oráculo de tests, sancionado explícitamente por PASO 11). Cero
+call-sites de producción. Mismo resultado para `deriveTopicLearningState`/
+`summarizeLearningStates` (cero producción). `getTopicLearningSignal`
+conserva un único caller de producción — `learningRecommendationEngine.ts`
+("Recomendado para vos") — deuda conocida y explícitamente fuera de
+alcance de este bloque (PASO 39).
+
+Probado además con dos tests dedicados que demuestran el cutover de
+forma POSITIVA (no solo por ausencia de grep):
+- **"API gana"**: el Learning Profile mock se fuerza a `needs_review`
+  para un tópico SIN NINGUNA evidencia local sembrada (si la UI
+  derivara client-side, mostraría `not_started`) — la UI muestra
+  exactamente lo que el API dijo.
+- **"Sin fallback oculto"**: se siembra evidencia LEGACY COMPLETA en
+  localStorage (progreso completado + certificación con score alto) Y
+  el Learning Profile mock se hace fallar — la UI muestra el banner de
+  error, nunca deriva ni muestra un resultado calculado localmente a
+  partir de esa evidencia legacy.
+
+### 6.7. Legacy store containment (`learningProgressStore.ts`)
+
+Auditoría función por función (sin reescribir el store — PASO 63):
+
+| Export | Categoría | Estado |
+|---|---|---|
+| `markTopicStarted`/`markTopicCompleted` | D. dead production writer | 0 callers de producción desde Bloque 2 (`ClassroomPage` ya usa `markTopicStartedServer`/`markTopicCompletedServer`) — confirmado, no es nuevo de este bloque |
+| `recordCertificationAttempt` | D. dead production writer | 0 callers de producción desde Bloque 3 (`submitExam()` ya no hace dual-write) |
+| `getCourseLearningProgress`/`getCourseIdsWithProgress` | E. test-only compatibility | 0 callers de producción — solo `learningProgressStore.test.ts` (verifica los writers de arriba) |
+| `hasImportedServerProgress`/`markServerProgressImported`/`getLegacyTopicsSnapshot` | A/B. legacy migration reader + marker management | Activo — usado por `fetchCourseTopicProgress` (Bloque 2) |
+| `hasImportedCertificationHistory`/`markCertificationHistoryImported`/`getLegacyCertificationAttemptsSnapshot` | A/B | Activo — usado por `fetchCourseCertificationHistory` (Bloque 3) |
+| `resetCourseProgress` | C. compatibility/reset helper | Activo — usado por `SettingsPage.tsx` tras el DELETE server-side |
+| `load`/`getOrCreateCourse`/sanitización/migración classroomStorage | F. still-active legitimate | Infraestructura interna de todo lo de arriba |
+
+**RELEASE BLOCKER verificado**: cero producción escribe NUEVO topic
+progress o Certification attempts a `localStorage` — los únicos
+escritores (`markTopicStarted`/`markTopicCompleted`/
+`recordCertificationAttempt`) ya estaban muertos desde Bloques 2/3
+respectivamente; este bloque solo lo confirma con grep, no lo causa.
+`buildAttemptSummary` (`certificationSummary.ts`, deuda de Bloque 3)
+re-auditado: sigue en 0 callers de producción — se mantiene la misma
+decisión de no-cleanup-oportunista.
+
+**Rol final de `localStorage`** (PASO 65/114, documentado
+explícitamente): el documento de Learning Progress
+(`pwc-tutor:learning-progress:v1`) es, desde este bloque, EXCLUSIVAMENTE
+compatibilidad de migración legacy — puede seguir conteniendo datos
+viejos físicamente (nunca se borra en masa automáticamente, PASO 66:
+estrategia conservadora, facilita rollback/diagnóstico), pero deja de
+ser fuente de verdad de NADA productivo. `sessionStorage`
+(`GuidedReviewSession`/`GuidedReviewVerificationContext`) sigue siendo
+transient sin cambios (PASO 109) — nunca se guardó ahí un
+`LearningProfile` completo (PASO 108: no se crea una tercera copia
+persistente del perfil).
+
+### 6.8. QA real ejecutada — con browser real por primera vez en v1.7.0
+
+**Cambio de contexto real respecto a Bloques 2-4**: en este entorno SÍ
+hay Playwright/Chromium disponibles ahora (`npx playwright install
+chromium` funciona; confirmado con un smoke test real de página en
+blanco antes de usarlo para QA) — a diferencia de los bloques
+anteriores, que documentaron correctamente su ausencia. Dado que este
+bloque cambia el data flow productivo de la UI, se ejecutó un E2E real
+completo contra el stack Docker en vivo (frontend `:5173`, backend
+`:8000`, Postgres real), en un proyecto Node aislado en el scratchpad
+(nunca se agregó Playwright como dependencia del proyecto — cero
+dependencias nuevas se mantiene también para tooling de QA):
+
+1. **Legacy bootstrap real**: `localStorage` sembrado con progreso +
+   una certificación legacy para `demo-curso-ia`, servidor limpio →
+   el perfil, tras cargar, refleja exactamente la evidencia importada
+   (1 `needs_review`, 1 `progressing`) — el import corrió ANTES del
+   `GET .../learning-profile`.
+2. **F5 real**: recarga completa del navegador, perfil se mantiene
+   correcto.
+3. **Guided Review real**: "Comenzar repaso" navega de verdad a
+   `/aula/demo-curso-ia/fundamentos/componentes?review=true` (el único
+   tópico `needs_review` real).
+4. **Cross-context, misma identidad**: un SEGUNDO contexto de browser
+   (sin ningún `localStorage` legacy) ve el MISMO perfil server-side —
+   prueba real de que el servidor, no el navegador, es la fuente.
+5. **Multi-usuario real**: un TERCER contexto con header `X-Dev-User`
+   distinto ve un perfil completamente aislado (`0 needs_review`, `10
+   not_started`).
+6. **Reset real vía Settings**: click real en "Restablecer mi
+   progreso" (con el `window.confirm` real aceptado) → el perfil
+   recalcula a `10 not_started` inmediatamente: un reload posterior NO
+   resucita el progreso reseteado.
+7. **Certification + Verification real de punta a punta**: práctica
+   real preparada con el proveedor LLM real (OpenAI, configurado),
+   respondida clic a clic en el navegador, enviada — el perfil de
+   `arquitectura-empresarial` (nunca antes tocado) pasó de
+   `not_started`/0 observaciones a `needs_review`/
+   `LOW_CERTIFICATION_SCORE`/1 observación/25% en el navegador real,
+   confirmado leyendo el perfil ANTES y DESPUÉS del submit.
+8. **Postgres caído → recuperación real, específico de `/mi-aprendizaje`**:
+   `docker compose stop postgres` con la página ya cargada → reload →
+   banner de error real (nunca un perfil falso "todo not_started") →
+   `docker compose start postgres` → reload → perfil correcto
+   recuperado.
+9. **Performance real**: contados los requests HTTP reales durante una
+   carga completa de `demo-curso-ia` — exactamente **1** `GET
+   .../learning-profile` (nunca 1 por tópico, nunca un refetch
+   storm).
+10. **0 errores de consola** en los 4 contextos de browser usados a lo
+    largo de todo el recorrido.
+
+**Hallazgo operativo real (no un bug de código)**: durante este QA se
+detectó que el servidor de desarrollo Vite del container
+`pwc-tutor-frontend` (activo desde antes de este bloque) había dejado
+de recoger cambios de archivos vía bind mount (HMR/file-watch parece
+no disparar de forma confiable sobre bind mounts de Docker Desktop en
+Windows en sesiones muy largas) — un `docker compose restart frontend`
+lo resolvió al instante. Documentado acá porque costó tiempo real de
+diagnóstico y puede repetirse: si el frontend en `docker compose up
+-d` parece sordo a cambios de código durante una sesión larga,
+reiniciar el container antes de asumir un bug real.
+
+Datos de QA limpiados al finalizar (progreso/certificación de
+`demo-curso-ia` reseteados vía los mismos endpoints DELETE ya
+existentes) — el proyecto Node/Playwright del scratchpad nunca tocó
+`frontend/package.json` ni se commiteó.
+
+### 6.9. Performance
+
+Sin cambios en el backend (Bloque 4 sin tocar: ~10ms, 3 queries
+constantes). En el frontend, `useServerLearningProfile` agrega
+exactamente 1 `GET .../learning-profile` por carga de curso (más el
+bootstrap ya existente de Bloques 2/3, sin duplicar sus propios
+requests) — confirmado real (6.8, punto 9), nunca 1 por tópico.
+
+### 6.10. Seguridad / privacidad
+
+`learningProfileClient`/`useServerLearningProfile` nunca envían
+`user_id` — identidad resuelta 100% server-side (Bloque 1), igual que
+el resto de la API. Sin nueva UI de selector de usuario (`X-Dev-User`
+sigue siendo exclusivamente el mecanismo dev ya aprobado). El Learning
+Profile NO se envía al Tutor todavía (sin integración LLM en este
+bloque). Sin logging de perfil completo.
+
+### 6.11. Tests
+
+`useServerLearningProfile.test.ts` (nuevo, 16 tests: adapter, secuencia
+de bootstrap, 404/503/red nunca convertidos en perfil vacío, race de
+cambio de curso, refetch, remount, unmount). `LearningProgressPage.test.tsx`
+(+4: API-gana, sin-fallback-oculto, nunca-empty-durante-loading, y un
+test explícito de release-blocker) y `CertificationResultsPage.test.tsx`
+(+2: mismos dos criterios aplicados al panel de Verification) —
+ambos reutilizando el mismo oráculo pedagógico
+(`getTopicLearningSignal`/`deriveTopicLearningState`) para construir un
+fake backend de Learning Profile fiel, en vez de hardcodear respuestas
+ad-hoc. 799 tests de backend (sin cambios, Bloque 5 es 100% frontend) y
+717 de frontend (+22) pasando, `tsc`/`vite build` limpios.
+
+### 6.12. Deuda técnica conocida (sin cambios de este bloque)
+
+`RecommendedForYou` sigue derivando client-side vía
+`getTopicLearningSignal` (PASO 39, deuda explícita, ya documentada en
+Bloque 4 como "roadmap"). `buildAttemptSummary` sigue sin callers de
+producción (Bloque 3). Migrar `LearningProgressPage` a consumir
+`LearningProfile` fue precisamente el trabajo de ESTE bloque — el
+roadmap de Bloque 4 queda cerrado en su primera mitad; la unificación
+de `RecommendedForYou` con Learning Intelligence permanece como
+candidato de un bloque futuro, sin apuro (no es un requisito funcional
+pendiente).

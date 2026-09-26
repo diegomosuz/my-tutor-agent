@@ -12,6 +12,7 @@ import type {
   CourseSummary,
   EvaluateSimulationRequest,
   GroundingResponse,
+  LearningProfileResponse,
   LegacyCertificationImportRequest,
   LegacyImportRequest,
   LessonPlan,
@@ -227,6 +228,11 @@ export const api = {
     }),
   resetCourseProgressServer: (courseId: string, signal?: AbortSignal) =>
     request<undefined>(`/api/progress/${courseId}`, { method: "DELETE", signal }),
+  // v1.7.0 Bloque 4: Learning Profile server-side derivado (PostgreSQL,
+  // nunca persistido). El usuario actual se resuelve siempre server-side
+  // (identidad, Bloque 1) -- este método nunca envía un user_id.
+  getLearningProfile: (courseId: string, signal?: AbortSignal) =>
+    request<LearningProfileResponse>(`/api/courses/${courseId}/learning-profile`, { signal }),
   // Fase 7: estado del sistema (nunca expone secretos/paths completos).
   getSystemStatus: () => request<SystemStatusResponse>("/api/system/status"),
   getCourseDiagnostics: () => request<CourseDiagnosticsResponse>("/api/system/course-diagnostics"),

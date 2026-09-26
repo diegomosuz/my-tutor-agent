@@ -14,20 +14,13 @@ import {
   type LearningRecommendation,
   type RecommendationType,
 } from "../learning/learningRecommendationEngine";
-import {
-  deriveCourseLearningStates,
-  deriveTopicLearningState,
-  getReviewCandidates,
-  summarizeLearningStates,
-  type LearningState,
-  type LearningStateSummary,
-} from "../learning/learningState";
-import { getTopicLearningSignal } from "../learning/topicLearningSignal";
-import { fetchCourseTopicProgress, useServerTopicProgress } from "../learning/useServerTopicProgress";
+import { getReviewCandidates, type LearningState, type LearningStateSummary } from "../learning/learningState";
+import { useServerTopicProgress } from "../learning/useServerTopicProgress";
 import {
   fetchCourseCertificationHistory,
   useServerCertificationHistory,
 } from "../learning/useServerCertificationHistory";
+import { fetchCourseLearningProfile, useServerLearningProfile } from "../learning/useServerLearningProfile";
 import {
   describeLearningStateEvidence,
   LEARNING_STATE_REASON_COPY,
@@ -36,7 +29,7 @@ import {
 import { buildGuidedReviewPlan, type GuidedReviewTopicRef } from "../learning/guidedReviewPlan";
 import { startGuidedReviewSession } from "../learning/guidedReviewSession";
 import { startGuidedReviewVerification } from "../learning/guidedReviewVerification";
-import type { CertificationAttemptSummary, CourseLearningProgress } from "../learning/types";
+import type { CertificationAttemptSummary } from "../learning/types";
 import type { CourseDetail, CourseSummary } from "../types/api";
 
 const DISCLAIMER =
@@ -708,18 +701,15 @@ export function LearningProgressPage() {
     [courseDetail, summary, progress]
   );
 
-  // v1.6.0 (Bloque 2): LearningState[] SIEMPRE derivado on-demand (nunca
-  // persistido, PARTE 5) a partir de la misma `progress`/`summary.modules`
-  // ya cargados arriba — cualquier nueva certificación/reset se refleja
-  // apenas cambia `progress` (PARTE 31, sin lifecycle especial).
-  const learningStates = useMemo(
-    () => (summary && selectedCourseId ? deriveCourseLearningStates(selectedCourseId, summary.modules, progress) : []),
-    [summary, progress, selectedCourseId]
-  );
-  const learningSummary = useMemo(
-    () => (selectedCourseId ? summarizeLearningStates(selectedCourseId, learningStates) : null),
-    [selectedCourseId, learningStates]
-  );
+  // v1.7.0 Bloque 5: LearningState[]/LearningStateSummary ya NO se
+  // re-derivan acá — el backend (`GET .../learning-profile`) es la fuente
+  // productiva (ver docs/SERVER_SIDE_PROFILE_V1_7.md sección "Bloque 5").
+  // `profile === null` mientras carga (bootstrap legacy + GET del
+  // perfil) -- `learningStates`/`learningSummary` quedan en `[]`/`null`
+  // hasta entonces, nunca un "todo not_started" falso (PASO 22).
+  const learningProfile = useServerLearningProfile(selectedCourseId);
+  const learningStates = learningProfile.profile?.states ?? [];
+  const learningSummary = learningProfile.profile?.summary ?? null;
   const reviewCandidates = useMemo(() => getReviewCandidates(learningStates), [learningStates]);
   const needsReviewCandidates = useMemo(
     () => reviewCandidates.filter((s) => s.status === "needs_review"),
@@ -771,23 +761,28 @@ export function LearningProgressPage() {
   // necesitar `CourseDetail`/`learningStates` de ningún curso. Aislamiento
   // de curso sigue garantizado por construcción: nunca se lee ni se
   // escribe nada de otro courseId.
-  // v1.7.0 Bloque 3: topics Y certificationAttempts se resuelven con
-  // `fetchCourseTopicProgress`/`fetchCourseCertificationHistory` (mismo
-  // get-or-import que usan los hooks -- ver docstring de esas funciones:
-  // bug real de QA corregido acá, sin esto un curso cuyo hook nunca se
-  // montó para `targetCourseId` (posible: puede no ser `selectedCourseId`)
-  // nunca disparaba el bootstrap legacy, y `latestAttemptIdAtStart` podía
-  // quedar `null` aunque existiera un intento legacy real). El aislamiento
-  // de curso sigue garantizado por construcción (nunca se lee/escribe
-  // otro courseId que no sea `targetCourseId`).
+  // v1.7.0 Bloque 5: `preVerificationStates` se resuelve SIEMPRE contra el
+  // Learning Profile server-side de `targetCourseId` (PASO 46/48 —
+  // reutiliza `fetchCourseLearningProfile`, que ya garantiza el bootstrap
+  // legacy completo ANTES del GET del perfil, mismo motivo por el que
+  // antes se llamaba directamente a `fetchCourseTopicProgress`/
+  // `fetchCourseCertificationHistory`: un curso cuyo hook nunca se montó
+  // para `targetCourseId` -- posible, no necesariamente
+  // `selectedCourseId` -- nunca debe perder su bootstrap legacy). Nunca
+  // vuelve a calcular esto con `getTopicLearningSignal`/
+  // `deriveTopicLearningState` (PASO 51: cero re-derivación cliente). El
+  // aislamiento de curso sigue garantizado por construcción (nunca se
+  // lee/escribe otro courseId que no sea `targetCourseId`).
+  // `latestAttemptIdAtStart` sigue viniendo de Certification History
+  // (PASO 47: el perfil no expone attempts individuales).
   async function handleStartVerification(topics: GuidedReviewTopicRef[]) {
     if (!reviewCompletion) return;
     const targetCourseId = reviewCompletion.courseId;
-    let targetTopics: CourseLearningProgress["topics"] = {};
+    let targetStates: LearningState[] = [];
     try {
-      targetTopics = await fetchCourseTopicProgress(targetCourseId);
+      targetStates = (await fetchCourseLearningProfile(targetCourseId)).states;
     } catch {
-      targetTopics = {};
+      targetStates = [];
     }
     let targetAttempts: CertificationAttemptSummary[] = [];
     try {
@@ -795,17 +790,15 @@ export function LearningProgressPage() {
     } catch {
       targetAttempts = [];
     }
-    const targetProgress: CourseLearningProgress = {
-      courseId: targetCourseId,
-      topics: targetTopics,
-      certificationAttempts: targetAttempts,
-      serverProgressImportedAt: null,
-      certificationHistoryImportedAt: null,
-    };
+    const statesByKey = new Map(targetStates.map((s) => [`${s.moduleId}:${s.topicId}`, s]));
     const preVerificationStates = topics.map((t) => {
-      const signal = getTopicLearningSignal(t.moduleId, t.topicId, targetProgress, targetAttempts);
-      const { status, reasonCode } = deriveTopicLearningState(signal);
-      return { moduleId: t.moduleId, topicId: t.topicId, status, reasonCode };
+      const state = statesByKey.get(`${t.moduleId}:${t.topicId}`);
+      return {
+        moduleId: t.moduleId,
+        topicId: t.topicId,
+        status: state?.status ?? ("not_started" as const),
+        reasonCode: state?.reasonCode ?? ("NOT_STARTED" as const),
+      };
     });
     const latestAttemptIdAtStart = targetAttempts[0]?.attemptId ?? null;
     startGuidedReviewVerification(targetCourseId, topics, latestAttemptIdAtStart, preVerificationStates);
@@ -836,7 +829,7 @@ export function LearningProgressPage() {
         </div>
       )}
 
-      {!error && (serverTopics.error || serverCertHistory.error) && (
+      {!error && (serverTopics.error || serverCertHistory.error || learningProfile.error) && (
         <div className="state-box state-box--error">
           <h3>No pudimos cargar tu progreso</h3>
           <p>

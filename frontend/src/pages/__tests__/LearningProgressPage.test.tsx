@@ -137,6 +137,88 @@ const mockImportLegacyCertificationHistory = vi.fn(
   }
 );
 
+// v1.7.0 Bloque 5: la página ya NO deriva LearningState client-side --
+// `GET .../learning-profile` es la fuente productiva. Este fake backend
+// mínimo deriva la respuesta del perfil reutilizando el mismo oráculo
+// pedagógico (`getTopicLearningSignal`/`deriveTopicLearningState`,
+// `topicLearningSignal.ts`/`learningState.ts`, sin cambios) sobre el MISMO
+// estado en memoria (`fakeServerProgress`/`fakeCertHistory`) que ya
+// alimenta los otros dos endpoints fake -- así el mock representa
+// fielmente lo que el backend real haría (derivar desde topic_progress +
+// certification_topic_results), sin duplicar ninguna regla de
+// clasificación nueva.
+let fakeCourseCurriculum: typeof COURSE_DETAIL | typeof BIG_COURSE_DETAIL | null = null;
+
+/** Reemplaza `mockedGetCourse.mockResolvedValue(detail)` en todos los
+ * tests: además de configurar `api.getCourse`, registra el curriculum real
+ * que el fake `getLearningProfile` necesita para construir su respuesta
+ * (mismo principio que el backend real: el universo/orden de tópicos sale
+ * SIEMPRE del curriculum, nunca de las filas de progreso -- ver
+ * `learning_profile_service.py`). */
+function setCourseDetail(detail: typeof COURSE_DETAIL | typeof BIG_COURSE_DETAIL): void {
+  mockedGetCourse.mockResolvedValue(detail);
+  fakeCourseCurriculum = detail;
+}
+
+function buildFakeLearningProfileResponse(courseId: string) {
+  const curriculum = fakeCourseCurriculum;
+  if (!curriculum) {
+    return { course_id: courseId, summary: { total_topics: 0, not_started: 0, progressing: 0, needs_review: 0, mastered: 0 }, topics: [] };
+  }
+  const progressByKey = fakeServerProgress[courseId] ?? {};
+  const topicsRecord: Record<string, TopicLearningProgress> = {};
+  for (const entry of Object.values(progressByKey)) {
+    const fallbackAccess = entry.completed_at ?? entry.started_at ?? new Date(0).toISOString();
+    topicsRecord[fakeTopicKey(entry.module_id, entry.topic_id)] = {
+      moduleId: entry.module_id,
+      topicId: entry.topic_id,
+      status: entry.status,
+      startedAt: entry.started_at,
+      lastAccessedAt: fallbackAccess,
+      completedAt: entry.completed_at,
+      currentScene: null,
+      totalScenes: null,
+      contentSha256: null,
+    };
+  }
+  const attempts = (fakeCertHistory[courseId] ?? []).map((e) => toAttemptSummary(e as never));
+  const progress: CourseLearningProgress = {
+    courseId,
+    topics: topicsRecord,
+    certificationAttempts: attempts,
+    serverProgressImportedAt: null,
+    certificationHistoryImportedAt: null,
+  };
+
+  const topics = curriculum.modules.flatMap((module) =>
+    module.topics.map((topic) => {
+      const signal = getTopicLearningSignal(module.id, topic.id, progress, attempts);
+      const { status, reasonCode } = deriveTopicLearningState(signal);
+      return {
+        module_id: module.id,
+        topic_id: topic.id,
+        module_title: module.title,
+        topic_title: topic.title,
+        curricular_status: signal.status,
+        learning_status: status,
+        reason_code: reasonCode,
+        recent_average: signal.recentAverage,
+        observation_count: signal.observations,
+      };
+    })
+  );
+  const summary = {
+    total_topics: topics.length,
+    not_started: topics.filter((t) => t.learning_status === "not_started").length,
+    progressing: topics.filter((t) => t.learning_status === "progressing").length,
+    needs_review: topics.filter((t) => t.learning_status === "needs_review").length,
+    mastered: topics.filter((t) => t.learning_status === "mastered").length,
+  };
+  return { course_id: courseId, summary, topics };
+}
+
+const mockGetLearningProfile = vi.fn(async (courseId: string) => buildFakeLearningProfileResponse(courseId));
+
 vi.mock("../../api/client", () => ({
   api: {
     getCourses: vi.fn(),
@@ -147,6 +229,7 @@ vi.mock("../../api/client", () => ({
     getCertificationHistory: (courseId: string) => mockGetCertificationHistory(courseId),
     importLegacyCertificationHistory: (courseId: string, body: unknown) =>
       mockImportLegacyCertificationHistory(courseId, body as never),
+    getLearningProfile: (courseId: string) => mockGetLearningProfile(courseId),
   },
   ApiError: class ApiError extends Error {
     status: number;
@@ -171,7 +254,10 @@ import {
   recordCertificationAttempt,
 } from "../../learning/learningProgressStore";
 import { loadGuidedReviewVerificationContext } from "../../learning/guidedReviewVerification";
-import type { CertificationAttemptSummary } from "../../learning/types";
+import { deriveTopicLearningState } from "../../learning/learningState";
+import { getTopicLearningSignal } from "../../learning/topicLearningSignal";
+import { toAttemptSummary } from "../../learning/useServerCertificationHistory";
+import type { CertificationAttemptSummary, CourseLearningProgress, TopicLearningProgress } from "../../learning/types";
 
 const mockedGetCourses = api.getCourses as unknown as ReturnType<typeof vi.fn>;
 const mockedGetCourse = api.getCourse as unknown as ReturnType<typeof vi.fn>;
@@ -246,6 +332,8 @@ beforeEach(() => {
   fakeCertHistory = {};
   mockGetCertificationHistory.mockClear();
   mockImportLegacyCertificationHistory.mockClear();
+  fakeCourseCurriculum = null;
+  mockGetLearningProfile.mockClear();
 });
 
 afterEach(() => {
@@ -257,7 +345,7 @@ describe("LearningProgressPage", () => {
   // A. nuevo usuario: 0 progreso y empty states correctos.
   it("A: curso nunca iniciado muestra el mensaje de progreso vacío, nunca NaN/undefined", async () => {
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(COURSE_DETAIL);
+    setCourseDetail(COURSE_DETAIL);
     const { container } = renderPage();
     await waitFor(() =>
       expect(screen.getByText("Tu progreso aparecerá acá cuando empieces a estudiar.")).toBeInTheDocument()
@@ -267,7 +355,7 @@ describe("LearningProgressPage", () => {
 
   it("sin prácticas ni simulacros muestra los mensajes vacíos correspondientes", async () => {
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(COURSE_DETAIL);
+    setCourseDetail(COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByText("Aún no realizaste prácticas.")).toBeInTheDocument());
     expect(screen.getByText("Aún no realizaste simulacros.")).toBeInTheDocument();
@@ -284,7 +372,7 @@ describe("LearningProgressPage", () => {
   it("con progreso real, muestra el porcentaje y la recomendación de Continuar", async () => {
     markTopicStarted("curso-demo", "modulo-1", "topico-1");
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(COURSE_DETAIL);
+    setCourseDetail(COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByText(/tópicos completados/)).toBeInTheDocument());
     expect(screen.getByText("Recomendado para vos")).toBeInTheDocument();
@@ -296,7 +384,7 @@ describe("LearningProgressPage", () => {
     markTopicCompleted("curso-demo", "modulo-1", "topico-1");
     markTopicCompleted("curso-demo", "modulo-1", "topico-2");
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(COURSE_DETAIL);
+    setCourseDetail(COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByText("Curso completado")).toBeInTheDocument());
     expect(screen.queryByText("Continuar")).not.toBeInTheDocument();
@@ -307,14 +395,14 @@ describe("LearningProgressPage", () => {
       COURSE_SUMMARY,
       { ...COURSE_SUMMARY, id: "curso-otro", title: "Otro Curso" },
     ]);
-    mockedGetCourse.mockResolvedValue(COURSE_DETAIL);
+    setCourseDetail(COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByLabelText("Curso")).toBeInTheDocument());
   });
 
   it("con un solo curso, nunca muestra el selector", async () => {
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(COURSE_DETAIL);
+    setCourseDetail(COURSE_DETAIL);
     renderPage();
     await waitFor(() =>
       expect(screen.getByText("Tu progreso aparecerá acá cuando empieces a estudiar.")).toBeInTheDocument()
@@ -325,7 +413,7 @@ describe("LearningProgressPage", () => {
   it("lista módulos y tópicos con su estado, cada tópico es un link al aula", async () => {
     markTopicCompleted("curso-demo", "modulo-1", "topico-1");
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(COURSE_DETAIL);
+    setCourseDetail(COURSE_DETAIL);
     const { container } = renderPage();
     await waitFor(() => expect(container.querySelector(".learning-modules")).toBeInTheDocument());
     // v1.6.0 (Bloque 2): "Tópico 1" también aparece en la sección "En
@@ -344,7 +432,7 @@ describe("LearningProgressPage", () => {
   it("Continuar navega al tópico correspondiente", async () => {
     markTopicStarted("curso-demo", "modulo-1", "topico-1");
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(COURSE_DETAIL);
+    setCourseDetail(COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByRole("button", { name: "Continuar" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
@@ -355,7 +443,7 @@ describe("LearningProgressPage", () => {
     markTopicCompleted("curso-demo", "modulo-1", "topico-1");
     recordCertificationAttempt("curso-demo", attempt());
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(COURSE_DETAIL);
+    setCourseDetail(COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByRole("button", { name: "Revisar tema" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Revisar tema" }));
@@ -367,7 +455,7 @@ describe("LearningProgressPage", () => {
     markTopicStarted("curso-demo", "modulo-1", "topico-2");
     recordCertificationAttempt("curso-demo", attempt());
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(COURSE_DETAIL);
+    setCourseDetail(COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByRole("button", { name: "Iniciar práctica" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Iniciar práctica" }));
@@ -377,7 +465,7 @@ describe("LearningProgressPage", () => {
   it("el motivo de la recomendación es siempre visible, con datos reales, nunca 'la IA recomienda'", async () => {
     markTopicStarted("curso-demo", "modulo-1", "topico-1");
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(COURSE_DETAIL);
+    setCourseDetail(COURSE_DETAIL);
     const { container } = renderPage();
     await waitFor(() => expect(screen.getByText("Dejaste este tópico en progreso.")).toBeInTheDocument());
     expect(container.textContent?.toLowerCase()).not.toContain("la ia recomienda");
@@ -387,7 +475,7 @@ describe("LearningProgressPage", () => {
     markTopicCompleted("curso-demo", "modulo-1", "topico-1");
     recordCertificationAttempt("curso-demo", attempt());
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(COURSE_DETAIL);
+    setCourseDetail(COURSE_DETAIL);
     const { container } = renderPage();
     await waitFor(() => expect(screen.getAllByText("¿Por qué?").length).toBeGreaterThan(0));
     fireEvent.click(screen.getAllByText("¿Por qué?")[0]);
@@ -401,7 +489,7 @@ describe("LearningProgressPage", () => {
     markTopicCompleted("curso-demo", "modulo-1", "topico-1");
     markTopicCompleted("curso-demo", "modulo-1", "topico-2");
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(COURSE_DETAIL);
+    setCourseDetail(COURSE_DETAIL);
     const { container } = renderPage();
     await waitFor(() => expect(screen.getByText("Curso completado")).toBeInTheDocument());
     const text = container.textContent?.toLowerCase() ?? "";
@@ -414,7 +502,7 @@ describe("LearningProgressPage", () => {
     markTopicStarted("curso-demo", "modulo-1", "topico-1");
     recordCertificationAttempt("otro-curso", attempt({ courseId: "otro-curso" }));
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(COURSE_DETAIL);
+    setCourseDetail(COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByText("Recomendado para vos")).toBeInTheDocument());
     expect(screen.queryByText("Reforzar")).not.toBeInTheDocument();
@@ -476,7 +564,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
     recordCertificationAttempt("curso-demo", scoreAttempt("topico-c", 30, "2026-01-01T00:00:00.000Z", "att-c"));
     recordCertificationAttempt("curso-demo", scoreAttempt("topico-d", 95, "2026-01-01T00:00:00.000Z", "att-d"));
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     const { container } = renderPage();
     await waitFor(() => expect(screen.getByText("Estado de aprendizaje")).toBeInTheDocument());
     const summarySection = within(container.querySelector(".learning-insights-summary") as HTMLElement);
@@ -496,7 +584,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
     markTopicCompleted("curso-demo", "modulo-1", "topico-a");
     recordCertificationAttempt("curso-demo", scoreAttempt("topico-a", 35, "2026-01-01T00:00:00.000Z", "att-1"));
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     const { container } = renderPage();
     await waitFor(() => expect(screen.getByText("Prioridad de repaso")).toBeInTheDocument());
     expect(screen.getByText("Necesita repaso")).toBeInTheDocument();
@@ -511,7 +599,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
     recordCertificationAttempt("curso-demo", scoreAttempt("topico-a", 30, "2026-01-01T00:00:00.000Z", "att-1"));
     recordCertificationAttempt("curso-demo", scoreAttempt("topico-a", 40, "2026-01-02T00:00:00.000Z", "att-2"));
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     renderPage();
     await waitFor(() =>
       expect(screen.getByText("Los resultados recientes muestran dificultad repetida en este tema.")).toBeInTheDocument()
@@ -522,7 +610,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
   it("PASO 49/9: completion-only aparece como 'En progreso', NUNCA 'Dominado'", async () => {
     markTopicCompleted("curso-demo", "modulo-1", "topico-b");
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     const { container } = renderPage();
     await waitFor(() => expect(screen.getByRole("heading", { name: "En progreso" })).toBeInTheDocument());
     const progressingCard = screen
@@ -539,7 +627,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
     markTopicCompleted("curso-demo", "modulo-1", "topico-d");
     recordCertificationAttempt("curso-demo", scoreAttempt("topico-d", 95, "2026-01-01T00:00:00.000Z", "att-1"));
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Dominados" })).toBeInTheDocument());
     // "Tópico D" también aparece en "Progreso por módulo" (lista curricular
@@ -552,7 +640,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
 
   it("PASO 51/25: curso completamente nuevo (sin actividad) muestra el empty-state correcto, nunca alerta vacía", async () => {
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     renderPage();
     await waitFor(() =>
       expect(
@@ -565,7 +653,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
   it("PASO 24: actividad real pero sin needs_review -> mensaje positivo preciso, nunca 'Dominás todo' salvo que todo sea mastered", async () => {
     markTopicStarted("curso-demo", "modulo-1", "topico-a"); // progressing, no mastered
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     const { container } = renderPage();
     await waitFor(() =>
       expect(screen.getByText("No hay temas que requieran repaso prioritario.")).toBeInTheDocument()
@@ -577,7 +665,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
     markTopicCompleted("curso-demo", "modulo-1", "topico-a");
     recordCertificationAttempt("curso-demo", scoreAttempt("topico-a", 30, "2026-01-01T00:00:00.000Z", "att-1"));
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByRole("button", { name: "Repasar tema" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Repasar tema" }));
@@ -589,7 +677,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
     markTopicCompleted("curso-demo", "modulo-1", "topico-c");
     recordCertificationAttempt("curso-demo", scoreAttempt("topico-c", 20, "2026-01-01T00:00:00.000Z", "att-1"));
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByRole("button", { name: "Comenzar repaso" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Comenzar repaso" }));
@@ -599,7 +687,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
   it("PASO 54: sin ningún needs_review, 'Comenzar repaso' nunca se muestra", async () => {
     markTopicCompleted("curso-demo", "modulo-1", "topico-b");
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByText("Prioridad de repaso")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Comenzar repaso" })).not.toBeInTheDocument();
@@ -608,7 +696,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
   it("PASO 55: aislamiento de curso -- evidencia de otro curso nunca aparece acá", async () => {
     recordCertificationAttempt("otro-curso", scoreAttempt("topico-a", 20, "2026-01-01T00:00:00.000Z", "att-1"));
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     renderPage();
     await waitFor(() =>
       expect(
@@ -623,7 +711,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
     // vacío (exactamente lo que produce un usuario real de v1.5.0).
     markTopicCompleted("curso-demo", "modulo-1", "topico-a");
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     const { container } = renderPage();
     await waitFor(() => expect(screen.getByText("Estado de aprendizaje")).toBeInTheDocument());
     expect(container.textContent).not.toMatch(/NaN|undefined|Invalid Date/);
@@ -638,7 +726,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
     // una instancia nueva del hook que lee el estado server-side actual.
     markTopicCompleted("curso-demo", "modulo-1", "topico-a");
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     const first = renderPage();
     await waitFor(() =>
       expect(screen.getByText("No hay temas que requieran repaso prioritario.")).toBeInTheDocument()
@@ -673,7 +761,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
   it("PASO 59: COMPLETED_NO_ASSESSMENT nunca menciona checkpoint, score numérico ni 'fallaste'", async () => {
     markTopicCompleted("curso-demo", "modulo-1", "topico-b");
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     renderPage();
     await waitFor(() =>
       expect(
@@ -691,7 +779,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
   it("PASO 34: evidencia para un tópico eliminado del curso real no genera card ni rompe la navegación", async () => {
     markTopicCompleted("curso-demo", "modulo-1", "topico-inexistente");
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     const { container } = renderPage();
     await waitFor(() => expect(screen.getByText("Estado de aprendizaje")).toBeInTheDocument());
     expect(container.textContent).not.toContain("topico-inexistente");
@@ -723,7 +811,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 3 (Guided Review Session)", () 
       scoreAttempt("topico-a", 30, "2026-01-01T00:00:00.000Z", "att-1")
     );
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByRole("button", { name: "Comenzar repaso" })).toBeInTheDocument());
 
@@ -742,7 +830,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 3 (Guided Review Session)", () 
       scoreAttempt("topico-a", 30, "2026-01-01T00:00:00.000Z", "att-1")
     );
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByRole("button", { name: "Repasar tema" })).toBeInTheDocument());
 
@@ -754,7 +842,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 3 (Guided Review Session)", () 
 
   it("confirmación 'Repaso completado' se muestra con el state de navegación, con copy preciso (nunca 'dominás'/'mejoraste')", async () => {
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     const { container } = renderPage([
       {
         pathname: "/mi-aprendizaje",
@@ -782,7 +870,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 3 (Guided Review Session)", () 
 
   it("'Evaluar progreso' navega al flujo EXISTENTE de Certification, acotado a los tópicos repasados", async () => {
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     renderPage([
       {
         pathname: "/mi-aprendizaje",
@@ -812,7 +900,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 3 (Guided Review Session)", () 
     markTopicCompleted("curso-demo", "modulo-1", "topico-a");
     recordCertificationAttempt("curso-demo", scoreAttempt("topico-a", 30, "2026-01-01T00:00:00.000Z", "att-1"));
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     renderPage([
       {
         pathname: "/mi-aprendizaje",
@@ -870,7 +958,7 @@ describe("LearningProgressPage — v1.6.0 Bloque 3 (Guided Review Session)", () 
 
   it("'Entendido' cierra la confirmación sin efectos secundarios", async () => {
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     renderPage([
       {
         pathname: "/mi-aprendizaje",
@@ -889,9 +977,101 @@ describe("LearningProgressPage — v1.6.0 Bloque 3 (Guided Review Session)", () 
 
   it("sin state de navegación, nunca muestra la confirmación de repaso completado", async () => {
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
-    mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
+    setCourseDetail(BIG_COURSE_DETAIL);
     renderPage();
     await waitFor(() => expect(screen.getByText("Estado de aprendizaje")).toBeInTheDocument());
     expect(screen.queryByText("Repaso completado")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------
+// v1.7.0 Bloque 5 — "Frontend Learning Profile Cutover": prueba el
+// cutover en sí (PARTE M de la especificación) -- la UI obedece
+// EXACTAMENTE lo que el backend devuelve, nunca deriva un estado
+// alternativo desde localStorage/evidencia local cruda, ni siquiera
+// cuando esa evidencia local existe y contradice al API.
+// ---------------------------------------------------------------------
+
+describe("LearningProgressPage — v1.7.0 Bloque 5 (Frontend Learning Profile Cutover)", () => {
+  it("PASO 79: la UI obedece EXACTAMENTE lo que el Learning Profile API devuelve, aunque no exista NINGUNA evidencia local cruda", async () => {
+    // Deliberadamente sin sembrar NADA en fakeServerProgress/fakeCertHistory
+    // -- si la UI derivara client-side, mostraría "not_started" para ambos
+    // tópicos. El fake getLearningProfile se sobreescribe directamente
+    // (bypaseando el oráculo) para forzar needs_review.
+    mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
+    setCourseDetail(COURSE_DETAIL);
+    mockGetLearningProfile.mockResolvedValue({
+      course_id: "curso-demo",
+      summary: { total_topics: 2, not_started: 1, progressing: 0, needs_review: 1, mastered: 0 },
+      topics: [
+        {
+          module_id: "modulo-1", topic_id: "topico-1", module_title: "Módulo 1", topic_title: "Tópico 1",
+          curricular_status: "not_started", learning_status: "needs_review",
+          reason_code: "LOW_CERTIFICATION_SCORE", recent_average: 30, observation_count: 1,
+        },
+        {
+          module_id: "modulo-1", topic_id: "topico-2", module_title: "Módulo 1", topic_title: "Tópico 2",
+          curricular_status: "not_started", learning_status: "not_started",
+          reason_code: "NOT_STARTED", recent_average: null, observation_count: 0,
+        },
+      ],
+    });
+    const { container } = renderPage();
+    await waitFor(() => expect(screen.getByText("Prioridad de repaso")).toBeInTheDocument());
+    expect(screen.getByText("Necesita repaso")).toBeInTheDocument();
+    expect(container.textContent).toContain(
+      "Tu resultado reciente en certificación indica que conviene repasar este tema."
+    );
+  });
+
+  it("PASO 80: si el Learning Profile API falla, la UI NUNCA deriva un estado desde localStorage aunque haya evidencia legacy completa", async () => {
+    // Legacy COMPLETO en localStorage -- si la UI derivara client-side (el
+    // comportamiento pre-Bloque 5), esto produciría un resultado real
+    // (mastered). Con el cutover, un fallo del perfil debe mostrar error,
+    // nunca ese resultado derivado localmente.
+    markTopicCompleted("curso-demo", "modulo-1", "topico-1");
+    recordCertificationAttempt("curso-demo", scoreAttempt("topico-1", 95, "2026-01-01T00:00:00.000Z", "att-1"));
+    mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
+    setCourseDetail(COURSE_DETAIL);
+    mockGetLearningProfile.mockRejectedValue(new Error("network"));
+    renderPage();
+    await waitFor(() => expect(screen.getByText("No pudimos cargar tu progreso")).toBeInTheDocument());
+    expect(screen.queryByText("Estado de aprendizaje")).not.toBeInTheDocument();
+    expect(screen.queryByText("Dominado")).not.toBeInTheDocument();
+  });
+
+  it("PASO 22: mientras el perfil todavía carga, nunca muestra 'Estado de aprendizaje' con counts falsos", async () => {
+    mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
+    setCourseDetail(COURSE_DETAIL);
+    mockGetLearningProfile.mockImplementation(() => new Promise(() => {})); // nunca resuelve
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByText("Tu progreso aparecerá acá cuando empieces a estudiar.")).toBeInTheDocument()
+    );
+    expect(screen.queryByText("Estado de aprendizaje")).not.toBeInTheDocument();
+  });
+
+  it("RELEASE BLOCKER: deriveCourseLearningStates ya no es una vía productiva -- el perfil viene 100% de mockGetLearningProfile", async () => {
+    mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
+    setCourseDetail(COURSE_DETAIL);
+    mockGetLearningProfile.mockResolvedValue({
+      course_id: "curso-demo",
+      summary: { total_topics: 2, not_started: 0, progressing: 0, needs_review: 0, mastered: 2 },
+      topics: [
+        {
+          module_id: "modulo-1", topic_id: "topico-1", module_title: "Módulo 1", topic_title: "Tópico 1",
+          curricular_status: "completed", learning_status: "mastered",
+          reason_code: "HIGH_CERTIFICATION_SCORE", recent_average: 95, observation_count: 1,
+        },
+        {
+          module_id: "modulo-1", topic_id: "topico-2", module_title: "Módulo 1", topic_title: "Tópico 2",
+          curricular_status: "completed", learning_status: "mastered",
+          reason_code: "HIGH_CERTIFICATION_SCORE", recent_average: 90, observation_count: 1,
+        },
+      ],
+    });
+    renderPage();
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Dominados" })).toBeInTheDocument());
+    expect(mockGetLearningProfile).toHaveBeenCalledWith("curso-demo");
   });
 });

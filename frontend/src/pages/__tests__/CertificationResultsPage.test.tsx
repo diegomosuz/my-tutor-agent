@@ -90,6 +90,55 @@ const mockImportLegacyCertificationHistory = vi.fn(
   }
 );
 
+// v1.7.0 Bloque 5: el panel de verificación ya NO deriva LearningState
+// client-side -- `GET .../learning-profile` es la fuente productiva. Este
+// fake backend deriva la respuesta reutilizando el mismo oráculo
+// pedagógico (`getTopicLearningSignal`/`deriveTopicLearningState`, sin
+// cambios) sobre `fakeCertHistory` (topic progress siempre vacío en este
+// archivo, igual que ya hacía el fake de `getCourseProgress`) + el
+// curriculum actualmente configurado en `api.getCourse`.
+let fakeCourseCurriculumForResults: { modules: Array<{ id: string; title: string; topics: Array<{ id: string; title: string }> }> } = {
+  modules: [],
+};
+
+function buildFakeLearningProfileResponseForResults(courseId: string) {
+  const attempts = (fakeCertHistory[courseId] ?? []).map((e) => toAttemptSummary(e as never));
+  const progress: CourseLearningProgress = {
+    courseId,
+    topics: {},
+    certificationAttempts: attempts,
+    serverProgressImportedAt: null,
+    certificationHistoryImportedAt: null,
+  };
+  const topics = fakeCourseCurriculumForResults.modules.flatMap((module) =>
+    module.topics.map((topic) => {
+      const signal = getTopicLearningSignal(module.id, topic.id, progress, attempts);
+      const { status, reasonCode } = deriveTopicLearningState(signal);
+      return {
+        module_id: module.id,
+        topic_id: topic.id,
+        module_title: module.title,
+        topic_title: topic.title,
+        curricular_status: signal.status,
+        learning_status: status,
+        reason_code: reasonCode,
+        recent_average: signal.recentAverage,
+        observation_count: signal.observations,
+      };
+    })
+  );
+  const summary = {
+    total_topics: topics.length,
+    not_started: topics.filter((t) => t.learning_status === "not_started").length,
+    progressing: topics.filter((t) => t.learning_status === "progressing").length,
+    needs_review: topics.filter((t) => t.learning_status === "needs_review").length,
+    mastered: topics.filter((t) => t.learning_status === "mastered").length,
+  };
+  return { course_id: courseId, summary, topics };
+}
+
+const mockGetLearningProfile = vi.fn(async (courseId: string) => buildFakeLearningProfileResponseForResults(courseId));
+
 vi.mock("../../api/client", () => ({
   api: {
     getCourse: vi.fn().mockResolvedValue({ id: "curso-demo", title: "Demo Curso IA", description: "", order: 1, modules: [] }),
@@ -98,6 +147,7 @@ vi.mock("../../api/client", () => ({
     getCertificationHistory: (courseId: string) => mockGetCertificationHistory(courseId),
     importLegacyCertificationHistory: (courseId: string, body: unknown) =>
       mockImportLegacyCertificationHistory(courseId, body as never),
+    getLearningProfile: (courseId: string) => mockGetLearningProfile(courseId),
   },
 }));
 
@@ -128,11 +178,24 @@ import {
   loadGuidedReviewVerificationContext,
   startGuidedReviewVerification,
 } from "../../learning/guidedReviewVerification";
-import type { CertificationAttemptSummary } from "../../learning/types";
+import { deriveTopicLearningState } from "../../learning/learningState";
+import { getTopicLearningSignal } from "../../learning/topicLearningSignal";
+import { toAttemptSummary } from "../../learning/useServerCertificationHistory";
+import type { CertificationAttemptSummary, CourseLearningProgress } from "../../learning/types";
 import { CertificationResultsPage } from "../CertificationResultsPage";
 
 const mockedLoadResult = loadCertificationResult as unknown as ReturnType<typeof vi.fn>;
 const mockedGetCourse = api.getCourse as unknown as ReturnType<typeof vi.fn>;
+
+/** Reemplaza `mockedGetCourse.mockResolvedValue(detail)`: además de
+ * configurar `api.getCourse`, registra el curriculum que el fake
+ * `getLearningProfile` necesita (mismo principio que el backend real: el
+ * universo de tópicos sale del curriculum, nunca de las filas de
+ * progreso). */
+function setCourseDetail(detail: typeof COURSE_WITH_TOPIC | { id: string; title: string; description: string; order: number; modules: [] }): void {
+  mockedGetCourse.mockResolvedValue(detail);
+  fakeCourseCurriculumForResults = detail;
+}
 
 const RESULT = {
   total_questions: 4,
@@ -257,7 +320,8 @@ beforeEach(() => {
   fakeCertHistory = {};
   mockGetCertificationHistory.mockClear();
   mockImportLegacyCertificationHistory.mockClear();
-  mockedGetCourse.mockResolvedValue({ id: "curso-demo", title: "Demo Curso IA", description: "", order: 1, modules: [] });
+  mockGetLearningProfile.mockClear();
+  setCourseDetail({ id: "curso-demo", title: "Demo Curso IA", description: "", order: 1, modules: [] });
   mockExamReturn = {
     session: { questions: [] },
     loading: false,
@@ -381,7 +445,7 @@ describe("CertificationResultsPage", () => {
 // classification").
 describe("CertificationResultsPage — Verification panel (v1.6.0 Bloque 4)", () => {
   it("PASO 86: sin VerificationContext, Certification normal NUNCA muestra el panel", async () => {
-    mockedGetCourse.mockResolvedValue(COURSE_WITH_TOPIC);
+    setCourseDetail(COURSE_WITH_TOPIC);
     mockedLoadResult.mockReturnValue(RESULT);
     renderPage();
     await waitFor(() => expect(screen.getByText("Resultado de práctica")).toBeInTheDocument());
@@ -389,7 +453,7 @@ describe("CertificationResultsPage — Verification panel (v1.6.0 Bloque 4)", ()
   });
 
   it("PASO 78: con VerificationContext pero SIN intento nuevo real, no muestra el panel (nunca falso resultado)", async () => {
-    mockedGetCourse.mockResolvedValue(COURSE_WITH_TOPIC);
+    setCourseDetail(COURSE_WITH_TOPIC);
     mockedLoadResult.mockReturnValue(RESULT);
     startGuidedReviewVerification(
       "curso-demo",
@@ -405,7 +469,7 @@ describe("CertificationResultsPage — Verification panel (v1.6.0 Bloque 4)", ()
   });
 
   it("PASO 79/41: con VerificationContext Y un intento nuevo real, muestra el estado ACTUAL (needs_review -> mastered)", async () => {
-    mockedGetCourse.mockResolvedValue(COURSE_WITH_TOPIC);
+    setCourseDetail(COURSE_WITH_TOPIC);
     mockedLoadResult.mockReturnValue(RESULT);
     startGuidedReviewVerification(
       "curso-demo",
@@ -425,7 +489,7 @@ describe("CertificationResultsPage — Verification panel (v1.6.0 Bloque 4)", ()
   });
 
   it("PASO 80: needs_review que sigue needs_review se muestra con normalidad, sin proclamar mejora", async () => {
-    mockedGetCourse.mockResolvedValue(COURSE_WITH_TOPIC);
+    setCourseDetail(COURSE_WITH_TOPIC);
     mockedLoadResult.mockReturnValue(RESULT);
     startGuidedReviewVerification(
       "curso-demo",
@@ -461,7 +525,7 @@ describe("CertificationResultsPage — Verification panel (v1.6.0 Bloque 4)", ()
   });
 
   it("PASO 29/89: 'Volver a Mi aprendizaje' limpia el contexto de verificación y navega", async () => {
-    mockedGetCourse.mockResolvedValue(COURSE_WITH_TOPIC);
+    setCourseDetail(COURSE_WITH_TOPIC);
     mockedLoadResult.mockReturnValue(RESULT);
     startGuidedReviewVerification(
       "curso-demo",
@@ -479,7 +543,7 @@ describe("CertificationResultsPage — Verification panel (v1.6.0 Bloque 4)", ()
   });
 
   it("PASO 31: 'Nueva práctica' también limpia un contexto de verificación previo", async () => {
-    mockedGetCourse.mockResolvedValue(COURSE_WITH_TOPIC);
+    setCourseDetail(COURSE_WITH_TOPIC);
     mockedLoadResult.mockReturnValue(RESULT);
     startGuidedReviewVerification(
       "curso-demo",
@@ -496,7 +560,7 @@ describe("CertificationResultsPage — Verification panel (v1.6.0 Bloque 4)", ()
   });
 
   it("PASO 32/88: refresh (nuevo render) con contexto todavía válido recupera el panel", async () => {
-    mockedGetCourse.mockResolvedValue(COURSE_WITH_TOPIC);
+    setCourseDetail(COURSE_WITH_TOPIC);
     mockedLoadResult.mockReturnValue(RESULT);
     startGuidedReviewVerification(
       "curso-demo",
@@ -513,5 +577,73 @@ describe("CertificationResultsPage — Verification panel (v1.6.0 Bloque 4)", ()
     // sobrevive, a diferencia de un React state en memoria).
     renderPage();
     await waitFor(() => expect(screen.getAllByText("Estado después de la verificación").length).toBeGreaterThan(0));
+  });
+});
+
+// v1.7.0 Bloque 5: el panel "Estado después de la verificación" usa el
+// Learning Profile server-side FRESCO (PASO 42/49-51), nunca
+// `deriveCourseLearningStates`. Prueba explícita de que el panel obedece
+// al API incluso cuando contradice lo que la evidencia cruda de
+// Certification History sugeriría si la página todavía derivara
+// client-side.
+describe("CertificationResultsPage — v1.7.0 Bloque 5 (Frontend Learning Profile Cutover)", () => {
+  it("el panel 'Ahora' obedece EXACTAMENTE el Learning Profile API, aunque contradiga la evidencia cruda de Certification History", async () => {
+    setCourseDetail(COURSE_WITH_TOPIC);
+    mockedLoadResult.mockReturnValue(RESULT);
+    startGuidedReviewVerification(
+      "curso-demo",
+      [{ moduleId: "modulo-demo", topicId: "topico-demo" }],
+      null,
+      [{ moduleId: "modulo-demo", topicId: "topico-demo", status: "needs_review", reasonCode: "LOW_CERTIFICATION_SCORE" }]
+    );
+    // Evidencia cruda de Certification History: score BAJO (si la página
+    // derivara client-side, "Ahora" mostraría needs_review).
+    recordCertificationAttempt("curso-demo", {
+      ...highScoreAttempt("att-new"),
+      scorePercentage: 10,
+      correctCount: 0,
+      incorrectCount: 4,
+      performanceByTopic: [
+        {
+          module_id: "modulo-demo", topic_id: "topico-demo", attempted: 4, correct: 0,
+          partially_correct: 0, incorrect: 4, unanswered: 0, practice_score_percent: 10,
+        },
+      ],
+    });
+    // El fake Learning Profile se fuerza directamente a "mastered" --
+    // contradice deliberadamente la evidencia cruda de arriba.
+    mockGetLearningProfile.mockResolvedValue({
+      course_id: "curso-demo",
+      summary: { total_topics: 1, not_started: 0, progressing: 0, needs_review: 0, mastered: 1 },
+      topics: [
+        {
+          module_id: "modulo-demo", topic_id: "topico-demo", module_title: "Módulo Demo", topic_title: "Tópico Demo",
+          curricular_status: "completed", learning_status: "mastered",
+          reason_code: "HIGH_CERTIFICATION_SCORE", recent_average: 99, observation_count: 1,
+        },
+      ],
+    });
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Estado después de la verificación")).toBeInTheDocument());
+    expect(screen.getByText("Ahora: Dominado")).toBeInTheDocument();
+    expect(screen.queryByText("Ahora: Necesita repaso")).not.toBeInTheDocument();
+  });
+
+  it("si el Learning Profile API falla, el panel de verificación no se muestra (nunca deriva un 'Ahora' falso localmente)", async () => {
+    setCourseDetail(COURSE_WITH_TOPIC);
+    mockedLoadResult.mockReturnValue(RESULT);
+    startGuidedReviewVerification(
+      "curso-demo",
+      [{ moduleId: "modulo-demo", topicId: "topico-demo" }],
+      null,
+      [{ moduleId: "modulo-demo", topicId: "topico-demo", status: "needs_review", reasonCode: "LOW_CERTIFICATION_SCORE" }]
+    );
+    recordCertificationAttempt("curso-demo", highScoreAttempt("att-new"));
+    mockGetLearningProfile.mockRejectedValue(new Error("network"));
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Resultado de práctica")).toBeInTheDocument());
+    expect(screen.queryByText("Estado después de la verificación")).not.toBeInTheDocument();
   });
 });

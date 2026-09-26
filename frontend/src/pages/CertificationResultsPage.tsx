@@ -5,7 +5,7 @@ import { useCertificationExam } from "../certification/useCertificationExam";
 import { examAnswerKey, loadCertificationResult } from "../certification/certificationStorage";
 import { buildCourseLearningSummary } from "../learning/courseSummary";
 import { findTopicTitle } from "../learning/learningRecommendationEngine";
-import { deriveCourseLearningStates } from "../learning/learningState";
+import { useServerLearningProfile } from "../learning/useServerLearningProfile";
 import {
   describeLearningStateEvidence,
   LEARNING_STATE_REASON_COPY,
@@ -124,10 +124,15 @@ export function CertificationResultsPage() {
     };
   }, [courseId, serverTopics.topics, serverCertHistory.attempts]);
   const summary = useMemo(() => (course && progress ? buildCourseLearningSummary(course, progress) : null), [course, progress]);
-  const learningStates = useMemo(
-    () => (summary && courseId ? deriveCourseLearningStates(courseId, summary.modules, progress) : []),
-    [summary, progress, courseId]
-  );
+  // v1.7.0 Bloque 5: el panel de verificación usa el Learning Profile
+  // server-side FRESCO (PASO 42/49-51 -- nunca `deriveCourseLearningStates`
+  // acá). Como esta página se monta de cero después de `submitExam()`
+  // (que ya persistió el intento server-side ANTES de navegar), el primer
+  // fetch de este hook ya refleja la evidencia nueva -- no hace falta un
+  // "force refresh" adicional. El score global sigue viniendo
+  // exclusivamente de `result` (Certification result), nunca del perfil.
+  const learningProfile = useServerLearningProfile(courseId ?? null);
+  const learningStates = learningProfile.profile?.states ?? [];
 
   if (!courseId) return null;
 
