@@ -59,7 +59,7 @@ services:
       OPENAI_TTS_VOICE: ${OPENAI_TTS_VOICE:-marin}
       OPENAI_TTS_INSTRUCTIONS: ${OPENAI_TTS_INSTRUCTIONS:-}
       SPEECH_CACHE_DIR: /app/data/speech-cache
-      APP_VERSION: ${APP_VERSION:-1.6.1}
+      APP_VERSION: ${APP_VERSION:-1.7.0}
       # v1.7.0: identidad + persistencia server-side (ver
       # docs/SERVER_SIDE_PROFILE_V1_7.md). El host "postgres" es el nombre
       # del service de arriba, resuelto vía la red interna de Compose.

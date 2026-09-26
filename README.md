@@ -7,23 +7,24 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **v1.6.0** publicado (`master`/`origin/master`, tag `v1.6.0`). **v1.6.1**
-> está preparado como release candidate local (`release/v1.6.1-rc`, sin
+> **v1.6.1** publicado (`master`/`origin/master`, tag `v1.6.1`). **v1.7.0**
+> está preparado como release candidate local (`release/v1.7.0-rc`, sin
 > push/tag/merge todavía — release gate pendiente, decisión separada).
-> v1.6.1 corrige dos defectos reales: Certification generaba preguntas
-> meta-pedagógicas ("¿qué aprenderás en este módulo?") en vez de evaluar
-> contenido técnico real (`CERTIFICATION_PROMPT_VERSION` →
-> `certification-v2`, más un validador conservador); e imágenes locales
-> referenciadas con una ruta que sube un nivel desde el módulo (un patrón
-> real de curso con assets compartidos) no cargaban — la contención de
-> seguridad de assets pasó de "módulo" a "curso" (`Path.resolve()` +
-> `is_relative_to(course_root)`, nunca un blocklist de `..`), además de
-> CSS real nuevo para tablas/blockquotes/code blocks/headings 4-6. Ver
-> [`docs/RELEASE_NOTES_v1.6.1.md`](./docs/RELEASE_NOTES_v1.6.1.md),
-> [`docs/CERTIFICATION_QUALITY_V1_6_1.md`](./docs/CERTIFICATION_QUALITY_V1_6_1.md)
-> y
-> [`docs/RICH_MARKDOWN_RENDERING_V1_6_1.md`](./docs/RICH_MARKDOWN_RENDERING_V1_6_1.md)
+> v1.7.0 mueve el perfil funcional del alumno (progreso curricular,
+> historial de certificación, estado de aprendizaje derivado) de
+> `localStorage` a PostgreSQL, detrás de una identidad de aplicación
+> (`app_user`, con una abstracción lista para una futura integración con
+> Microsoft Entra ID — sin login/password propios en esta versión). El
+> mismo estado de aprendizaje ahora es idéntico entre navegadores y
+> dispositivos para el mismo usuario, y queda aislado por usuario;
+> `localStorage` se conserva únicamente como compatibilidad de migración
+> desde v1.6.x. Ver
+> [`docs/RELEASE_NOTES_v1.7.0.md`](./docs/RELEASE_NOTES_v1.7.0.md) y
+> [`docs/SERVER_SIDE_PROFILE_V1_7.md`](./docs/SERVER_SIDE_PROFILE_V1_7.md)
 > (y, para el historial previo,
+> [`docs/RELEASE_NOTES_v1.6.1.md`](./docs/RELEASE_NOTES_v1.6.1.md) /
+> [`docs/CERTIFICATION_QUALITY_V1_6_1.md`](./docs/CERTIFICATION_QUALITY_V1_6_1.md) /
+> [`docs/RICH_MARKDOWN_RENDERING_V1_6_1.md`](./docs/RICH_MARKDOWN_RENDERING_V1_6_1.md) /
 > [`docs/RELEASE_NOTES_v1.6.0.md`](./docs/RELEASE_NOTES_v1.6.0.md) /
 > [`docs/LEARNING_INTELLIGENCE_V1_6.md`](./docs/LEARNING_INTELLIGENCE_V1_6.md) /
 > [`docs/RELEASE_NOTES_v1.5.0.md`](./docs/RELEASE_NOTES_v1.5.0.md) /

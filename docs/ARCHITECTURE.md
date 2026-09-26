@@ -42,6 +42,25 @@ historial de Certification (`certification_attempts`/
 `certification_topic_results`). `LearningState` (qué tópico necesita
 repaso, cuál está dominado) sigue siendo 100% DERIVADO en cada request a
 partir de esa evidencia — nunca se persiste una tabla `learning_state`.
+La cadena real de identidad + persistencia + derivación es:
+
+```
+Request (header X-Dev-User opcional, solo AUTH_MODE=dev)
+    ↓
+IdentityProvider (app/services/identity_provider.py)
+    ↓ resuelve/crea
+AppUser (PostgreSQL: app_user + user_identity)
+    ↓ user.id, nunca email/subject/issuer, pasa a...
+TopicProgressService / CertificationHistoryService
+    ↓ leen/escriben topic_progress / certification_attempts+topic_results
+LearningProfileService (app/services/learning_profile_service.py)
+    ↓ deriva LearningState[] en cada GET, nunca lo persiste
+GET .../learning-profile
+    ↓
+Frontend (useServerLearningProfile) — única fuente productiva de estado
+pedagógico, ya no re-deriva client-side.
+```
+
 Ver `docs/SERVER_SIDE_PROFILE_V1_7.md` para el detalle completo (schema,
 trust boundaries, invariantes). El resto de la arquitectura descrita en
 este documento (generación de lecciones, tutor, certificación, cache en

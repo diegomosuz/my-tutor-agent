@@ -1,7 +1,11 @@
 # Release Checklist
 
 Checklist reproducible para preparar cualquier release futuro de
-PwC AI Tutor. Basado en el proceso real seguido para v1.0.0.
+PwC AI Tutor. Basado en el proceso real seguido para v1.0.0, extendido en
+v1.7.0 con PostgreSQL/identidad/migración de perfil funcional (ver
+sección "PostgreSQL / Identidad / Learning Profile" más abajo) — aplica
+desde v1.7.0 en adelante, se omite completa en releases anteriores sin
+persistencia server-side.
 
 ## Git
 
@@ -21,6 +25,11 @@ PwC AI Tutor. Basado en el proceso real seguido para v1.0.0.
 - [ ] Frontend typecheck: `npx tsc --noEmit` sin errores.
 - [ ] Ningún test se borró para "hacer pasar" un cambio; si una
       expectativa cambió legítimamente, está documentado por qué.
+- [ ] Suite de frontend completa ejecutada al menos 3 veces consecutivas
+      antes del RC — si algún test falla una sola vez, investigar en
+      aislamiento (test solo, archivo solo) antes de clasificarlo como
+      flakiness de infraestructura vs. bug real; nunca subir un timeout
+      sin evidencia de que el contrato temporal era incorrecto.
 
 ## Build
 
@@ -89,6 +98,37 @@ PwC AI Tutor. Basado en el proceso real seguido para v1.0.0.
       externa.
 - [ ] `actual_count: 0` (scope sin material suficiente) no rompe la UI.
 
+## Browser E2E real (desde v1.7.0)
+
+- [ ] Playwright/Chromium disponible: instalar en un proyecto Node
+      AISLADO dentro del scratchpad de la sesión (`npm install
+      --no-save playwright` + `npx playwright install chromium`) —
+      nunca como dependencia de `frontend/package.json`. Eliminar el
+      proyecto del scratchpad al finalizar (nunca queda dentro del
+      repo, nunca se commitea).
+- [ ] Antes de correr la suite: `docker compose restart frontend`
+      explícito + verificación directa (ej. `curl` sobre un módulo
+      servido) de que el código activo corresponde al commit actual —
+      el dev server de Vite sobre bind mount de Docker Desktop/Windows
+      puede quedarse sirviendo código viejo en sesiones largas (hallazgo
+      real de v1.7.0 Bloque 5/RC).
+- [ ] Escenarios mínimos: fresh user, legacy upgrade, F5, topic
+      completion real, Certification real, Learning Profile update,
+      cross-context misma identidad, usuario distinto aislado, Guided
+      Review, Verification Before/After, reset sin resurrección,
+      Postgres outage/recovery, smoke de Rich Markdown (imagen + tabla +
+      código real), smoke de Read Aloud donde la automatización lo
+      permita.
+- [ ] 0 errores de consola inesperados en todos los contextos/escenarios
+      usados.
+- [ ] Sin request storms: `GET .../learning-profile` ~1 vez por carga
+      normal de curso (instrumentado contando requests HTTP reales),
+      nunca 1 por tópico.
+- [ ] Cualquier fallo de un script de QA se investiga hasta la causa
+      raíz antes de aceptar un resultado como "bug real de producto" —
+      un `addInitScript`/handler de diálogo/selector mal escrito en el
+      propio script de QA es un falso negativo, no una regresión.
+
 ## Responsive / QA visual
 
 - [ ] 5 resoluciones (1920/1440/1024/768/400) × pantallas principales
@@ -112,6 +152,49 @@ PwC AI Tutor. Basado en el proceso real seguido para v1.0.0.
       credencial — confirmar backend/frontend/`/ready`/catálogo/estado
       IA-no-configurada, luego destruir el proyecto aislado sin tocar el
       stack de desarrollo real.
+
+## PostgreSQL / Identidad / Learning Profile (desde v1.7.0)
+
+- [ ] `alembic heads` → un único head, nunca más de una revisión con
+      cero hijos (branching accidental).
+- [ ] Fresh install real: Postgres + backend DESCARTABLES (container
+      aparte, red del proyecto, nunca el volumen `postgres_data` de
+      desarrollo) — `alembic upgrade head` desde vacío aplica todas las
+      revisiones en orden; primer usuario/primer progreso/primera
+      Certification/reinicio sin pérdida de datos; destruir los
+      containers descartables al final.
+- [ ] Upgrade simulado desde la versión anterior: `localStorage` con el
+      shape real de `pwc-tutor:learning-progress:v1` (topic progress +
+      Certification history), server vacío para ese usuario/curso →
+      cargar el candidato → bootstrap legacy corre ANTES del primer
+      `GET .../learning-profile` visible, sin flash de perfil vacío
+      falso.
+- [ ] Reset (Topic Progress / Certification / total si existe) → reload
+      → el legacy jamás resucita (ni por el marcador cliente, ni por una
+      manipulación directa de `localStorage` después del import).
+- [ ] Multi-usuario real: dos identidades dev (`X-Dev-User` distinto)
+      con el mismo curso/módulo/tópico → filas completamente
+      independientes, verificadas con `psql` directo (`user_id`
+      distinto, nunca cruzado).
+- [ ] Cross-browser/cross-context real: segundo `BrowserContext` de
+      Playwright, sin copiar `localStorage`/`sessionStorage`, misma
+      identidad dev → mismo perfil server-side.
+- [ ] Postgres detenido: `/api/ready` → `not_ready` (200, nunca 503 — es
+      un probe); `/api/me`, `/api/progress/...`,
+      `.../certification/history`, `.../learning-profile` → `503` real
+      (nunca 500 crudo, nunca un perfil vacío fingido). Postgres
+      reiniciado: recuperación automática, sin pérdida de datos, sin
+      reparación manual.
+- [ ] `deriveCourseLearningStates`/`deriveTopicLearningState`/
+      `deriveTopicLearningSignal` (frontend): cero callers de producción
+      — solo tests/oráculo de paridad. `LearningState` nunca tiene tabla
+      propia en `backend/app/db/models.py`/`alembic/versions/`.
+- [ ] Ningún endpoint de progreso/certificación/perfil acepta `user_id`
+      del cliente — la identidad se resuelve siempre server-side.
+- [ ] `AUTH_MODE=entra` sigue fallando explícito (nunca fallback
+      silencioso); 0 endpoints de auth propia (`register`/`login`/
+      `forgot-password`/`reset-password`); 0 columnas de password/salt/
+      hash/reset_token en el schema real.
 
 ## Versión
 
