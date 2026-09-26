@@ -233,8 +233,21 @@ describe("CertificationSetupPage", () => {
   it("preselecciona mode=simulation desde query params", async () => {
     mockedGetCourse.mockResolvedValue(COURSE);
     renderPageAt("/certificacion/curso-demo?mode=simulation&topics=topico-a1");
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Demo Curso IA" })).toBeInTheDocument());
-    expect((screen.getByLabelText(/Simulacro/i) as HTMLInputElement).checked).toBe(true);
+    // v1.7.0 RC hardening (flake real, ver docs/SERVER_SIDE_PROFILE_V1_7.md):
+    // esperar solo el heading NO garantiza que el efecto de preselección de
+    // `mode`/`topics` (ambos dependen de `course`, el mismo estado que
+    // dispara el heading) ya haya corrido -- React puede pintar el heading
+    // en un commit y flushear el passive effect que fija `mode` en un tick
+    // asíncrono posterior (MutationObserver ve el heading vía microtask
+    // ANTES de que el scheduler de React llegue a correr el efecto). El
+    // test de topics (siguiente en este archivo) nunca sufrió esto porque
+    // espera por el propio checkbox de tópicos, que solo existe una vez que
+    // ESE MISMO efecto corrió -- acá se aplica el mismo criterio: esperar
+    // directamente la condición real bajo prueba (el radio ya marcado),
+    // nunca un proxy que puede resolver antes de tiempo.
+    await waitFor(() =>
+      expect((screen.getByLabelText(/Simulacro/i) as HTMLInputElement).checked).toBe(true)
+    );
   });
 
   it("ignora IDs de tópico inválidos/inexistentes sin romper la pantalla", async () => {
