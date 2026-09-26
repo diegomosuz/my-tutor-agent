@@ -1,0 +1,247 @@
+{
+  "schema_version": 1,
+  "description": "v1.7.0 Bloque 4: casos de paridad exacta entre el core pedagógico existente en frontend (topicLearningSignal.ts + learningState.ts) y su puerto server-side (backend/app/services/learning_state.py). Un mismo caso debe producir EXACTAMENTE el mismo status/reason_code/observations/latest_score/recent_average en ambos lenguajes. Cubre únicamente la derivación PURA por-tópico (casos 1-12 de la especificación de Bloque 4, PARTE D) más un caso extra de empate de redondeo (13) -- los casos de curriculum/curso completo (top-50, duplicate slugs, stale evidence) se cubren con tests de integración dedicados en cada lenguaje, no acá (ver docs/SERVER_SIDE_PROFILE_V1_7.md sección Bloque 4 para la decisión completa).",
+  "cases": [
+    {
+      "name": "1_never_started",
+      "module_id": "modulo-1",
+      "topic_id": "topico-1",
+      "curricular_status": "not_started",
+      "attempts": [],
+      "expected": {
+        "status": "not_started",
+        "reason_code": "NOT_STARTED",
+        "observations": 0,
+        "latest_score": null,
+        "recent_average": null
+      }
+    },
+    {
+      "name": "2_started_not_completed",
+      "module_id": "modulo-1",
+      "topic_id": "topico-1",
+      "curricular_status": "in_progress",
+      "attempts": [],
+      "expected": {
+        "status": "progressing",
+        "reason_code": "STARTED_NOT_COMPLETED",
+        "observations": 0,
+        "latest_score": null,
+        "recent_average": null
+      }
+    },
+    {
+      "name": "3_completed_no_assessment",
+      "module_id": "modulo-1",
+      "topic_id": "topico-1",
+      "curricular_status": "completed",
+      "attempts": [],
+      "expected": {
+        "status": "progressing",
+        "reason_code": "COMPLETED_NO_ASSESSMENT",
+        "observations": 0,
+        "latest_score": null,
+        "recent_average": null
+      }
+    },
+    {
+      "name": "4_one_low_result",
+      "module_id": "modulo-1",
+      "topic_id": "topico-1",
+      "curricular_status": "not_started",
+      "attempts": [
+        { "completed_at": "2026-01-01T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 0, "partially_correct": 0, "incorrect": 2, "unanswered": 0, "practice_score_percent": 30 }
+        ]}
+      ],
+      "expected": {
+        "status": "needs_review",
+        "reason_code": "LOW_CERTIFICATION_SCORE",
+        "observations": 1,
+        "latest_score": 30,
+        "recent_average": 30
+      }
+    },
+    {
+      "name": "5_repeated_low",
+      "module_id": "modulo-1",
+      "topic_id": "topico-1",
+      "curricular_status": "completed",
+      "attempts": [
+        { "completed_at": "2026-01-01T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 0, "partially_correct": 1, "incorrect": 1, "unanswered": 0, "practice_score_percent": 30 }
+        ]},
+        { "completed_at": "2026-01-02T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 0, "partially_correct": 1, "incorrect": 1, "unanswered": 0, "practice_score_percent": 40 }
+        ]}
+      ],
+      "expected": {
+        "status": "needs_review",
+        "reason_code": "REPEATED_LOW_CERTIFICATION_SCORE",
+        "observations": 2,
+        "latest_score": 40,
+        "recent_average": 35.0
+      }
+    },
+    {
+      "name": "6_medium_result",
+      "module_id": "modulo-1",
+      "topic_id": "topico-1",
+      "curricular_status": "in_progress",
+      "attempts": [
+        { "completed_at": "2026-01-01T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 1, "partially_correct": 1, "incorrect": 0, "unanswered": 0, "practice_score_percent": 70 }
+        ]}
+      ],
+      "expected": {
+        "status": "progressing",
+        "reason_code": "MEDIUM_CERTIFICATION_SCORE",
+        "observations": 1,
+        "latest_score": 70,
+        "recent_average": 70
+      }
+    },
+    {
+      "name": "7_high_result",
+      "module_id": "modulo-1",
+      "topic_id": "topico-1",
+      "curricular_status": "in_progress",
+      "attempts": [
+        { "completed_at": "2026-01-01T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 2, "partially_correct": 0, "incorrect": 0, "unanswered": 0, "practice_score_percent": 90 }
+        ]}
+      ],
+      "expected": {
+        "status": "mastered",
+        "reason_code": "HIGH_CERTIFICATION_SCORE",
+        "observations": 1,
+        "latest_score": 90,
+        "recent_average": 90
+      }
+    },
+    {
+      "name": "8_completed_plus_low",
+      "module_id": "modulo-1",
+      "topic_id": "topico-1",
+      "curricular_status": "completed",
+      "attempts": [
+        { "completed_at": "2026-01-01T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 0, "partially_correct": 0, "incorrect": 2, "unanswered": 0, "practice_score_percent": 20 }
+        ]}
+      ],
+      "expected": {
+        "status": "needs_review",
+        "reason_code": "LOW_CERTIFICATION_SCORE",
+        "observations": 1,
+        "latest_score": 20,
+        "recent_average": 20
+      }
+    },
+    {
+      "name": "9_completed_plus_medium",
+      "module_id": "modulo-1",
+      "topic_id": "topico-1",
+      "curricular_status": "completed",
+      "attempts": [
+        { "completed_at": "2026-01-01T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 1, "partially_correct": 1, "incorrect": 0, "unanswered": 0, "practice_score_percent": 65 }
+        ]}
+      ],
+      "expected": {
+        "status": "progressing",
+        "reason_code": "MEDIUM_CERTIFICATION_SCORE",
+        "observations": 1,
+        "latest_score": 65,
+        "recent_average": 65
+      }
+    },
+    {
+      "name": "10_completed_plus_high",
+      "module_id": "modulo-1",
+      "topic_id": "topico-1",
+      "curricular_status": "completed",
+      "attempts": [
+        { "completed_at": "2026-01-01T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 2, "partially_correct": 0, "incorrect": 0, "unanswered": 0, "practice_score_percent": 85 }
+        ]}
+      ],
+      "expected": {
+        "status": "mastered",
+        "reason_code": "HIGH_CERTIFICATION_SCORE",
+        "observations": 1,
+        "latest_score": 85,
+        "recent_average": 85
+      }
+    },
+    {
+      "name": "11_recent_average_over_multiple_results",
+      "module_id": "modulo-1",
+      "topic_id": "topico-1",
+      "curricular_status": "completed",
+      "attempts": [
+        { "completed_at": "2026-01-01T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 0, "partially_correct": 1, "incorrect": 1, "unanswered": 0, "practice_score_percent": 25 }
+        ]},
+        { "completed_at": "2026-02-01T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 2, "partially_correct": 0, "incorrect": 0, "unanswered": 0, "practice_score_percent": 100 }
+        ]}
+      ],
+      "expected": {
+        "status": "progressing",
+        "reason_code": "MEDIUM_CERTIFICATION_SCORE",
+        "observations": 2,
+        "latest_score": 100,
+        "recent_average": 62.5
+      }
+    },
+    {
+      "name": "12_more_than_3_observations_window_excludes_oldest",
+      "module_id": "modulo-1",
+      "topic_id": "topico-1",
+      "curricular_status": "completed",
+      "attempts": [
+        { "completed_at": "2026-01-01T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 2, "partially_correct": 0, "incorrect": 0, "unanswered": 0, "practice_score_percent": 90 }
+        ]},
+        { "completed_at": "2026-01-02T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 0, "partially_correct": 0, "incorrect": 2, "unanswered": 0, "practice_score_percent": 10 }
+        ]},
+        { "completed_at": "2026-01-03T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 0, "partially_correct": 0, "incorrect": 2, "unanswered": 0, "practice_score_percent": 10 }
+        ]},
+        { "completed_at": "2026-01-04T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 0, "partially_correct": 0, "incorrect": 2, "unanswered": 0, "practice_score_percent": 10 }
+        ]}
+      ],
+      "expected": {
+        "status": "needs_review",
+        "reason_code": "REPEATED_LOW_CERTIFICATION_SCORE",
+        "observations": 3,
+        "latest_score": 10,
+        "recent_average": 10.0
+      }
+    },
+    {
+      "name": "13_rounding_tie_parity_never_banker_rounds",
+      "_comment": "Divergencia REAL confirmada (no hipotética): avg=30.25 -> JS Math.round(302.5)/10 = 30.3 (redondea .5 siempre hacia arriba); Python round(30.25, 1) nativo = 30.2 (round-half-to-even/banker's rounding). El backend DEBE usar un redondeo que replique el comportamiento de JS (ver _round_half_up en learning_state.py), nunca round() nativo de Python, o este caso clasificaría distinto entre lenguajes (30.2 y 30.3 caen en el mismo tier needs_reinforcement acá, pero en el límite exacto de un threshold sí cambiaría el resultado -- la paridad debe ser exacta siempre, no solo cuando coincide por casualidad).",
+      "module_id": "modulo-1",
+      "topic_id": "topico-1",
+      "curricular_status": "completed",
+      "attempts": [
+        { "completed_at": "2026-01-01T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 0, "partially_correct": 0, "incorrect": 2, "unanswered": 0, "practice_score_percent": 30.2 }
+        ]},
+        { "completed_at": "2026-02-01T00:00:00.000Z", "performance_by_topic": [
+          { "module_id": "modulo-1", "topic_id": "topico-1", "attempted": 2, "correct": 0, "partially_correct": 0, "incorrect": 2, "unanswered": 0, "practice_score_percent": 30.3 }
+        ]}
+      ],
+      "expected": {
+        "status": "needs_review",
+        "reason_code": "REPEATED_LOW_CERTIFICATION_SCORE",
+        "observations": 2,
+        "latest_score": 30.3,
+        "recent_average": 30.3
+      }
+    }
+  ]
+}

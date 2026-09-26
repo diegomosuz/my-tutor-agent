@@ -2,8 +2,11 @@
 
 ## 1. Visión general
 
-Arquitectura deliberadamente simple, de tres capas, sin base de datos ni
-microservicios:
+Arquitectura deliberadamente simple, sin microservicios, sin Kubernetes,
+sin colas/event bus. Desde v1.7.0 existe una única base de datos
+(PostgreSQL) acotada a identidad + evidencia de aprendizaje (ver más
+abajo) — el contenido de cursos y las cachés de generación siguen siendo
+100% filesystem:
 
 ```
 ┌──────────────┐      HTTP REST       ┌──────────────┐      filesystem     ┌────────────────────┐
@@ -27,12 +30,22 @@ microservicios:
                                      └──────────────────┘
 ```
 
-Todo corre en contenedores Docker orquestados por `docker-compose.yml`. No
-hay base de datos: el contenido de los cursos vive en el filesystem
-(montado como bind mount de solo lectura), la cache de lecciones generadas
-vive en el filesystem (bind mount read-write separado, `LESSON_CACHE_DIR`)
-y el progreso del alumno se guardará en el futuro en `localStorage` del
-navegador.
+Todo corre en contenedores Docker orquestados por `docker-compose.yml`. El
+contenido de los cursos vive en el filesystem (montado como bind mount de
+solo lectura), y la cache de lecciones/certificación generadas vive en el
+filesystem (bind mounts read-write separados, `LESSON_CACHE_DIR`/
+`CERTIFICATION_CACHE_DIR`/`SPEECH_CACHE_DIR`). Desde v1.7.0 existe además
+un PostgreSQL dedicado, exclusivamente para identidad de alumno
+(`app_user`/`user_identity`) y la evidencia de aprendizaje que cuelga de
+esa identidad: progreso curricular por tópico (`topic_progress`) e
+historial de Certification (`certification_attempts`/
+`certification_topic_results`). `LearningState` (qué tópico necesita
+repaso, cuál está dominado) sigue siendo 100% DERIVADO en cada request a
+partir de esa evidencia — nunca se persiste una tabla `learning_state`.
+Ver `docs/SERVER_SIDE_PROFILE_V1_7.md` para el detalle completo (schema,
+trust boundaries, invariantes). El resto de la arquitectura descrita en
+este documento (generación de lecciones, tutor, certificación, cache en
+filesystem) no cambió.
 
 ## 2. Componentes
 

@@ -7,7 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import get_settings
 from app.middleware import RequestIDMiddleware, SecurityHeadersMiddleware
-from app.routers import ai, certification, courses, health, me, progress, speech, system
+from app.routers import ai, certification, courses, health, learning_profile, me, progress, speech, system
 
 # Configura un handler básico para que los logs de la app (ej.
 # "pwc_tutor.lesson": lesson_generation_started/completed/failed,
@@ -72,3 +72,4 @@ app.include_router(speech.router)
 app.include_router(system.router)
 app.include_router(me.router)
 app.include_router(progress.router)
+app.include_router(learning_profile.router)

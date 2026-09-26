@@ -564,3 +564,234 @@ para un bloque futuro es evaluar si `localStorage`/`learningProgressStore.ts`
 puede simplificarse aún más (ya no tiene ningún dato NUEVO escribiéndose
 ahí, solo el snapshot legacy congelado pre-migración) — sin apuro, no es
 un requisito funcional pendiente.
+
+## 5. Bloque 4 — Server-Side Learning Profile & LearningState API
+
+### 5.1. Alcance y principio fundamental
+
+Con los tres pilares de evidencia ya en Postgres (Bloques 2-3), este
+bloque agrega la CAPACIDAD de derivar `LearningState[]` (qué tópicos
+necesitan repaso, cuáles están dominados, y por qué) en el backend —
+**sin crear ninguna tabla ni columna nueva**. `LearningState` sigue
+siendo, exactamente igual que en el frontend desde v1.1.0, un valor
+100% DERIVADO en cada request: no existe `learning_state`/
+`topic_mastery` como tabla, no hay columna `mastered`/`needs_review`, no
+hay ningún snapshot persistente que pueda quedar desincronizado de la
+evidencia real. Cada `GET .../learning-profile` recalcula desde cero a
+partir de `topic_progress` + `certification_attempts` +
+`certification_topic_results` — ya persistidos por Bloques 2 y 3, nunca
+una fuente nueva.
+
+Este es explícitamente una MIGRACIÓN DE CAPACIDAD, no un nuevo modelo
+pedagógico: los 4 estados (`not_started`/`progressing`/`needs_review`/
+`mastered`), los 7 reason codes, los thresholds (`<60`/`60-79`/`≥80`), la
+ventana de 3 observaciones más recientes y la regla de precedencia
+("evidencia de certificación pesa más que el status curricular en
+cualquier dirección") son un PUERTO exacto de
+`frontend/src/learning/topicLearningSignal.ts` +
+`frontend/src/learning/learningState.ts` (v1.1.0). No se reinterpretó,
+mejoró ni cambió ninguna regla.
+
+### 5.2. Arquitectura: core puro + orquestación + router
+
+- **`app/services/learning_state.py`** — el core. Cero dependencias de
+  DB/FastAPI/`Request`/`datetime.now()`/random/LLM; funciones puras
+  (`derive_topic_learning_signal`, `derive_topic_learning_state`,
+  `derive_course_learning_states`, `summarize_learning_states`,
+  `get_review_candidates`). Diseñado explícitamente para que un futuro
+  módulo de Adaptive Tutor backend pueda importarlo y llamarlo
+  directamente sin pasar por HTTP.
+- **`app/services/learning_profile_service.py`** — la orquestación:
+  resuelve el curriculum real (`course_service.get_course_detail`),
+  lee `topic_progress`/`certification_attempts` ya persistidos, y le
+  pasa estructuras simples (nunca filas de SQLAlchemy) al core. Cero
+  escrituras: es una lectura pura, nunca actualiza timestamps ni crea
+  progreso/evidencia (confirmado con un test dedicado que cuenta filas
+  antes/después de un GET).
+- **`app/routers/learning_profile.py`** — un único endpoint,
+  `GET /api/courses/{course_id}/learning-profile`, con
+  `get_current_app_user` como único trust boundary de identidad (mismo
+  criterio que `progress.py`/`certification.py`: nunca acepta `user_id`
+  del cliente). `CourseNotFoundError` → 404; cualquier
+  `SQLAlchemyError` real propaga al handler global de `app/main.py`
+  (Bloque 2) → 503 limpio.
+
+### 5.3. El invariante crítico: ventana de top-50 attempts/curso
+
+`learning_profile_service.get_learning_profile` reutiliza **el mismo**
+`certification_history_service.get_history(...)` de Bloque 3 — que ya
+aplica `HISTORY_SERVE_LIMIT=50` — para obtener los attempts que
+alimentan la derivación. **Nunca** se implementó una query paralela
+"todo el historial" para este bloque: hacerlo hubiera cambiado
+silenciosamente el comportamiento pedagógico observable (evidencia que
+ya debía considerarse "olvidada" resucitando en el perfil).
+
+Probado en tres capas distintas:
+1. **Core puro** (`test_learning_state.py`): el core nunca decide cuántos
+   attempts considerar — solo agrega sobre lo que recibe. La
+   responsabilidad de acotar vive exclusivamente en el llamador.
+2. **Integración con Postgres real** (`test_learning_profile_service.py::
+   test_sparse_topic_evidence_outside_top_50_never_participates`): 51
+   attempts reales persistidos (1 antiguo con evidencia único para un
+   tópico + 50 recientes para otro), confirma `total_persisted == 51`
+   (la PERSISTENCIA nunca se truncó) pero el tópico cuya única evidencia
+   es el attempt #51 (el más antiguo) aparece con `observations == 0` y
+   `status == "not_started"` — nunca resucita.
+3. **QA real end-to-end vía la API pública** (curso real
+   `claude-foundations-certification`, 57 tópicos): `POST
+   .../certification/legacy-import` con 51 entries reales (1 desde
+   `2020-01-01` para `modulo-8-introduccion` con score 95, 50 más
+   recientes para `modulo-1-introduccion` con score 20) seguido de `GET
+   .../learning-profile` — resultado real observado:
+   `modulo-8-introduccion` → `not_started`/`NOT_STARTED`/0 observaciones
+   (evidencia excluida, tal como se esperaba) y `modulo-1-introduccion` →
+   `needs_review`/`REPEATED_LOW_CERTIFICATION_SCORE`/3 observaciones/
+   promedio 20.0 (ventana de 3, evidencia real sí considerada). Este es
+   el mismo invariante probado a través del stack HTTP completo, no solo
+   a nivel de servicio interno.
+
+### 5.4. Curriculum-driven, nunca DB-driven
+
+El universo y el ORDEN de los tópicos de un perfil viene siempre de
+iterar el curriculum real (`course_service.get_course_detail`), nunca de
+las filas de `topic_progress`/`certification_topic_results`. Esto
+garantiza estructuralmente dos cosas, ambas probadas con Postgres real:
+- Progreso o evidencia de certificación persistida para un
+  módulo/tópico que ya NO existe en el curriculum actual (borrado o
+  renombrado) nunca genera un `LearningState` fantasma
+  (`test_stale_topic_progress_never_appears_in_profile`,
+  `test_stale_certification_evidence_never_appears_in_profile`).
+- Un tópico real jamás tocado por el alumno aparece igual como
+  `not_started` — nunca falta del perfil.
+
+La identidad de un tópico es siempre el par `(module_id, topic_id)`,
+nunca `topic_id` solo — probado con un curriculum sintético de dos
+módulos que comparten el mismo slug de tópico
+(`test_duplicate_topic_slug_across_modules_integration`): cada módulo
+deriva su propio `LearningState` de forma completamente independiente.
+
+### 5.5. Paridad backend/frontend — fixture compartido
+
+El comportamiento pedagógico aprobado vive en TypeScript desde v1.1.0;
+este bloque necesitaba demostrar equivalencia real, no solo escribir
+tests nuevos en Python que podrían reproducir el mismo malentendido en
+ambos lados. Se descartó explícitamente construir un framework de
+"contract testing" (complejidad no justificada) a favor de un fixture
+JSON neutral compartido: `fixtures/learning_state_parity.json` (13
+casos, `schema_version: 1`), montado read-only en ambos containers vía
+`docker-compose.yml` (`./fixtures` → `/app/fixtures`), consumido por
+`backend/tests/test_learning_state_parity.py` (llama al core Python) y
+por `frontend/src/learning/__tests__/learningStateParity.test.ts` (llama
+a `getTopicLearningSignal`/`deriveTopicLearningState`, el código
+TypeScript EXISTENTE y sin modificar) — ambos aseveran contra el mismo
+`expected` por caso. El frontend es el oráculo: este fixture describe su
+comportamiento ya aprobado, nunca al revés.
+
+**Divergencia de redondeo real, encontrada empíricamente (no asumida)**:
+se probó en vivo (`node -e` vs. `docker compose run --rm backend
+python3 -c`) que para `avg=30.25`, `Math.round(302.5)/10` de JS da
+`30.3` mientras que `round(30.25, 1)` nativo de Python da `30.2`
+("banker's rounding" al par más cercano). El primer valor candidato para
+el caso 13 del fixture (`24.9`/`100.0`) resultó NO ser un caso real de
+divergencia tras probarlo — se iteró hasta encontrar uno genuino
+(`30.2`/`30.3`, que promedian exactamente `30.25`). `learning_state.py`
+implementa `_round_half_up()` (equivalente a
+`math.floor(value * factor + 0.5) / factor`) específicamente para
+replicar la semántica de JS en este dominio (solo porcentajes no
+negativos, nunca necesita manejar negativos). Los 14 tests (13 casos + 1
+sanity check de cantidad) pasan en ambos runtimes.
+
+### 5.6. API pública
+
+```
+GET /api/courses/{course_id}/learning-profile
+```
+
+Requiere identidad (`get_current_app_user`, mismo mecanismo que
+`progress.py`/`certification.py`). Responde `LearningProfileResponse`:
+`course_id`, `summary` (`total_topics`/`not_started`/`progressing`/
+`needs_review`/`mastered` — deliberadamente SIN `mastered_percentage`,
+que queda interno en `LearningStateSummary` para no comprometer un
+contrato público con un cálculo que nadie pidió expuesto todavía) y
+`topics` (una entrada por tópico real del curriculum, en orden
+curricular: `module_id`/`topic_id`/`module_title`/`topic_title`/
+`curricular_status`/`learning_status`/`reason_code`/`recent_average`/
+`observation_count`).
+
+`404` para un curso inexistente (mismo criterio que el resto de la
+API), `503` limpio ante Postgres caído (handler global, nunca un
+perfil falso "todo not_started"). Sin cache — cada GET recalcula desde
+cero (funciones puras, sin costo de red externo, ver 5.8).
+
+**Sin cambios en el frontend de producción en este bloque**: el
+frontend sigue derivando `LearningState` con su propio código TypeScript
+(`useServerTopicProgress`/`useServerCertificationHistory` +
+`learningState.ts`) — `learning-profile` es, por ahora, una capacidad de
+backend expuesta y probada, no la fuente de verdad consumida por
+`LearningProgressPage`. Migrar el frontend a consumirla es una decisión
+separada de un bloque futuro.
+
+### 5.7. Performance: sin N+1
+
+`get_learning_profile` ejecuta un número CONSTANTE de queries SQL sin
+importar el tamaño del curriculum: 1 para `get_course_progress`, 1 (+1
+`selectinload` de `certification_topic_results`) para `get_history`.
+Confirmado empíricamente con un curriculum sintético de 54 tópicos (18
+módulos × 3) y 50 attempts reales importados: un listener de SQLAlchemy
+(`before_cursor_execute`) contó exactamente **3 queries** en cada una de
+5 corridas, con un tiempo real de wall-clock promedio de **~10ms**. El
+curriculum en sí se resuelve vía filesystem (`course_service`), no SQL.
+
+### 5.8. QA real ejecutada
+
+Contra Postgres/Docker reales (curso real `claude-foundations-certification`,
+57 tópicos, vía curl, sin ningún dato de `localStorage`/navegador):
+- **Multi-usuario real**: `student-a-qa` completa un tópico
+  (`PUT .../progress`) mientras `student-b-qa` nunca toca nada —
+  `student-a-qa` ve `progressing: 1`, `student-b-qa` ve `not_started: 57`
+  — aislamiento real confirmado vía el endpoint público, no solo con
+  tests.
+- **Cliente stateless / "cross-browser"**: cada llamada anterior fue un
+  `curl` puro con solo un header `X-Dev-User` — sin cookies, sin
+  `localStorage`, sin ningún estado de cliente — y el perfil devuelto
+  fue siempre completo y correcto. El backend nunca depende de nada que
+  viva en el navegador (prueba trivial pero explícita, ya que el diseño
+  entero de Bloque 1-4 lo garantiza estructuralmente).
+- **Ventana de >50 attempts real**: ver 5.3, punto 3.
+- **Reset → recompute real**: `DELETE .../progress/{course_id}` para
+  `student-a-qa` (`204`) seguido de `GET .../learning-profile` en el
+  mismo instante devuelve `not_started: 57` inmediatamente — nunca
+  resucita el `progressing` anterior. Repetido con `DELETE
+  .../certification/history` para `student-scale-qa`: el `needs_review`
+  desaparece igual de inmediato.
+- **Postgres caído → recuperación, específico de este endpoint**:
+  `docker compose stop postgres` seguido de `GET .../learning-profile`
+  → `503` limpio (`"La base de datos no está disponible..."`, nunca un
+  500 crudo ni un perfil falso). `docker compose start postgres` →
+  `GET /api/ready` confirma `db_reachable: true` → el mismo `GET
+  .../learning-profile` vuelve a responder `200` con los datos
+  correctos y ya reseteados de antes (ninguna pérdida de datos por el
+  reinicio).
+- Datos de QA (`student-a-qa`/`student-b-qa`/`student-scale-qa`)
+  limpiados al finalizar (progress/certification history eliminados vía
+  los mismos endpoints DELETE ya existentes); no queda evidencia
+  funcional residual en el Postgres de desarrollo, salvo las filas de
+  identidad (`app_user`/`user_identity`) en sí — no existe (ni se
+  necesita) un endpoint para borrar una identidad completa, mismo
+  criterio ya aceptado en el QA real de bloques anteriores.
+
+**Misma limitación honesta que Bloques 2-3**: sin Playwright/
+chromium-cli disponible en este entorno, no hubo click-through en un
+browser real — no es un requisito de aprobación de este bloque (no hay
+UI nueva: 0 cambios visuales), pero sigue siendo un release blocker
+pendiente para el hardening/RC de v1.7.0 en su conjunto.
+
+### 5.9. Roadmap para el próximo bloque
+
+Con `LearningProfile`/`LearningState` ya disponibles como capacidad de
+backend reutilizable sin HTTP (`learning_profile_service.get_learning_profile`),
+el candidato natural es un futuro módulo de Adaptive Tutor que la
+consuma directamente para recomendar próximos pasos — y, en paralelo,
+evaluar si vale la pena migrar `LearningProgressPage` a consumir el
+endpoint en vez de derivar client-side (decisión de producto separada,
+no técnica: el cálculo ya es idéntico en ambos lados).

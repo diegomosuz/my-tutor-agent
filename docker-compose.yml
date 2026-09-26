@@ -111,6 +111,16 @@ services:
         source: ./docker-compose.yml
         target: /app/docker-compose.yml
         read_only: true
+      # v1.7.0 Bloque 4: fixture compartido de paridad pedagógica
+      # (backend/frontend deben derivar EXACTAMENTE el mismo LearningState
+      # a partir del mismo caso -- ver tests/test_learning_state_parity.py
+      # y docs/SERVER_SIDE_PROFILE_V1_7.md sección Bloque 4). Un único
+      # archivo fuente en ./fixtures, montado read-only en ambos
+      # containers, evita mantener dos copias que puedan divergir.
+      - type: bind
+        source: ./fixtures
+        target: /app/fixtures
+        read_only: true
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 10s
@@ -135,6 +145,12 @@ services:
       - type: bind
         source: ./frontend/index.html
         target: /app/index.html
+      # v1.7.0 Bloque 4: mismo fixture de paridad que el backend (ver
+      # backend service arriba) -- mismo archivo fuente, nunca una copia.
+      - type: bind
+        source: ./fixtures
+        target: /app/fixtures
+        read_only: true
     depends_on:
       - backend
     healthcheck:
