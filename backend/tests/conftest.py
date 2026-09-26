@@ -67,7 +67,10 @@ def _clean_identity_tables() -> None:
     try:
         with engine.begin() as conn:
             conn.execute(
-                text("TRUNCATE TABLE topic_progress, user_identities, app_users RESTART IDENTITY CASCADE")
+                text(
+                    "TRUNCATE TABLE certification_topic_results, certification_attempts, "
+                    "topic_progress, user_identities, app_users RESTART IDENTITY CASCADE"
+                )
             )
     finally:
         engine.dispose()

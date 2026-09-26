@@ -22,8 +22,15 @@ def test_schema_never_contains_credential_columns():
     assert not offending, f"Columnas de credencial encontradas (prohibido): {offending}"
 
 
-def test_expected_tables_exist_and_nothing_else_in_block_2():
-    """v1.7.0 Bloque 2: agrega `topic_progress`. Certification/
-    Guided Review/VerificationContext/LearningState siguen sin persistirse
-    -- eso es de un bloque futuro (LearningState nunca se persiste, punto)."""
-    assert set(Base.metadata.tables.keys()) == {"app_users", "user_identities", "topic_progress"}
+def test_expected_tables_exist_and_nothing_else_in_block_3():
+    """v1.7.0 Bloque 3: agrega `certification_attempts`/
+    `certification_topic_results`. Guided Review/VerificationContext/
+    LearningState siguen sin persistirse -- LearningState nunca se
+    persiste, punto (queda siempre derivado)."""
+    assert set(Base.metadata.tables.keys()) == {
+        "app_users",
+        "user_identities",
+        "topic_progress",
+        "certification_attempts",
+        "certification_topic_results",
+    }

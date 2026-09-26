@@ -69,6 +69,12 @@ export interface CourseLearningProgress {
    * diseño, así que un marcador server-side sería redundante). Nunca se
    * usa para Certification, que sigue siendo local en este bloque. */
   serverProgressImportedAt: string | null;
+  /** v1.7.0 Bloque 3: mismo patrón que `serverProgressImportedAt`, pero
+   * para el historial de Certification (ahora también server-side,
+   * PostgreSQL) — marcador SEPARADO a propósito (PASO 34: "Block 3 nunca
+   * reimporta Topic Progress", y viceversa: importar uno nunca implica
+   * que el otro también se importó). */
+  certificationHistoryImportedAt: string | null;
 }
 
 export const LEARNING_PROGRESS_SCHEMA_VERSION = 1 as const;

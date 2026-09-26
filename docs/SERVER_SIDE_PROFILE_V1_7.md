@@ -389,8 +389,178 @@ y (b) la suite Vitest/RTL, que monta los componentes React reales
 mockeada — no es un click-through humano, pero sí ejecuta el código de
 producción real, no un doble simplificado.
 
-### 3.9. Roadmap para el próximo bloque
+### 3.9. Roadmap para el próximo bloque (cerrado en el Bloque 3 — ver abajo)
 
-Bloque 3 (no iniciado): candidato natural es migrar el historial de
-Certification a Postgres (mismo patrón: tabla nueva detrás de
-`app_user.id`, `LearningState` sigue derivado, nunca persistido).
+## 4. Bloque 3 — Server-Side Certification History & Learning Evidence
+
+### 4.1. Alcance
+
+PostgreSQL pasa a ser la fuente de verdad de **historial de Certification
++ evidencia por tópico**, detrás de `app_user.id`. Con esto, los tres
+pilares del perfil funcional (topic progress, Certification history,
+Certification topic evidence) son server-side. `LearningState` sigue
+DERIVADO, nunca persistido — no existe ni existirá una tabla
+`learning_state`.
+
+### 4.2. Trust boundary — decisión central del bloque
+
+El backend YA calculaba el resultado de una Certification de forma
+100% determinística (`certification_service.evaluate_simulation`, sin
+LLM) **antes** de este bloque — el frontend nunca calculaba el score. Esto
+hizo que la persistencia server-side fuera directa: se agrega DESPUÉS de
+evaluar y ANTES de responder, en el mismo endpoint (`POST
+.../certification/evaluate`), usando `get_current_app_user`. El frontend
+nunca puede declarar un `score`/`practice_score_percent` como autoridad —
+campos así en el body simplemente no existen en `EvaluateSimulationRequest`
+y Pydantic los ignora (probado explícitamente,
+`test_client_cannot_forge_score_via_extra_fields`).
+
+**Hallazgo clave del audit**: tanto Practice como Simulation terminan
+llamando al MISMO endpoint `evaluate` al finalizar (`submitExam()` en
+`useCertificationExam.ts` es compartido por ambos modos) — no hizo falta
+un segundo endpoint de "submit". `practice_id`/`mode` se agregaron como
+campos nuevos del request (identificadores/metadata, nunca score).
+
+### 4.3. Esquema (migración `0003`)
+
+`certification_attempts`: `id`, `user_id` (FK), `course_id`, `practice_id`,
+`mode`, agregados (`total_questions`/`correct_count`/.../`score_percent`),
+`competency_breakdown` (JSONB, ver 4.4), `origin`
+(`server_evaluated`/`legacy_import`), `attempted_at`, `created_at`.
+`UNIQUE(user_id, practice_id)` — `practice_id` ya era un UUID4
+generado por el backend en `/prepare`, identidad funcional estable de un
+intento. Índice separado `(user_id, course_id, attempted_at)` para el
+query de historial (no es redundante con la UNIQUE: prefijo distinto).
+
+`certification_topic_results`: `id`, `attempt_id` (FK, `ON DELETE CASCADE`),
+`module_id`+`topic_id` (nunca `topic_id` solo), agregados por tópico.
+`UNIQUE(attempt_id, module_id, topic_id)`.
+
+**Nunca se persiste**: `question_results`, answer key, respuestas
+individuales — exactamente la misma regla que ya regía
+`CertificationAttemptSummary` en `localStorage` antes de este bloque, solo
+que ahora auditada contra el metadata real de SQLAlchemy
+(`test_no_password_schema.py` extendido).
+
+### 4.4. Decisión documentada: `competency_breakdown` como JSONB
+
+`moduleIds`/`topicIds` del contrato público se DERIVAN de
+`certification_topic_results` (nunca se guardan como columna separada —
+serían datos duplicados). `competencies_to_reinforce`, en cambio, es una
+dimensión ortogonal (una competencia puede abarcar preguntas de varios
+tópicos) que no puede derivarse de la evidencia por tópico. Se decidió NO
+crear una tabla `certification_competency_results` normalizada (nunca
+pedida explícitamente, y siempre se lee/escribe como unidad completa por
+intento, nunca filtrada por competencia a nivel SQL) — se persiste como
+JSONB en la propia fila del intento. `topics_to_reinforce` (subconjunto
+reordenado de `performance_by_topic`) se recalcula al leer, nunca se
+persiste — es 100% derivable.
+
+### 4.5. Retención: decisión sobre el límite de 50
+
+El límite histórico de 50 intentos/curso (`MAX_CERTIFICATION_ATTEMPTS_PER_COURSE`,
+v1.1.0) existía por una limitación real de `localStorage` (cuota finita).
+PostgreSQL no tiene esa limitación para filas pequeñas — truncar la
+persistencia perdería evidencia real para siempre sin necesidad. Decisión:
+**se persisten TODOS los intentos, se SIRVEN como máximo 50** por
+`get_history` (`HISTORY_SERVE_LIMIT`), reproduciendo el comportamiento
+observable exacto de antes sin perder el resto del historial real
+(probado con 60 intentos reales: `test_history_limit_serves_at_most_50`).
+
+### 4.6. Idempotencia y carreras
+
+Mismo patrón que Bloque 1/2: `UNIQUE(user_id, practice_id)` +
+`IntegrityError` + retry. Un reintento de red del mismo submit (mismo
+`practice_id`) nunca duplica el intento **ni degrada la evidencia ya
+persistida** — el resultado se RECALCULA siempre (función pura de
+`answers`, puede diferir si el cliente reenvía respuestas distintas), pero
+solo la PRIMERA persistencia real gana (`test_evaluate_retry_same_practice_id_never_duplicates_or_degrades`,
+más concurrencia real con threads:
+`test_certification_concurrency_history.py`).
+
+### 4.7. Legacy import + provenance
+
+`POST .../certification/legacy-import` — mismo patrón que topic progress:
+dedup por `practice_id` (nunca sobrescribe `server_evaluated` con
+`legacy_import`), timestamps preservados tal cual (nunca `Date.now()`),
+entradas con módulo/tópico stale se descartan por-fila (el intento se
+importa igual con el resto). `origin` distingue ambas procedencias, nunca
+afecta el peso pedagógico.
+
+**Marcador de import — mismo criterio que Bloque 2, pero SEPARADO**:
+`certificationHistoryImportedAt` es un campo nuevo y distinto de
+`serverProgressImportedAt` (PASO 34: importar uno nunca implica que el
+otro se importó — son bootstraps independientes).
+
+**Bug real de QA encontrado y corregido**: `LearningProgressPage.tsx::handleStartVerification`
+resuelve el progreso/historial de `reviewCompletion.courseId`, que puede
+NO ser el `selectedCourseId` actual — llamaba directamente a
+`api.getCourseProgress`/`api.getCertificationHistory` sin pasar por el
+bootstrap de import legacy de los hooks. Si ese curso nunca había sido
+cargado por `useServerTopicProgress`/`useServerCertificationHistory` en
+esta sesión, `latestAttemptIdAtStart` podía quedar `null` aunque existiera
+un intento legacy real en `localStorage` (encontrado por un test que
+simulaba exactamente ese escenario). Corregido extrayendo la lógica
+get-or-import de ambos hooks a funciones puntuales reusables
+(`fetchCourseTopicProgress`/`fetchCourseCertificationHistory`), usadas
+tanto por los hooks como por `handleStartVerification` — mismo marcador
+cliente, mismo comportamiento idempotente, sin duplicar lógica.
+
+### 4.8. Frontend: arquitectura final del bloque
+
+- `learning/useServerCertificationHistory.ts`: hook de lectura + import
+  legacy (mismo patrón que `useServerTopicProgress.ts`). Incluye un filtro
+  defensivo (`isSaneForImport`) que descarta client-side cualquier entrada
+  legacy que no vaya a pasar la validación atómica del backend (Pydantic
+  valida el batch completo: una sola entrada corrupta rechazaría el import
+  entero si no se filtrara antes).
+- `useCertificationExam.ts::submitExam()`: ya no llama a
+  `recordCertificationAttempt` (dual-write local eliminado, PASO 53) — solo
+  envía `practice_id`/`mode` además de `answers`. `buildAttemptSummary`
+  (`certificationSummary.ts`) queda como código muerto conocido y
+  documentado (deuda técnica menor, ver 4.10) — se evaluó borrarlo y se
+  decidió no ampliar el diff de este bloque sin necesidad real.
+- `LearningProgressPage.tsx`/`CertificationResultsPage.tsx`: combinan
+  `useServerTopicProgress`+`useServerCertificationHistory` en un
+  `CourseLearningProgress` armado en memoria — **cero cambios** en
+  `courseSummary.ts`/`topicLearningSignal.ts`/`learningState.ts`/
+  `guidedReviewVerification.ts` (funciones puras, agnósticas del origen).
+- `SettingsPage.tsx` ("Restablecer mi progreso"): ahora llama a DOS
+  DELETE server-side (topic progress + Certification history) antes de
+  limpiar el documento local; si cualquiera falla, aborta sin tocar nada
+  (nunca un reset parcial).
+- `certificationErrors.ts`: el copy del 503 se generalizó ("Servicio no
+  disponible" en vez de "IA no configurada") — un 503 de `/evaluate` ahora
+  puede ser por Postgres caído, no solo por falta de credencial de IA.
+
+### 4.9. QA real ejecutada
+
+Contra Postgres/Docker/LLM reales (curl, credencial OpenAI real
+configurada): prepare→evaluate→history con generación real, DB inspeccionada
+directamente (join `certification_attempts`/`certification_topic_results`,
+sin `question_results`), aislamiento entre dos identidades dev,
+Postgres caído durante un GET de historial → `503` limpio → recupera solo,
+persistencia real a través de restart de backend Y `docker compose down`
+(sin `-v`) + `up -d` completo (mismo volumen, `alembic current` en `0003`).
+
+**Misma limitación honesta que Bloque 2**: sin Playwright/chromium-cli en
+este entorno, no hubo click-through en un browser real — release blocker
+pendiente para el hardening/RC de v1.7.0, tal como se pidió explícitamente.
+
+### 4.10. Deuda técnica conocida
+
+`certificationSummary.ts::buildAttemptSummary` quedó sin ningún llamador
+en código de producción (antes usado por `submitExam()`, ahora la
+persistencia la hace el backend) — sus tests (`certificationSummary.test.ts`)
+siguen pasando porque siguen ejercitando la función directamente. Se
+decidió NO eliminarla en este bloque (función pura, inofensiva, bien
+testeada) para no ampliar el diff sin necesidad real; queda como candidato
+de limpieza de un futuro hardening.
+
+### 4.11. Roadmap para el próximo bloque
+
+Con los tres pilares del perfil funcional en Postgres, un candidato natural
+para un bloque futuro es evaluar si `localStorage`/`learningProgressStore.ts`
+puede simplificarse aún más (ya no tiene ningún dato NUEVO escribiéndose
+ahí, solo el snapshot legacy congelado pre-migración) — sin apuro, no es
+un requisito funcional pendiente.

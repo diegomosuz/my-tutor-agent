@@ -5,22 +5,27 @@ vi.mock("../../api/client", () => ({
   api: {
     getSystemStatus: vi.fn(),
     getCourses: vi.fn(),
-    // v1.7.0 Bloque 2: "Restablecer mi progreso" ahora consulta/borra
-    // topic progress server-side además del historial local de
-    // Certification -- ver docs/SERVER_SIDE_PROFILE_V1_7.md.
+    // v1.7.0 Bloque 2/3: "Restablecer mi progreso" ahora consulta/borra
+    // topic progress Y Certification history, ambos server-side -- ver
+    // docs/SERVER_SIDE_PROFILE_V1_7.md.
     getCourseProgress: vi.fn(),
     resetCourseProgressServer: vi.fn(),
+    getCertificationHistory: vi.fn(),
+    resetCertificationHistoryServer: vi.fn(),
   },
 }));
 
 import { api } from "../../api/client";
-import { recordCertificationAttempt } from "../../learning/learningProgressStore";
 import { SettingsPage } from "../SettingsPage";
 
 const mockedGetStatus = api.getSystemStatus as unknown as ReturnType<typeof vi.fn>;
 const mockedGetCourses = api.getCourses as unknown as ReturnType<typeof vi.fn>;
 const mockedGetCourseProgress = api.getCourseProgress as unknown as ReturnType<typeof vi.fn>;
 const mockedResetCourseProgressServer = api.resetCourseProgressServer as unknown as ReturnType<typeof vi.fn>;
+const mockedGetCertificationHistory = api.getCertificationHistory as unknown as ReturnType<typeof vi.fn>;
+const mockedResetCertificationHistoryServer = api.resetCertificationHistoryServer as unknown as ReturnType<
+  typeof vi.fn
+>;
 
 const STATUS = {
   app_version: "0.7.0",
@@ -42,6 +47,8 @@ describe("SettingsPage", () => {
     mockedGetCourses.mockResolvedValue([]);
     mockedGetCourseProgress.mockReset().mockResolvedValue({ course_id: "curso-demo", topics: [] });
     mockedResetCourseProgressServer.mockReset().mockResolvedValue(undefined);
+    mockedGetCertificationHistory.mockReset().mockResolvedValue({ course_id: "curso-demo", attempts: [] });
+    mockedResetCertificationHistoryServer.mockReset().mockResolvedValue(undefined);
     window.localStorage.clear();
   });
 
@@ -112,26 +119,20 @@ describe("SettingsPage", () => {
     confirmSpy.mockRestore();
   });
 
-  it("v1.7.0 Bloque 2: con progreso solo de Certification local (sin topic progress server-side) también ofrece confirmar", async () => {
+  it("v1.7.0 Bloque 3: con historial de Certification server-side (sin topic progress) también ofrece confirmar", async () => {
     mockedGetStatus.mockResolvedValue(STATUS);
     mockedGetCourses.mockResolvedValue([{ id: "curso-demo", title: "Curso Demo" }]);
-    recordCertificationAttempt("curso-demo", {
-      attemptId: "att-1",
-      courseId: "curso-demo",
-      mode: "practice",
-      moduleIds: ["modulo-1"],
-      topicIds: ["topico-1"],
-      questionCount: 5,
-      answeredCount: 5,
-      correctCount: 5,
-      partialCount: 0,
-      incorrectCount: 0,
-      unansweredCount: 0,
-      scorePercentage: 100,
-      completedAt: "2026-01-01T00:00:00.000Z",
-      performanceByTopic: [],
-      competenciesToReinforce: [],
-    }); // solo local (Certification), sin topic progress server-side
+    mockedGetCertificationHistory.mockResolvedValue({
+      course_id: "curso-demo",
+      attempts: [
+        {
+          attempt_id: "att-1", course_id: "curso-demo", mode: "practice", module_ids: ["modulo-1"],
+          topic_ids: ["topico-1"], question_count: 5, answered_count: 5, correct_count: 5, partial_count: 0,
+          incorrect_count: 0, unanswered_count: 0, score_percentage: 100, completed_at: "2026-01-01T00:00:00.000Z",
+          performance_by_topic: [], competencies_to_reinforce: [], topics_to_reinforce: [], origin: "server_evaluated",
+        },
+      ],
+    });
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<SettingsPage />);
     await waitFor(() => expect(screen.getByText("Restablecer mi progreso")).toBeInTheDocument());

@@ -61,6 +61,45 @@ function toRecord(response: CourseProgressResponse): Record<string, TopicLearnin
   return record;
 }
 
+/** Get-or-import: la misma lógica que usa el hook, extraída para que
+ * cualquier llamador puntual (ej. `LearningProgressPage.tsx::
+ * handleStartVerification`, que resuelve progreso de un curso que puede
+ * no ser `selectedCourseId` y por lo tanto nunca pasó por el hook) también
+ * dispare el bootstrap legacy -- bug real encontrado en QA: sin esto, un
+ * curso cuyo hook nunca se montó para ESE courseId nunca importaba su
+ * progreso legacy, y una llamada directa a la API solo veía lo que ya
+ * hubiera en el servidor (potencialmente nada). Idempotente por el mismo
+ * marcador cliente que ya usa el hook -- llamar esto y luego montar el
+ * hook (o viceversa) para el mismo curso nunca reimporta dos veces. */
+export async function fetchCourseTopicProgress(
+  courseId: string,
+  signal?: AbortSignal
+): Promise<Record<string, TopicLearningProgress>> {
+  let response = await api.getCourseProgress(courseId, signal);
+
+  if (!hasImportedServerProgress(courseId)) {
+    const legacy = getLegacyTopicsSnapshot(courseId);
+    if (legacy.length > 0) {
+      response = await api.importLegacyProgress(
+        courseId,
+        {
+          topics: legacy.map((t) => ({
+            module_id: t.moduleId,
+            topic_id: t.topicId,
+            status: t.status as "in_progress" | "completed",
+            started_at: t.startedAt,
+            completed_at: t.completedAt,
+          })),
+        },
+        signal
+      );
+    }
+    markServerProgressImported(courseId);
+  }
+
+  return toRecord(response);
+}
+
 export function useServerTopicProgress(courseId: string | null): ServerTopicProgressState {
   const [topics, setTopics] = useState<Record<string, TopicLearningProgress> | null>(null);
   const [loading, setLoading] = useState(false);
@@ -83,33 +122,9 @@ export function useServerTopicProgress(courseId: string | null): ServerTopicProg
 
     async function load(id: string) {
       try {
-        let response = await api.getCourseProgress(id, controller.signal);
-
-        if (!hasImportedServerProgress(id)) {
-          const legacy = getLegacyTopicsSnapshot(id);
-          if (legacy.length > 0) {
-            response = await api.importLegacyProgress(
-              id,
-              {
-                topics: legacy.map((t) => ({
-                  module_id: t.moduleId,
-                  topic_id: t.topicId,
-                  status: t.status as "in_progress" | "completed",
-                  started_at: t.startedAt,
-                  completed_at: t.completedAt,
-                })),
-              },
-              controller.signal
-            );
-          }
-          // Se marca AUNQUE no hubiera nada legacy que importar: evita
-          // recorrer `getLegacyTopicsSnapshot` (barata, pero innecesaria)
-          // en cada carga futura para un curso sin progreso legacy.
-          markServerProgressImported(id);
-        }
-
+        const record = await fetchCourseTopicProgress(id, controller.signal);
         if (!cancelled) {
-          setTopics(toRecord(response));
+          setTopics(record);
           setLoading(false);
         }
       } catch {

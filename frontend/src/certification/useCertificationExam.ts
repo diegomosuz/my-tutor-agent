@@ -15,8 +15,6 @@ import {
   saveExamSession,
   type StoredExamSession,
 } from "./certificationStorage";
-import { buildAttemptSummary } from "../learning/certificationSummary";
-import { recordCertificationAttempt } from "../learning/learningProgressStore";
 
 // Nota de diseño: submitExam() NUNCA borra la sesión de examen (preguntas
 // + selections) al terminar — la deja en sessionStorage junto con el
@@ -155,8 +153,7 @@ export function useCertificationExam(courseId: string | undefined): UseCertifica
   async function submitExam(): Promise<CertificationPracticeResult | null> {
     if (!session || !courseId) return null;
     // v1.1.0: mismo guard que prepare() — nunca dos entregas concurrentes
-    // de la misma práctica/simulacro (evitaría registrar el intento dos
-    // veces en "Mi aprendizaje", ver recordCertificationAttempt() abajo).
+    // de la misma práctica/simulacro.
     if (loading) return null;
     setLoading(true);
     setError(null);
@@ -166,14 +163,19 @@ export function useCertificationExam(courseId: string | undefined): UseCertifica
         question_id: q.question_id,
         selected_option_ids: session.selections[examAnswerKey(q.bank_id, q.question_id)] ?? [],
       }));
-      const result = await api.evaluateCertificationSimulation(courseId, { answers });
+      // v1.7.0 Bloque 3: el backend evalúa Y persiste el intento
+      // server-side (PostgreSQL) ANTES de responder -- ya no hace falta
+      // (ni corresponde) registrar un resumen local vía
+      // recordCertificationAttempt: "Mi aprendizaje"/Results leen el
+      // historial directamente del servidor (useServerCertificationHistory).
+      // `practice_id` es el mismo identificador ya emitido por /prepare:
+      // hace que un reintento de red nunca duplique el intento persistido.
+      const result = await api.evaluateCertificationSimulation(courseId, {
+        answers,
+        practice_id: session.practiceId,
+        mode: session.mode,
+      });
       saveCertificationResult(courseId, session.practiceId, result);
-      // v1.1.0: registra un resumen SEGURO (nunca answer key) en el
-      // historial local de "Mi aprendizaje" — ver
-      // learning/certificationSummary.ts. Nunca debe poder romper la
-      // entrega del examen: el resultado ya se devuelve igual si esto
-      // fallara (recordCertificationAttempt nunca lanza).
-      recordCertificationAttempt(courseId, buildAttemptSummary(session, result));
       return result;
     } catch (err) {
       setError(describeCertificationError(err));

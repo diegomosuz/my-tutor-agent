@@ -2,18 +2,102 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// v1.7.0 Bloque 2: topic progress es server-side (PostgreSQL) -- este
-// archivo nunca siembra estado de tópico vía `markTopicStarted`/
-// `markTopicCompleted` (solo Certification, todavía local), así que un
-// backend fake "siempre vacío" es suficiente (ver
-// docs/SERVER_SIDE_PROFILE_V1_7.md): la derivación needs_review/mastered
-// de estos tests depende de `performanceByTopic` de la certificación, no
-// del status curricular.
+// v1.7.0 Bloque 2/3: topic progress Y Certification history son
+// server-side (PostgreSQL) -- este archivo nunca siembra estado de tópico
+// vía `markTopicStarted`/`markTopicCompleted` (backend fake de topics
+// "siempre vacío" es suficiente), pero SÍ siembra Certification vía
+// `recordCertificationAttempt` (localStorage) -- eso ahora representa el
+// snapshot LEGACY que `useServerCertificationHistory` importa una sola vez
+// contra el servidor. `mockGetCertificationHistory`/
+// `mockImportLegacyCertificationHistory` simulan ese backend en memoria
+// (mismo patrón ya probado en LearningProgressPage.test.tsx, Bloque 2).
+interface FakeCertEntry {
+  attempt_id: string;
+  course_id: string;
+  mode: string;
+  module_ids: string[];
+  topic_ids: string[];
+  question_count: number;
+  answered_count: number;
+  correct_count: number;
+  partial_count: number;
+  incorrect_count: number;
+  unanswered_count: number;
+  score_percentage: number;
+  completed_at: string;
+  performance_by_topic: unknown[];
+  competencies_to_reinforce: unknown[];
+  topics_to_reinforce: unknown[];
+  origin: string;
+}
+
+let fakeCertHistory: Record<string, FakeCertEntry[]> = {};
+
+const mockGetCertificationHistory = vi.fn(async (courseId: string) => ({
+  course_id: courseId,
+  attempts: fakeCertHistory[courseId] ?? [],
+}));
+const mockImportLegacyCertificationHistory = vi.fn(
+  async (
+    courseId: string,
+    body: {
+      attempts: Array<{
+        practice_id: string;
+        mode: string;
+        question_count: number;
+        answered_count: number;
+        correct_count: number;
+        partial_count: number;
+        incorrect_count: number;
+        unanswered_count: number;
+        score_percentage: number;
+        completed_at: string;
+        performance_by_topic: unknown[];
+        competencies_to_reinforce: unknown[];
+      }>;
+    }
+  ) => {
+    const existing = (fakeCertHistory[courseId] ??= []);
+    for (const attempt of body.attempts) {
+      if (existing.some((e) => e.attempt_id === attempt.practice_id)) continue;
+      const moduleIds = Array.from(
+        new Set((attempt.performance_by_topic as Array<{ module_id: string }>).map((t) => t.module_id))
+      );
+      const topicIds = Array.from(
+        new Set((attempt.performance_by_topic as Array<{ topic_id: string }>).map((t) => t.topic_id))
+      );
+      existing.push({
+        attempt_id: attempt.practice_id,
+        course_id: courseId,
+        mode: attempt.mode,
+        module_ids: moduleIds,
+        topic_ids: topicIds,
+        question_count: attempt.question_count,
+        answered_count: attempt.answered_count,
+        correct_count: attempt.correct_count,
+        partial_count: attempt.partial_count,
+        incorrect_count: attempt.incorrect_count,
+        unanswered_count: attempt.unanswered_count,
+        score_percentage: attempt.score_percentage,
+        completed_at: attempt.completed_at,
+        performance_by_topic: attempt.performance_by_topic,
+        competencies_to_reinforce: attempt.competencies_to_reinforce,
+        topics_to_reinforce: [],
+        origin: "legacy_import",
+      });
+    }
+    return { course_id: courseId, attempts: existing };
+  }
+);
+
 vi.mock("../../api/client", () => ({
   api: {
     getCourse: vi.fn().mockResolvedValue({ id: "curso-demo", title: "Demo Curso IA", description: "", order: 1, modules: [] }),
     getCourseProgress: vi.fn().mockResolvedValue({ course_id: "curso-demo", topics: [] }),
     importLegacyProgress: vi.fn().mockResolvedValue({ course_id: "curso-demo", topics: [] }),
+    getCertificationHistory: (courseId: string) => mockGetCertificationHistory(courseId),
+    importLegacyCertificationHistory: (courseId: string, body: unknown) =>
+      mockImportLegacyCertificationHistory(courseId, body as never),
   },
 }));
 
@@ -170,6 +254,9 @@ beforeEach(() => {
   mockClearSession.mockReset();
   mockNavigate.mockReset();
   mockedGetCourse.mockReset();
+  fakeCertHistory = {};
+  mockGetCertificationHistory.mockClear();
+  mockImportLegacyCertificationHistory.mockClear();
   mockedGetCourse.mockResolvedValue({ id: "curso-demo", title: "Demo Curso IA", description: "", order: 1, modules: [] });
   mockExamReturn = {
     session: { questions: [] },

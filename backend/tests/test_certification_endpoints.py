@@ -225,7 +225,9 @@ def test_evaluate_simulation_returns_practice_result(client, monkeypatch):
         {"bank_id": q["bank_id"], "question_id": q["question_id"], "selected_option_ids": ["A"]}
         for q in questions
     ]
-    response = client.post(_EVALUATE_URL, json={"answers": answers})
+    response = client.post(
+        _EVALUATE_URL, json={"answers": answers, "practice_id": prepare_response.json()["practice_id"], "mode": "simulation"}
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["total_questions"] == 2

@@ -10,11 +10,14 @@ export function describeCertificationError(err: unknown): { title: string; detai
   if (err instanceof ApiError) {
     switch (err.status) {
       case 503:
+        // v1.7.0 Bloque 3: un 503 ya no es exclusivo de "falta credencial
+        // de IA" (prepare) -- /evaluate también puede devolver 503 si
+        // Postgres no está disponible al intentar persistir el intento
+        // (ver docs/SERVER_SIDE_PROFILE_V1_7.md). El copy genérico cubre
+        // ambos casos sin afirmar algo que puede ser falso.
         return {
-          title: "IA no configurada",
-          detail:
-            err.message ||
-            "El backend todavía no tiene una credencial de proveedor LLM disponible para preparar preguntas nuevas.",
+          title: "Servicio no disponible",
+          detail: err.message || "El servidor no está disponible en este momento. Intentá nuevamente más tarde.",
         };
       case 502:
         return {

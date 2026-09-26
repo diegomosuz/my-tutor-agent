@@ -1,5 +1,6 @@
 import type {
   AiStatusResponse,
+  CertificationHistoryResponse,
   CertificationPracticeResult,
   CertificationPrepareRequest,
   CertificationPrepareResponse,
@@ -11,6 +12,7 @@ import type {
   CourseSummary,
   EvaluateSimulationRequest,
   GroundingResponse,
+  LegacyCertificationImportRequest,
   LegacyImportRequest,
   LessonPlan,
   MarkProgressRequest,
@@ -183,6 +185,23 @@ export const api = {
       body,
       signal,
     }),
+  // v1.7.0 Bloque 3: historial de Certification server-side (PostgreSQL).
+  // El usuario actual se resuelve siempre server-side (identidad, Bloque
+  // 1) -- estos métodos nunca envían un user_id.
+  getCertificationHistory: (courseId: string, signal?: AbortSignal) =>
+    request<CertificationHistoryResponse>(`/api/courses/${courseId}/certification/history`, { signal }),
+  importLegacyCertificationHistory: (
+    courseId: string,
+    body: LegacyCertificationImportRequest,
+    signal?: AbortSignal
+  ) =>
+    request<CertificationHistoryResponse>(`/api/courses/${courseId}/certification/legacy-import`, {
+      method: "POST",
+      body,
+      signal,
+    }),
+  resetCertificationHistoryServer: (courseId: string, signal?: AbortSignal) =>
+    request<undefined>(`/api/courses/${courseId}/certification/history`, { method: "DELETE", signal }),
   // v1.7.0 Bloque 2: progreso curricular server-side (PostgreSQL). El
   // usuario actual se resuelve siempre server-side (identidad, Bloque 1) --
   // estos métodos nunca envían un user_id.

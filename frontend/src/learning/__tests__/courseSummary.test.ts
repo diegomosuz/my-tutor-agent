@@ -51,7 +51,7 @@ function makeTopicProgress(
 function makeProgress(
   topics: Record<string, ReturnType<typeof makeTopicProgress>>
 ): CourseLearningProgress {
-  return { courseId: "curso-demo", topics, certificationAttempts: [], serverProgressImportedAt: null };
+  return { courseId: "curso-demo", topics, certificationAttempts: [], serverProgressImportedAt: null, certificationHistoryImportedAt: null };
 }
 
 describe("buildCourseLearningSummary", () => {

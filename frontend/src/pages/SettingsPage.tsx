@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { isSpeechSupported } from "../classroom/speech";
-import { getCourseLearningProgress, resetCourseProgress } from "../learning/learningProgressStore";
+import { resetCourseProgress } from "../learning/learningProgressStore";
 import { resetCourseProgressServer } from "../learning/topicProgressClient";
 import type { CourseSummary, SystemStatusResponse } from "../types/api";
 
@@ -43,27 +43,35 @@ export function SettingsPage() {
     };
   }, []);
 
-  // v1.7.0 Bloque 2: "Restablecer mi progreso" sigue siendo UNA acción de
+  // v1.7.0 Bloque 3: "Restablecer mi progreso" sigue siendo UNA acción de
   // producto (mismo confirm, mismo texto: borra topic progress +
   // Certification history juntos, comportamiento histórico preservado a
-  // propósito -- ver docs/SERVER_SIDE_PROFILE_V1_7.md), pero por debajo
-  // ahora toca DOS sistemas distintos: PostgreSQL (topic progress, server
-  // DELETE) y localStorage (Certification history, sigue local en este
-  // bloque). Orden: primero el servidor: si falla, se aborta por completo
-  // (nunca un reset parcial ambiguo) y el alumno puede reintentar.
+  // propósito -- ver docs/SERVER_SIDE_PROFILE_V1_7.md), y ahora AMBOS son
+  // server-side (PostgreSQL). Orden: primero los dos DELETE del servidor;
+  // si cualquiera falla, se aborta por completo (nunca un reset parcial
+  // ambiguo) y el alumno puede reintentar. Solo si ambos tienen éxito se
+  // limpia también el documento local (topics/certificationAttempts/
+  // marcadores de import legacy juntos -- evita que un reset resucite
+  // luego vía el bootstrap legacy, ver regresión confirmada en Bloque 2).
   async function handleResetProgress() {
     if (!resetCourseId) return;
     const course = courses.find((c) => c.id === resetCourseId);
 
     let hasServerProgress = false;
+    let hasServerCertHistory = false;
     try {
       const response = await api.getCourseProgress(resetCourseId);
       hasServerProgress = response.topics.length > 0;
     } catch {
       hasServerProgress = false;
     }
-    const hasLocalCertification = (getCourseLearningProgress(resetCourseId)?.certificationAttempts.length ?? 0) > 0;
-    if (!hasServerProgress && !hasLocalCertification) {
+    try {
+      const history = await api.getCertificationHistory(resetCourseId);
+      hasServerCertHistory = history.attempts.length > 0;
+    } catch {
+      hasServerCertHistory = false;
+    }
+    if (!hasServerProgress && !hasServerCertHistory) {
       setResetMessage(`No hay progreso guardado para "${course?.title ?? resetCourseId}".`);
       return;
     }
@@ -77,6 +85,7 @@ export function SettingsPage() {
 
     try {
       await resetCourseProgressServer(resetCourseId);
+      await api.resetCertificationHistoryServer(resetCourseId);
     } catch {
       setResetMessage(
         `No se pudo restablecer el progreso de "${course?.title ?? resetCourseId}" (el servidor no respondió). Intentá nuevamente.`

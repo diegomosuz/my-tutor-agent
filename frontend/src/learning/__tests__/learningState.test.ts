@@ -93,7 +93,7 @@ function progressDoc(
 ): CourseLearningProgress {
   const topicsMap: Record<string, TopicLearningProgress> = {};
   for (const t of topics) topicsMap[`${t.moduleId}:${t.topicId}`] = t;
-  return { courseId: "curso-demo", topics: topicsMap, certificationAttempts, serverProgressImportedAt: null };
+  return { courseId: "curso-demo", topics: topicsMap, certificationAttempts, serverProgressImportedAt: null, certificationHistoryImportedAt: null };
 }
 
 describe("deriveTopicLearningState — mapeo puro TopicLearningSignal -> LearningState", () => {

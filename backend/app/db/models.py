@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -130,3 +132,91 @@ class TopicProgress(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class CertificationAttempt(Base):
+    """Intento de práctica/simulacro de certificación YA evaluado
+    determinísticamente (v1.7.0, Bloque 3). PostgreSQL es la fuente de
+    verdad desde este bloque -- ver docs/SERVER_SIDE_PROFILE_V1_7.md
+    sección "Bloque 3".
+
+    NUNCA persiste `question_results` (respuestas individuales/answer
+    key/explicaciones por pregunta) -- solo agregados ya públicos, igual
+    que el `CertificationAttemptSummary` que el frontend guardaba en
+    `localStorage` antes de este bloque.
+
+    `competency_breakdown` (JSONB) es una decisión documentada: siempre se
+    lee/escribe como unidad completa por intento (nunca se filtra por
+    competencia a nivel SQL), así que una tabla normalizada ahí no aporta
+    valor real y no fue pedida explícitamente -- a diferencia de la
+    evidencia por tópico (`CertificationTopicResult`), que sí lo fue.
+
+    `origin` distingue evidencia generada por el propio backend
+    (`"server_evaluated"`, la única fuente confiable de scores) de
+    evidencia histórica migrada desde `localStorage`
+    (`"legacy_import"`) -- nunca se usa para dar más o menos peso
+    pedagógico, solo es informativo/auditable.
+
+    `UNIQUE(user_id, practice_id)`: `practice_id` ya es un UUID4 generado
+    por el backend en `/prepare` (identidad funcional estable de un
+    intento) -- esta constraint es lo que hace que reintentar el mismo
+    submit (red perdida, etc.) o reimportar el mismo intento legacy nunca
+    cree una fila duplicada."""
+
+    __tablename__ = "certification_attempts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "practice_id", name="uq_certification_attempts_user_practice"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("app_users.id", ondelete="CASCADE"), nullable=False
+    )
+    course_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    practice_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    total_questions: Mapped[int] = mapped_column(Integer, nullable=False)
+    correct_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    partially_correct_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    incorrect_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    unanswered_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    score_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    competency_breakdown: Mapped[list[Any]] = mapped_column(JSONB, nullable=False)
+    origin: Mapped[str] = mapped_column(String(20), nullable=False)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    topic_results: Mapped[list["CertificationTopicResult"]] = relationship(
+        back_populates="attempt", cascade="all, delete-orphan"
+    )
+
+
+class CertificationTopicResult(Base):
+    """Evidencia por tópico de UN `CertificationAttempt` (v1.7.0, Bloque
+    3). `module_id`+`topic_id` (nunca `topic_id` solo -- un slug de tópico
+    puede repetirse entre módulos distintos, ver
+    `app/services/certification_service.py`) identifican el tópico dentro
+    del intento. `UNIQUE(attempt_id, module_id, topic_id)`: una sola fila
+    de evidencia por tópico por intento."""
+
+    __tablename__ = "certification_topic_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "attempt_id", "module_id", "topic_id", name="uq_certification_topic_results_identity"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    attempt_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("certification_attempts.id", ondelete="CASCADE"), nullable=False
+    )
+    module_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    topic_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    attempted: Mapped[int] = mapped_column(Integer, nullable=False)
+    correct: Mapped[int] = mapped_column(Integer, nullable=False)
+    partially_correct: Mapped[int] = mapped_column(Integer, nullable=False)
+    incorrect: Mapped[int] = mapped_column(Integer, nullable=False)
+    unanswered: Mapped[int] = mapped_column(Integer, nullable=False)
+    score_percent: Mapped[float] = mapped_column(Float, nullable=False)
+
+    attempt: Mapped[CertificationAttempt] = relationship(back_populates="topic_results")

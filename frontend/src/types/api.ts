@@ -367,6 +367,11 @@ export interface AnswerSubmission {
 
 export interface EvaluateSimulationRequest {
   answers: AnswerSubmission[];
+  // v1.7.0 Bloque 3: identificadores/metadata del intento, nunca autoridad
+  // de score (ver docs/SERVER_SIDE_PROFILE_V1_7.md). practice_id ya lo
+  // generó el backend en /prepare.
+  practice_id: string;
+  mode: CertificationMode;
 }
 
 export type QuestionVerdict = "correct" | "partially_correct" | "incorrect";
@@ -420,6 +425,54 @@ export interface CertificationPracticeResult {
   by_competency: CompetencyBreakdown[];
   question_results: QuestionEvaluation[];
   topics_to_reinforce: TopicBreakdown[];
+}
+
+// v1.7.0 Bloque 3: historial de Certification server-side (PostgreSQL).
+// Espejo de backend/app/models/certification.py.
+export type CertificationAttemptOrigin = "server_evaluated" | "legacy_import";
+
+export interface CertificationAttemptEntry {
+  attempt_id: string;
+  course_id: string;
+  mode: CertificationMode;
+  module_ids: string[];
+  topic_ids: string[];
+  question_count: number;
+  answered_count: number;
+  correct_count: number;
+  partial_count: number;
+  incorrect_count: number;
+  unanswered_count: number;
+  score_percentage: number;
+  completed_at: string;
+  performance_by_topic: TopicBreakdown[];
+  competencies_to_reinforce: CompetencyBreakdown[];
+  topics_to_reinforce: TopicBreakdown[];
+  origin: CertificationAttemptOrigin;
+}
+
+export interface CertificationHistoryResponse {
+  course_id: string;
+  attempts: CertificationAttemptEntry[];
+}
+
+export interface LegacyCertificationAttemptEntry {
+  practice_id: string;
+  mode: CertificationMode;
+  question_count: number;
+  answered_count: number;
+  correct_count: number;
+  partial_count: number;
+  incorrect_count: number;
+  unanswered_count: number;
+  score_percentage: number;
+  completed_at: string;
+  performance_by_topic: TopicBreakdown[];
+  competencies_to_reinforce: CompetencyBreakdown[];
+}
+
+export interface LegacyCertificationImportRequest {
+  attempts: LegacyCertificationAttemptEntry[];
 }
 
 // ---------------------------------------------------------------------

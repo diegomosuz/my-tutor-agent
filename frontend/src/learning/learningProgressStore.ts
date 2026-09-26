@@ -135,8 +135,18 @@ function sanitizeDocument(raw: unknown): LearningProgressDocumentV1 {
       typeof rawCourseValue.serverProgressImportedAt === "string"
         ? rawCourseValue.serverProgressImportedAt
         : null;
+    const certificationHistoryImportedAt =
+      typeof rawCourseValue.certificationHistoryImportedAt === "string"
+        ? rawCourseValue.certificationHistoryImportedAt
+        : null;
 
-    courses[courseId] = { courseId, topics, certificationAttempts, serverProgressImportedAt };
+    courses[courseId] = {
+      courseId,
+      topics,
+      certificationAttempts,
+      serverProgressImportedAt,
+      certificationHistoryImportedAt,
+    };
   }
 
   return { schemaVersion: LEARNING_PROGRESS_SCHEMA_VERSION, migratedLegacyAt, courses };
@@ -228,6 +238,7 @@ function migrateLegacyIfNeeded(doc: LearningProgressDocumentV1): LearningProgres
       topics: {},
       certificationAttempts: [],
       serverProgressImportedAt: null,
+      certificationHistoryImportedAt: null,
     };
     const key = topicKey(legacy.moduleId, legacy.topicId);
     // Nunca pisar un tópico que el documento nuevo ya conozca (evita que
@@ -272,6 +283,7 @@ function getOrCreateCourse(
       topics: {},
       certificationAttempts: [],
       serverProgressImportedAt: null,
+      certificationHistoryImportedAt: null,
     }
   );
 }
@@ -414,6 +426,34 @@ export function markServerProgressImported(courseId: string): void {
 export function getLegacyTopicsSnapshot(courseId: string): TopicLearningProgress[] {
   const doc = load();
   return Object.values(doc.courses[courseId]?.topics ?? {}).filter((t) => t.status !== "not_started");
+}
+
+// --------------------------------------------------------------------------
+// v1.7.0 Bloque 3: marcador CLIENTE de import legacy de Certification ->
+// servidor. Mismo patrón que el marcador de topic progress (Bloque 2),
+// pero deliberadamente SEPARADO -- ver docstring de
+// `certificationHistoryImportedAt` en types.ts.
+// --------------------------------------------------------------------------
+
+export function hasImportedCertificationHistory(courseId: string): boolean {
+  const doc = load();
+  return doc.courses[courseId]?.certificationHistoryImportedAt != null;
+}
+
+export function markCertificationHistoryImported(courseId: string): void {
+  const doc = load();
+  const course = getOrCreateCourse(doc, courseId);
+  course.certificationHistoryImportedAt = new Date().toISOString();
+  doc.courses = { ...doc.courses, [courseId]: course };
+  writeDocument(doc);
+}
+
+/** Snapshot legacy de intentos de Certification de este curso, para armar
+ * el body de `POST .../certification/legacy-import`. Nunca incluye topic
+ * progress (PASO 34: fuera de alcance de este import). */
+export function getLegacyCertificationAttemptsSnapshot(courseId: string): CertificationAttemptSummary[] {
+  const doc = load();
+  return doc.courses[courseId]?.certificationAttempts ?? [];
 }
 
 /** Borra el progreso de aprendizaje/certificación de UN curso (PARTE 14).

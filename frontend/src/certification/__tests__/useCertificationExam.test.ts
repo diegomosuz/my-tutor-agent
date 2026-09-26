@@ -291,7 +291,10 @@ describe("useCertificationExam", () => {
       });
     });
 
-    expect(result.current.error?.title).toBe("IA no configurada");
+    // v1.7.0 Bloque 3: el copy del 503 se generalizó (ya no es exclusivo
+    // de "falta credencial de IA" -- /evaluate también puede devolver 503
+    // por Postgres caído, ver certificationErrors.ts).
+    expect(result.current.error?.title).toBe("Servicio no disponible");
     expect(result.current.loading).toBe(false);
   });
 
@@ -356,7 +359,7 @@ describe("useCertificationExam", () => {
     expect(result.current.session?.practiceId).toBe("practice-1");
   });
 
-  it("un segundo submitExam() mientras el primero sigue pendiente registra el intento UNA sola vez en Mi aprendizaje", async () => {
+  it("un segundo submitExam() mientras el primero sigue pendiente llama al backend UNA sola vez", async () => {
     mockedPrepare.mockResolvedValue(samplePrepareResponse());
     let resolveEvaluate: (value: unknown) => void = () => {};
     mockedEvaluateSimulation.mockReturnValue(
@@ -401,11 +404,11 @@ describe("useCertificationExam", () => {
     });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    // recordCertificationAttempt() corre dentro de submitExam() — con el
-    // guard funcionando, debe haberse llamado una sola vez (no cero, no
-    // dos veces). Se verifica indirectamente vía el store real (sin mock).
-    const { getCourseLearningProgress } = await import("../../learning/learningProgressStore");
-    const progress = getCourseLearningProgress(COURSE_ID);
-    expect(progress?.certificationAttempts).toHaveLength(1);
+    // v1.7.0 Bloque 3: la persistencia del intento ahora ocurre
+    // server-side dentro de la MISMA llamada a evaluate -- el guard de
+    // `submitExam()` sigue garantizando que esa llamada nunca se dispara
+    // dos veces para el mismo submit real (verificado arriba, antes y
+    // después de resolver la promesa).
+    expect(mockedEvaluateSimulation).toHaveBeenCalledTimes(1);
   });
 });

@@ -54,6 +54,89 @@ const mockImportLegacyProgress = vi.fn(
   }
 );
 
+// v1.7.0 Bloque 3: mismo criterio para Certification history -- ver
+// docstring arriba (topic progress, Bloque 2). Estos tests siguen
+// sembrando vía `recordCertificationAttempt` (localStorage), que ahora es
+// el snapshot LEGACY importado una sola vez.
+interface FakeCertEntry {
+  attempt_id: string;
+  course_id: string;
+  mode: string;
+  module_ids: string[];
+  topic_ids: string[];
+  question_count: number;
+  answered_count: number;
+  correct_count: number;
+  partial_count: number;
+  incorrect_count: number;
+  unanswered_count: number;
+  score_percentage: number;
+  completed_at: string;
+  performance_by_topic: unknown[];
+  competencies_to_reinforce: unknown[];
+  topics_to_reinforce: unknown[];
+  origin: string;
+}
+
+let fakeCertHistory: Record<string, FakeCertEntry[]> = {};
+
+const mockGetCertificationHistory = vi.fn(async (courseId: string) => ({
+  course_id: courseId,
+  attempts: fakeCertHistory[courseId] ?? [],
+}));
+const mockImportLegacyCertificationHistory = vi.fn(
+  async (
+    courseId: string,
+    body: {
+      attempts: Array<{
+        practice_id: string;
+        mode: string;
+        question_count: number;
+        answered_count: number;
+        correct_count: number;
+        partial_count: number;
+        incorrect_count: number;
+        unanswered_count: number;
+        score_percentage: number;
+        completed_at: string;
+        performance_by_topic: unknown[];
+        competencies_to_reinforce: unknown[];
+      }>;
+    }
+  ) => {
+    const existing = (fakeCertHistory[courseId] ??= []);
+    for (const attempt of body.attempts) {
+      if (existing.some((e) => e.attempt_id === attempt.practice_id)) continue;
+      const moduleIds = Array.from(
+        new Set((attempt.performance_by_topic as Array<{ module_id: string }>).map((t) => t.module_id))
+      );
+      const topicIds = Array.from(
+        new Set((attempt.performance_by_topic as Array<{ topic_id: string }>).map((t) => t.topic_id))
+      );
+      existing.push({
+        attempt_id: attempt.practice_id,
+        course_id: courseId,
+        mode: attempt.mode,
+        module_ids: moduleIds,
+        topic_ids: topicIds,
+        question_count: attempt.question_count,
+        answered_count: attempt.answered_count,
+        correct_count: attempt.correct_count,
+        partial_count: attempt.partial_count,
+        incorrect_count: attempt.incorrect_count,
+        unanswered_count: attempt.unanswered_count,
+        score_percentage: attempt.score_percentage,
+        completed_at: attempt.completed_at,
+        performance_by_topic: attempt.performance_by_topic,
+        competencies_to_reinforce: attempt.competencies_to_reinforce,
+        topics_to_reinforce: [],
+        origin: "legacy_import",
+      });
+    }
+    return { course_id: courseId, attempts: existing };
+  }
+);
+
 vi.mock("../../api/client", () => ({
   api: {
     getCourses: vi.fn(),
@@ -61,6 +144,9 @@ vi.mock("../../api/client", () => ({
     getCourseProgress: (courseId: string) => mockGetCourseProgress(courseId),
     importLegacyProgress: (courseId: string, body: { topics: FakeProgressEntry[] }) =>
       mockImportLegacyProgress(courseId, body),
+    getCertificationHistory: (courseId: string) => mockGetCertificationHistory(courseId),
+    importLegacyCertificationHistory: (courseId: string, body: unknown) =>
+      mockImportLegacyCertificationHistory(courseId, body as never),
   },
   ApiError: class ApiError extends Error {
     status: number;
@@ -157,6 +243,9 @@ beforeEach(() => {
   fakeServerProgress = {};
   mockGetCourseProgress.mockClear();
   mockImportLegacyProgress.mockClear();
+  fakeCertHistory = {};
+  mockGetCertificationHistory.mockClear();
+  mockImportLegacyCertificationHistory.mockClear();
 });
 
 afterEach(() => {
@@ -540,24 +629,43 @@ describe("LearningProgressPage — v1.6.0 Bloque 2 (Learning Insights UI)", () =
     expect(container.textContent).not.toMatch(/NaN|undefined|Invalid Date/);
   });
 
-  it("PASO 57/31: reactividad -- una nueva certificación reordena/actualiza el estado visual al re-renderizar", async () => {
+  it("PASO 57/31: reactividad -- una nueva certificación server-side actualiza el estado visual en un remount (navegación real)", async () => {
+    // v1.7.0 Bloque 3: Certification history es server-side -- la
+    // "reactividad" real ya no es un rerender en el mismo árbol (el hook
+    // solo refetchea si cambia courseId/reloadToken), sino lo que pasa de
+    // verdad en la app: `submitExam()` persiste server-side y una
+    // navegación de vuelta a "Mi aprendizaje" REMONTA la página, montando
+    // una instancia nueva del hook que lee el estado server-side actual.
     markTopicCompleted("curso-demo", "modulo-1", "topico-a");
     mockedGetCourses.mockResolvedValue([COURSE_SUMMARY]);
     mockedGetCourse.mockResolvedValue(BIG_COURSE_DETAIL);
-    const { rerender } = renderPage();
+    const first = renderPage();
     await waitFor(() =>
       expect(screen.getByText("No hay temas que requieran repaso prioritario.")).toBeInTheDocument()
     );
     expect(
       screen.queryByText("Todavía no hay suficiente actividad para generar recomendaciones de repaso.")
     ).not.toBeInTheDocument();
+    first.unmount();
 
-    recordCertificationAttempt("curso-demo", scoreAttempt("topico-a", 25, "2026-01-01T00:00:00.000Z", "att-1"));
-    rerender(
-      <MemoryRouter>
-        <LearningProgressPage />
-      </MemoryRouter>
-    );
+    // Simula que el servidor ahora tiene un intento nuevo real (ya
+    // persistido por evaluate_simulation) -- el marcador de import legacy
+    // de "curso-demo" ya quedó en true tras el primer mount, así que el
+    // próximo mount solo hace GET, nunca reimporta.
+    fakeCertHistory["curso-demo"] = [
+      {
+        attempt_id: "att-1", course_id: "curso-demo", mode: "practice", module_ids: ["modulo-1"],
+        topic_ids: ["topico-a"], question_count: 1, answered_count: 1, correct_count: 0, partial_count: 0,
+        incorrect_count: 1, unanswered_count: 0, score_percentage: 25,
+        completed_at: "2026-01-01T00:00:00.000Z",
+        performance_by_topic: [
+          { module_id: "modulo-1", topic_id: "topico-a", attempted: 1, correct: 0, partially_correct: 0, incorrect: 1, unanswered: 0, practice_score_percent: 25 },
+        ],
+        competencies_to_reinforce: [], topics_to_reinforce: [], origin: "server_evaluated",
+      },
+    ];
+
+    renderPage();
     await waitFor(() => expect(screen.getByText("Prioridad de repaso")).toBeInTheDocument());
     await waitFor(() => expect(screen.getByRole("button", { name: "Repasar tema" })).toBeInTheDocument());
   });

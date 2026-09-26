@@ -10,7 +10,7 @@ vi.mock("../../api/client", () => ({
 
 import { api } from "../../api/client";
 import { markTopicCompleted, markTopicStarted, resetCourseProgress } from "../learningProgressStore";
-import { useServerTopicProgress } from "../useServerTopicProgress";
+import { fetchCourseTopicProgress, useServerTopicProgress } from "../useServerTopicProgress";
 
 const mockedGetCourseProgress = api.getCourseProgress as unknown as ReturnType<typeof vi.fn>;
 const mockedImportLegacyProgress = api.importLegacyProgress as unknown as ReturnType<typeof vi.fn>;
@@ -167,5 +167,40 @@ describe("useServerTopicProgress", () => {
     expect(result.current.topics).toBeNull();
     expect(result.current.loading).toBe(false);
     expect(mockedGetCourseProgress).not.toHaveBeenCalled();
+  });
+
+  describe("fetchCourseTopicProgress (bug real de QA: llamada puntual sin el hook)", () => {
+    it("dispara el import legacy igual que el hook, aunque el hook nunca se haya montado para este curso", async () => {
+      markTopicCompleted(COURSE, "modulo-1", "topico-1");
+      mockedGetCourseProgress.mockResolvedValue({ course_id: COURSE, topics: [] });
+      mockedImportLegacyProgress.mockResolvedValue({
+        course_id: COURSE,
+        topics: [{ module_id: "modulo-1", topic_id: "topico-1", status: "completed", started_at: null, completed_at: null }],
+      });
+
+      const record = await fetchCourseTopicProgress(COURSE);
+
+      expect(mockedImportLegacyProgress).toHaveBeenCalledTimes(1);
+      expect(record["modulo-1:topico-1"].status).toBe("completed");
+    });
+
+    it("es idempotente con el hook: llamar la función puntual y luego montar el hook para el mismo curso nunca reimporta dos veces", async () => {
+      markTopicCompleted(COURSE, "modulo-1", "topico-1");
+      mockedGetCourseProgress.mockResolvedValue({
+        course_id: COURSE,
+        topics: [{ module_id: "modulo-1", topic_id: "topico-1", status: "completed", started_at: null, completed_at: null }],
+      });
+      mockedImportLegacyProgress.mockResolvedValue({
+        course_id: COURSE,
+        topics: [{ module_id: "modulo-1", topic_id: "topico-1", status: "completed", started_at: null, completed_at: null }],
+      });
+
+      await fetchCourseTopicProgress(COURSE);
+      expect(mockedImportLegacyProgress).toHaveBeenCalledTimes(1);
+
+      const { result } = renderHook(() => useServerTopicProgress(COURSE));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(mockedImportLegacyProgress).toHaveBeenCalledTimes(1); // sigue en 1, nunca 2
+    });
   });
 });

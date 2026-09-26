@@ -238,6 +238,14 @@ class EvaluateQuestionRequest(AnswerSubmission):
 
 class EvaluateSimulationRequest(BaseModel):
     answers: list[AnswerSubmission] = Field(default_factory=list, max_length=30)
+    # v1.7.0 Bloque 3: identificadores/metadata del intento, NUNCA
+    # autoridad de score (ver docs/SERVER_SIDE_PROFILE_V1_7.md sección
+    # "Bloque 3", trust boundary). `practice_id` ya lo generó el backend en
+    # `/prepare`; el frontend solo lo reenvía -- es la identidad funcional
+    # que hace que un reintento de red nunca duplique el intento
+    # persistido (UNIQUE(user_id, practice_id)).
+    practice_id: str = Field(min_length=1, max_length=64)
+    mode: CertificationMode = CertificationMode.practice
 
     @field_validator("answers")
     @classmethod
@@ -306,3 +314,90 @@ class CertificationPracticeResult(BaseModel):
     by_competency: list[CompetencyBreakdown]
     question_results: list[QuestionEvaluation]
     topics_to_reinforce: list[TopicBreakdown]
+
+
+# --------------------------------------------------------------------------
+# v1.7.0 Bloque 3: historial de Certification server-side (PostgreSQL).
+# NUNCA incluye question_results/answer key -- ver
+# docs/SERVER_SIDE_PROFILE_V1_7.md sección "Bloque 3".
+# --------------------------------------------------------------------------
+
+
+class CertificationAttemptOrigin(str, Enum):
+    """Distingue evidencia generada por el propio backend (única fuente
+    confiable de scores) de evidencia histórica migrada desde
+    `localStorage` -- nunca afecta el peso pedagógico, solo es
+    informativo/auditable."""
+
+    server_evaluated = "server_evaluated"
+    legacy_import = "legacy_import"
+
+
+class CertificationAttemptEntry(BaseModel):
+    """Un intento ya persistido, en la forma pública que el frontend
+    necesita para reconstruir exactamente el mismo contrato que antes leía
+    de `localStorage` (`CertificationAttemptSummary`) -- performanceByTopic/
+    competenciesToReinforce/topics_to_reinforce equivalentes, LearningState/
+    RecommendedForYou/Verification sin romperse."""
+
+    attempt_id: str
+    course_id: str
+    mode: CertificationMode
+    module_ids: list[str]
+    topic_ids: list[str]
+    question_count: int
+    answered_count: int
+    correct_count: int
+    partial_count: int
+    incorrect_count: int
+    unanswered_count: int
+    score_percentage: float
+    completed_at: str
+    performance_by_topic: list[TopicBreakdown]
+    competencies_to_reinforce: list[CompetencyBreakdown]
+    topics_to_reinforce: list[TopicBreakdown]
+    origin: CertificationAttemptOrigin
+
+
+class CertificationHistoryResponse(BaseModel):
+    course_id: str
+    attempts: list[CertificationAttemptEntry] = Field(default_factory=list)
+
+
+class LegacyCertificationAttemptEntry(BaseModel):
+    """Una entrada del historial legacy de `localStorage`
+    (`CertificationAttemptSummary`, nunca incluyó question_results/answer
+    key -- eso ya era una regla del diseño original, no algo nuevo de este
+    bloque). `module_ids`/`topic_ids` NO se declaran acá: se derivan de
+    `performance_by_topic`, igual que en el intento nuevo -- evita
+    inconsistencia entre ambos campos si el cliente los enviara por
+    separado."""
+
+    practice_id: str = Field(min_length=1, max_length=64)
+    mode: CertificationMode
+    question_count: int = Field(ge=0, le=1000)
+    answered_count: int = Field(ge=0, le=1000)
+    correct_count: int = Field(ge=0, le=1000)
+    partial_count: int = Field(ge=0, le=1000)
+    incorrect_count: int = Field(ge=0, le=1000)
+    unanswered_count: int = Field(ge=0, le=1000)
+    score_percentage: float = Field(ge=0, le=100)
+    completed_at: str
+    performance_by_topic: list[TopicBreakdown] = Field(default_factory=list, max_length=200)
+    competencies_to_reinforce: list[CompetencyBreakdown] = Field(default_factory=list, max_length=200)
+
+    @model_validator(mode="after")
+    def _aggregate_consistency(self) -> "LegacyCertificationAttemptEntry":
+        # Consistencia razonable, sin intentar reconstruir evidencia a
+        # nivel de pregunta que el legacy summary nunca tuvo (PASO 36).
+        if self.answered_count > self.question_count:
+            raise ValueError("answered_count no puede superar question_count")
+        if self.correct_count + self.partial_count + self.incorrect_count > self.answered_count:
+            raise ValueError("correct_count+partial_count+incorrect_count no puede superar answered_count")
+        if self.unanswered_count != self.question_count - self.answered_count:
+            raise ValueError("unanswered_count debe ser question_count - answered_count")
+        return self
+
+
+class LegacyCertificationImportRequest(BaseModel):
+    attempts: list[LegacyCertificationAttemptEntry] = Field(default_factory=list, max_length=200)
