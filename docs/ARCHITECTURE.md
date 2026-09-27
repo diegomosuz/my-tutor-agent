@@ -66,6 +66,21 @@ trust boundaries, invariantes). El resto de la arquitectura descrita en
 este documento (generación de lecciones, tutor, certificación, cache en
 filesystem) no cambió.
 
+Desde v1.8.0 (Bloque 1, "ADAPTIVE TUTOR CONTEXT FOUNDATION") existe una
+transformación adicional, puramente de datos, sobre ese mismo
+`LearningProfile` — todavía SIN wiring hacia ningún LLM:
+
+```
+LearningProfile (ya derivado arriba)
+    ↓  tutor_learning_context_service.build (app/services/tutor_learning_context*.py)
+TutorLearningContext (estado del tópico actual + tópicos a repasar, acotado, sin PII)
+    ↓  (futuro Bloque 2, no implementado todavía)
+Tutor LLM
+```
+
+Ver `docs/ADAPTIVE_TUTOR_V1_8.md` para el detalle completo. El Tutor real
+(`tutor-v4`) no consume `TutorLearningContext` en este bloque.
+
 ## 2. Componentes
 
 ### 2.1 Frontend (`frontend/`)
