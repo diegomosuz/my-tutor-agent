@@ -111,7 +111,7 @@ docker compose run --rm backend pytest tests/test_db_session.py tests/test_ident
 
 | Variable | Default | Descripción |
 |---|---|---|
-| `APP_VERSION` | `1.7.0` | Versión mostrada en `GET /api/system/status` y en la pantalla de Configuración. Sin automatización de semver. |
+| `APP_VERSION` | `1.8.0` | Versión mostrada en `GET /api/system/status` y en la pantalla de Configuración. Sin automatización de semver. |
 
 ## Performance (v1.1.0)
 

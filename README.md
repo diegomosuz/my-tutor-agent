@@ -7,19 +7,24 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **v1.6.1** publicado (`master`/`origin/master`, tag `v1.6.1`). **v1.7.0**
-> está preparado como release candidate local (`release/v1.7.0-rc`, sin
-> push/tag/merge todavía — release gate pendiente, decisión separada).
-> v1.7.0 mueve el perfil funcional del alumno (progreso curricular,
-> historial de certificación, estado de aprendizaje derivado) de
-> `localStorage` a PostgreSQL, detrás de una identidad de aplicación
-> (`app_user`, con una abstracción lista para una futura integración con
-> Microsoft Entra ID — sin login/password propios en esta versión). El
-> mismo estado de aprendizaje ahora es idéntico entre navegadores y
-> dispositivos para el mismo usuario, y queda aislado por usuario;
-> `localStorage` se conserva únicamente como compatibilidad de migración
-> desde v1.6.x. Ver
-> [`docs/RELEASE_NOTES_v1.7.0.md`](./docs/RELEASE_NOTES_v1.7.0.md) y
+> **v1.7.0** publicado (`master`/`origin/master`, tag `v1.7.0`). **v1.8.0 —
+> Adaptive Tutor** está preparado como release candidate local
+> (`release/v1.8.0-rc`, sin push/tag/merge todavía — release gate
+> pendiente, decisión separada). v1.7.0 movió el perfil funcional del
+> alumno (progreso curricular, historial de certificación, estado de
+> aprendizaje derivado) de `localStorage` a PostgreSQL, detrás de una
+> identidad de aplicación (`app_user`, con una abstracción lista para una
+> futura integración con Microsoft Entra ID — sin login/password propios
+> en esta versión). v1.8.0 construye sobre ese mismo estado de
+> aprendizaje derivado (nunca decidido por un LLM) para que el Tutor
+> conversacional adapte CÓMO enseña -- `LearningProfile` (PostgreSQL) →
+> `TutorLearningContext` → `TutorTeachingPolicy` (determinística) →
+> `TutorInteractionPolicy` (determinística) → prompt `tutor-v7`, con
+> comprobaciones formativas opcionales (micro-checks) 100% efímeras, sin
+> persistencia, sin conexión a Certification/Checkpoint/`LearningState`.
+> Ver [`docs/ADAPTIVE_TUTOR_V1_8.md`](./docs/ADAPTIVE_TUTOR_V1_8.md), y
+> para el historial previo
+> [`docs/RELEASE_NOTES_v1.7.0.md`](./docs/RELEASE_NOTES_v1.7.0.md) /
 > [`docs/SERVER_SIDE_PROFILE_V1_7.md`](./docs/SERVER_SIDE_PROFILE_V1_7.md)
 > (y, para el historial previo,
 > [`docs/RELEASE_NOTES_v1.6.1.md`](./docs/RELEASE_NOTES_v1.6.1.md) /

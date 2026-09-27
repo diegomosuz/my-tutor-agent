@@ -196,11 +196,61 @@ persistencia server-side.
       `forgot-password`/`reset-password`); 0 columnas de password/salt/
       hash/reset_token en el schema real.
 
+## Adaptive Tutor (desde v1.8.0)
+
+- [ ] Alembic sigue en `0003` single head — Adaptive Tutor no agrega
+      ninguna tabla persistente (`TutorLearningContext`/
+      `TutorTeachingPolicy`/`TutorInteractionPolicy`/`TutorMicroCheck`/
+      feedback formativo: todos derivados por request, ninguno con
+      modelo en `backend/app/db/models.py`).
+- [ ] `TutorTeachingPolicy`/`TutorInteractionPolicy` se derivan
+      exclusivamente de `TutorLearningContext` (nunca vuelven a leer
+      `topic_progress`/`certification_attempts` directamente) — 0 SQL,
+      0 llamadas LLM, 0 randomness en sus builders.
+- [ ] `micro_check_question`/`student_answer` tratados siempre como
+      DATA no confiable en el prompt de feedback (nunca autoridad) —
+      batería de prompt-injection dedicada verde.
+- [ ] Salida malformada del proveedor (verdict/kind inválido, campos
+      faltantes, campos extra peligrosos como `score`/`answer_key`/
+      `mastered`) rechazada o ignorada de forma segura — nunca
+      pass-through.
+- [ ] Micro-check: máximo 1 por respuesta, grounded exclusivamente
+      `SRC-XXX` del tópico actual (nunca `COURSE-SRC-XXX`, reforzado
+      estructuralmente), sin answer key, sin score, opt-out y pedido
+      explícito del alumno respetados.
+- [ ] Responder correcta/parcial/incorrectamente un micro-check NUNCA
+      muta `LearningState`/`topic_progress`/`certification_attempts` —
+      probado con snapshot real de Postgres antes/después (incluyendo
+      10 repeticiones consecutivas de cada veredicto).
+- [ ] Aislamiento multiusuario real: dos identidades dev con
+      `LearningState` distinto (Postgres real) producen
+      `TutorLearningContext`/`TutorTeachingPolicy`/`TutorInteractionPolicy`
+      distintos para la misma pregunta; la interacción de un alumno
+      nunca contamina el perfil de otro.
+- [ ] Matriz de 4 estados (`not_started`/`progressing`/`needs_review`/
+      `mastered`) + overrides explícitos del alumno ("desde cero",
+      "avanzado", opt-out, pedido explícito de comprobación)
+      confirmados con QA real (Postgres + proveedor LLM real).
+- [ ] `POST .../tutor` y `POST .../tutor/micro-check/feedback`: ambos
+      responden `503` controlado ante una caída real de Postgres (nunca
+      un contexto/política falsos), y ambos se recuperan sin
+      intervención manual al reiniciar Postgres.
+- [ ] Frontend: `MicroCheckCard` es estado 100% efímero (`useState`,
+      nunca `localStorage`/`sessionStorage`/persistencia de backend); un
+      refresh lo hace desaparecer por diseño, documentado explícitamente.
+- [ ] Instalación desde una base de datos vacía (Postgres descartable,
+      nunca el volumen real): migraciones `0001→0002→0003`, primer
+      `AppUser`, Topic Progress, Learning Profile y la cadena completa
+      de Adaptive Tutor (`TutorLearningContext`→`TutorTeachingPolicy`→
+      `TutorInteractionPolicy`) funcionan sin ninguna migración
+      adicional.
+
 ## Versión
 
 - [ ] `APP_VERSION` actualizado en `backend/app/config.py`,
       `.env.example`, `docker-compose.yml` (default), y
-      `docs/CONFIGURATION.md` — todos coherentes entre sí.
+      `docs/CONFIGURATION.md` — todos coherentes entre sí (test
+      automático: `test_config_version_consistency.py`).
 - [ ] Versión de prompts (`LESSON_PROMPT_VERSION`, etc.) NO se cambia solo
       por el release — solo cuando el prompt en sí cambió.
 
