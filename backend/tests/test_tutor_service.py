@@ -771,4 +771,8 @@ def test_expanded_E_existing_reply_fixtures_still_valid_with_course_scope_presen
 
 
 def test_expanded_F_tutor_prompt_version_bumped_for_course_scope():
-    assert TUTOR_PROMPT_VERSION == "tutor-v4"
+    # v1.8.0 (Bloque 2) bumpeó tutor-v4 -> tutor-v5 (adaptación
+    # pedagógica, ver app/prompts/tutor.py) -- este test solo confirma que
+    # la constante sigue existiendo con el valor vigente, nunca que este
+    # bloque la haya modificado.
+    assert TUTOR_PROMPT_VERSION == "tutor-v5"

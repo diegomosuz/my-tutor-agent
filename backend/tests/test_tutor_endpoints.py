@@ -84,3 +84,37 @@ def test_tutor_response_never_contains_secret_like_strings(client, monkeypatch):
     body_text = str(response.json()).lower()
     for forbidden in ["api_key", "authorization", "bearer", "system_prompt"]:
         assert forbidden not in body_text
+
+
+def test_tutor_client_cannot_inject_learning_state_via_extra_fields(client, monkeypatch):
+    """v1.8.0 (Bloque 2), PARTE 89: el cliente no puede mandar
+    `learning_status=mastered` (ni ningún otro campo de estado de
+    aprendizaje) para influir al tutor -- `TutorRequest` no declara esos
+    campos, así que Pydantic los ignora silenciosamente (extra="ignore"
+    por default), nunca los interpreta como una instrucción real. El 200
+    normal (idéntico al de un request sin esos campos) confirma que no
+    rompen el contrato ni se filtran a ningún lado."""
+    fake_provider = FakeLLMProvider(responses=[valid_answer_reply_dict(["SRC-002"])])
+    monkeypatch.setattr(
+        "app.services.tutor_service.get_llm_provider", lambda settings: fake_provider
+    )
+    response = client.post(
+        _TUTOR_URL,
+        json={
+            "message": "¿Qué es la introducción?",
+            "learning_status": "mastered",
+            "reason_code": "HIGH_CERTIFICATION_SCORE",
+            "recent_average": 100,
+            "mastery": True,
+        },
+    )
+    assert response.status_code == 200
+    # El provider fake recibió el mensaje ya construido por el backend --
+    # ninguno de los campos falsos del cliente pudo llegar ahí (TutorRequest
+    # los descarta antes de que existan). El estado real, resuelto
+    # server-side para el usuario dev por defecto (sin evidencia en este
+    # test), sigue siendo "not_started" -- nunca el "mastered" que el
+    # cliente intentó inyectar.
+    user_prompt = fake_provider.calls[0][1]["content"]
+    assert "learning_status: not_started" in user_prompt
+    assert "learning_status: mastered" not in user_prompt

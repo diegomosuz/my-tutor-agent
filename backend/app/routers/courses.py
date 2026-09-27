@@ -2,8 +2,12 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
+from app.db.models import AppUser
+from app.db.session import get_db_session
+from app.dependencies import get_current_app_user
 from app.models.lesson import GenerateLessonRequest, LessonPlan
 from app.models.schemas import CourseDetail, CourseSummary, GroundingResponse, TopicResponse
 from app.models.tutor import (
@@ -196,15 +200,24 @@ def ask_topic_tutor(
     topic_id: str,
     body: TutorRequest,
     settings: Settings = Depends(get_settings),
+    session: Session = Depends(get_db_session),
+    user: AppUser = Depends(get_current_app_user),
 ) -> TutorReplyBody:
-    """Tutor interactivo grounded (Fase 5). El navegador solo puede enviar
-    la pregunta, un `scene_id` opcional y hasta 10 mensajes de historial
-    reciente (roles `user`/`assistant` únicamente, nunca `system`). El
+    """Tutor interactivo grounded (Fase 5; adaptado pedagógicamente desde
+    v1.8.0 Bloque 2). El navegador solo puede enviar la pregunta, un
+    `scene_id` opcional y hasta 10 mensajes de historial reciente (roles
+    `user`/`assistant` únicamente, nunca `system`) -- el contrato de
+    request NO cambió en v1.8.0 Bloque 2 (PARTE 10/84 de la
+    especificación): nunca acepta `learning_status`/`reason_code`/
+    `recent_average`/perfil/mastery/review topics desde el cliente. El
     backend resuelve siempre el tópico verdadero a través del repositorio
     seguro y arma el Grounding Packet (única fuente de verdad) por su
     cuenta; nunca acepta una ruta de filesystem, el system prompt, el
     Grounding Packet, una API key, un provider ni SourceBlocks arbitrarios
-    desde el request.
+    desde el request. El estado de aprendizaje del alumno (`AppUser`,
+    resuelto vía `get_current_app_user`, mismo trust boundary que
+    `GET .../learning-profile`) tampoco se acepta del request: se resuelve
+    siempre server-side.
     """
     try:
         return tutor_service.ask_tutor(
@@ -216,6 +229,8 @@ def ask_topic_tutor(
             scene_id=body.scene_id,
             recent_history=body.recent_history,
             allow_general_knowledge=body.allow_general_knowledge,
+            session=session,
+            user_id=user.id,
         )
     except course_service.CourseNotFoundError:
         raise HTTPException(status_code=404, detail=_COURSE_NOT_FOUND.format(course_id))

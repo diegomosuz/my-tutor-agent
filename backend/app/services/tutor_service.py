@@ -1,13 +1,17 @@
 """Orquestador del tutor interactivo grounded (Fase 5, extendido en
-v1.3.0 con el modo ampliado y en v1.4.0 Bloque 2 con evidencia course-wide).
+v1.3.0 con el modo ampliado, en v1.4.0 Bloque 2 con evidencia course-wide
+y en v1.8.0 Bloque 2 con adaptación pedagógica).
 
-Pipeline (v1.4.0):
+Pipeline (v1.8.0):
 
     CanonicalTopicContent + Grounding Packet (Fase 2, vía app/services/courses.py)
         -> contexto de escena (opcional, vía lesson_generator.get_cached_lesson_plan)
         -> COURSE DOMAIN (v1.3.0 BLOQUE 6, ahora resuelto en TODO modo)
         -> COURSE EVIDENCE (v1.4.0 Bloque 2: app/services/course_retrieval.py
            + app/services/course_grounding.py, SIEMPRE, sin importar el modo)
+        -> TutorLearningContext (v1.8.0 Bloque 2: app/services/
+           tutor_learning_context_service.py, SIEMPRE que haya identidad
+           resuelta -- ver `_resolve_learning_context`)
         -> Prompt Builder (app/prompts/tutor.py)
         -> LLMProvider.generate_structured (Fase 3, reutilizado tal cual)
         -> StructuredTutorReplyBody (validación Pydantic automática)
@@ -18,10 +22,11 @@ Pipeline (v1.4.0):
 Regla de fuente de verdad: el Grounding Packet del tópico actual y el
 COURSE EVIDENCE de otros tópicos del mismo curso son las ÚNICAS fuentes
 autorizadas de conocimiento curricular. `recent_history`, el contexto de
-escena (GENERATED CLASS CONTEXT) y el dominio del curso (COURSE DOMAIN)
-son exclusivamente contexto conversacional/generado/estructural NO
-confiable — nunca se usan como fuente de verdad, y nunca se envían al LLM
-como si lo fueran (ver `app/prompts/tutor.py`).
+escena (GENERATED CLASS CONTEXT), el dominio del curso (COURSE DOMAIN) y
+`TutorLearningContext` (ADAPTIVE LEARNING CONTEXT) son exclusivamente
+contexto conversacional/generado/estructural/pedagógico NO confiable como
+fuente de conocimiento — nunca se usan para responder qué dice el curso,
+y nunca se envían al LLM como si lo fueran (ver `app/prompts/tutor.py`).
 
 v1.4.0 (Bloque 2) -- decisión de producto no negociable: el switch
 "Ampliar con conocimiento general" (`allow_general_knowledge`) NUNCA
@@ -32,15 +37,28 @@ switch controla EXCLUSIVAMENTE si, además de eso, el tutor puede usar
 conocimiento general del modelo para lo que ni el tópico actual ni el
 resto del curso alcanzan a cubrir (ver `_validate` y REGLA 22 del prompt).
 
+v1.8.0 (Bloque 2) -- mismo principio: el switch tampoco controla la
+adaptación pedagógica. `TutorLearningContext` se resuelve SIEMPRE que
+`session`/`user_id` estén presentes (ver `_resolve_learning_context`),
+sin importar `allow_general_knowledge`. El LLM adapta CÓMO enseñar según
+ese contexto (REGLA 24-28 del prompt); nunca calcula, modifica ni
+persiste el estado de aprendizaje -- eso sigue siendo exclusivamente
+`LearningProfileService` (v1.7.0 Bloque 4), determinístico, sin LLM.
+
 Diseñado para inyección de dependencias simple, igual que
 `lesson_generator.py`: `ask_tutor` acepta un `provider: LLMProvider | None`
 opcional para que los tests inyecten un `FakeLLMProvider` sin tocar
-Internet.
+Internet, y `session`/`user_id` opcionales (mismo criterio) para que los
+tests que ejercitan el prompt/grounding de forma aislada (sin Postgres)
+sigan funcionando exactamente igual que en tutor-v4.
 """
 from __future__ import annotations
 
 import logging
 import time
+import uuid
+
+from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models.schemas import CanonicalTopicContent
@@ -62,6 +80,7 @@ from app.prompts.tutor import (
 from app.services import course_retrieval
 from app.services import courses as course_service
 from app.services import lesson_generator
+from app.services import tutor_learning_context_service
 from app.services.course_grounding import (
     CourseSourceBinding,
     build_course_evidence_packet,
@@ -70,6 +89,7 @@ from app.services.course_grounding import (
 from app.services.llm_provider import LLMConfigurationError, LLMProvider, get_llm_provider
 from app.services.llm_retry import GenerationFailedError, ValidationFailure, generate_with_retries
 from app.services.service_logging import log_event
+from app.services.tutor_learning_context import TutorLearningContext
 from app.services.tutor_validation import validate_tutor_reply
 
 logger = logging.getLogger("pwc_tutor.tutor")
@@ -181,6 +201,48 @@ def _resolve_course_evidence(
     return build_course_source_bindings(candidates)
 
 
+def _resolve_learning_context(
+    *,
+    settings: Settings,
+    session: Session | None,
+    user_id: uuid.UUID | None,
+    course_id: str,
+    module_id: str,
+    topic_id: str,
+) -> TutorLearningContext | None:
+    """Resuelve `TutorLearningContext` (v1.8.0, Bloque 1) para esta
+    consulta puntual -- SIEMPRE vía `tutor_learning_context_service.build`
+    (que a su vez solo conoce `learning_profile_service.get_learning_profile`,
+    nunca reinterpreta `topic_progress`/`certification_attempts`
+    directamente). `session`/`user_id` son `None` únicamente cuando el
+    llamador es un test que ejercita `ask_tutor` de forma aislada, sin
+    identidad resuelta (mismo patrón que el parámetro `provider` opcional)
+    -- el router productivo (`app/routers/courses.py`) SIEMPRE los provee,
+    así que en producción esta función nunca devuelve `None` por esta
+    rama.
+
+    A diferencia de `_resolve_scene_context`/`_resolve_course_scope`, NO
+    atrapa excepciones de forma genérica (mismo criterio que
+    `_resolve_course_evidence`): `course_id`/`module_id`/`topic_id` ya
+    fueron validados momentos antes por `course_service.get_grounding_packet`,
+    así que un fallo acá (Postgres caído, `SQLAlchemyError`) es un
+    problema real de infraestructura que debe propagarse -- nunca debe
+    disfrazarse de "alumno sin progreso" (v1.8.0 Bloque 2, PARTE 43:
+    distinguir evidencia legítimamente ausente de una falla técnica real).
+    El handler global de `SQLAlchemyError` (`app/main.py`) responde 503
+    limpio, igual que ya hace `GET .../learning-profile`."""
+    if session is None or user_id is None:
+        return None
+    return tutor_learning_context_service.build(
+        settings=settings,
+        session=session,
+        user_id=user_id,
+        course_id=course_id,
+        module_id=module_id,
+        topic_id=topic_id,
+    )
+
+
 def _to_public_reply(
     raw: StructuredTutorReplyBody, course_bindings: list[CourseSourceBinding]
 ) -> TutorReplyBody:
@@ -237,6 +299,8 @@ def ask_tutor(
     recent_history: list[TutorMessage],
     allow_general_knowledge: bool = False,
     provider: LLMProvider | None = None,
+    session: Session | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> TutorReplyBody:
     """Genera la respuesta grounded del tutor a una pregunta del alumno.
 
@@ -256,7 +320,18 @@ def ask_tutor(
     conocimiento general del modelo para lo que ninguna de las dos
     alcance a cubrir (ver app/prompts/tutor.py REGLA 22/23). Nunca se
     persiste entre preguntas: el frontend lo reenvía en cada request.
-    """
+
+    `session`/`user_id` (v1.8.0, Bloque 2, opcionales, default `None`):
+    identidad YA resuelta por el trust boundary del llamador (el router,
+    vía `get_current_app_user`/`get_db_session` -- nunca aceptados desde
+    el request HTTP, ver `app/routers/courses.py`). Cuando ambos están
+    presentes, se resuelve `TutorLearningContext` (v1.8.0 Bloque 1) y el
+    tutor adapta CÓMO enseñar según el estado de aprendizaje real del
+    alumno (REGLA 24-28 de `app/prompts/tutor.py`) -- nunca decide ni
+    modifica ese estado. Quedan opcionales (en vez de obligatorios) para
+    que los tests que ejercitan `ask_tutor` de forma aislada (sin
+    Postgres) sigan funcionando exactamente igual que en tutor-v4, sin
+    ningún bloque adaptativo en el prompt."""
     llm_provider = provider or get_llm_provider(settings)
 
     # Resolver el tópico ANTES de exigir credencial: un tópico inexistente
@@ -285,6 +360,19 @@ def ask_tutor(
     retrieval_ms = int((time.monotonic() - retrieval_started_at) * 1000)
     course_evidence_packet = build_course_evidence_packet(course_bindings)
 
+    # v1.8.0 (Bloque 2): igual que course_scope/course_evidence, se
+    # resuelve SIEMPRE (sin importar allow_general_knowledge) -- el
+    # switch de conocimiento general nunca controló la adaptación
+    # pedagógica, solo la tercera fuente de conocimiento.
+    learning_context = _resolve_learning_context(
+        settings=settings,
+        session=session,
+        user_id=user_id,
+        course_id=course_id,
+        module_id=module_id,
+        topic_id=topic_id,
+    )
+
     log_context = {
         "course_id": course_id,
         "module_id": module_id,
@@ -293,6 +381,15 @@ def ask_tutor(
         "provider": llm_provider.name,
         "model": llm_provider.model,
         "allow_general_knowledge": allow_general_knowledge,
+        # Observabilidad segura (PARTE 88): un ENUM cerrado (o "-" sin
+        # contexto), nunca el TutorLearningContext completo -- mismo
+        # criterio ya establecido para scope_relation/topic_coverage más
+        # abajo.
+        "learning_status": (
+            learning_context.current_topic.status
+            if learning_context is not None and learning_context.current_topic is not None
+            else "-"
+        ),
     }
     log_event(
         logger,
@@ -311,6 +408,7 @@ def ask_tutor(
         allow_general_knowledge=allow_general_knowledge,
         course_scope=course_scope,
         course_evidence_packet=course_evidence_packet,
+        learning_context=learning_context,
     )
 
     def _validate(body: StructuredTutorReplyBody) -> None:

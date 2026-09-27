@@ -13,6 +13,7 @@ import json
 from dataclasses import dataclass
 
 from app.models.tutor import StructuredTutorReplyBody, TutorMessage
+from app.services.tutor_learning_context import TutorLearningContext
 
 # v1 -> v2 (Fase 6): se agregó la REGLA 19 (texto plano, sin sintaxis
 # Markdown decorativa).
@@ -27,16 +28,16 @@ from app.models.tutor import StructuredTutorReplyBody, TutorMessage
 # exclusivamente en modo ampliado (`ExpandedTutorReplyBody`).
 #
 # v3.3 -> v4 (v1.4.0, BLOQUE 2: "COURSE-GROUNDED TUTOR + CROSS-TOPIC
-# PROVENANCE"): el cambio más grande desde la creación del tutor (Fase 5).
-# Hasta v3.3, el tutor solo conocía DOS fuentes: AUTHORIZED SOURCE (el
-# tópico actual) y, en modo ampliado, conocimiento general del modelo. El
-# Bloque 1 (`course_retrieval.py`, rama `feat/v1.4.0-course-retrieval`)
-# demostró que se puede localizar, de forma 100% determinística y sin
-# ningún LLM, evidencia relevante en OTROS tópicos del mismo curso. Este
-# bloque conecta esa evidencia con el tutor como una TERCERA fuente,
-# `COURSE EVIDENCE` (namespace `COURSE-SRC-XXX`, ver
-# `app/services/course_grounding.py`), con una regla de decisión del
-# producto explícita y no negociable:
+# PROVENANCE"): el cambio más grande desde la creación del tutor (Fase 5)
+# hasta ese momento. Hasta v3.3, el tutor solo conocía DOS fuentes:
+# AUTHORIZED SOURCE (el tópico actual) y, en modo ampliado, conocimiento
+# general del modelo. El Bloque 1 (`course_retrieval.py`, rama
+# `feat/v1.4.0-course-retrieval`) demostró que se puede localizar, de
+# forma 100% determinística y sin ningún LLM, evidencia relevante en
+# OTROS tópicos del mismo curso. Este bloque conecta esa evidencia con el
+# tutor como una TERCERA fuente, `COURSE EVIDENCE` (namespace
+# `COURSE-SRC-XXX`, ver `app/services/course_grounding.py`), con una
+# regla de decisión del producto explícita y no negociable:
 #
 #   El switch "Ampliar con conocimiento general" NUNCA controló si el
 #   tutor puede usar evidencia de otros tópicos del MISMO curso -- eso
@@ -61,7 +62,21 @@ from app.models.tutor import StructuredTutorReplyBody, TutorMessage
 # legalidad de `response_type` según el modo (p.ej. "unrelated" solo es
 # legal en modo ampliado) se sigue validando en `tutor_service._validate`,
 # nunca acá ni a nivel de schema.
-TUTOR_PROMPT_VERSION = "tutor-v4"
+#
+# v4 -> v5 (v1.8.0, BLOQUE 2: "ADAPTIVE TUTOR PROMPTING"): primera vez que
+# el tutor recibe `TutorLearningContext` (v1.8.0 Bloque 1,
+# `app/services/tutor_learning_context.py`) -- el estado de aprendizaje
+# YA CALCULADO por PostgreSQL + LearningProfileService para este alumno en
+# este tópico. Se agrega un bloque de DATOS nuevo, `ADAPTIVE LEARNING
+# CONTEXT` (ver `_build_learning_context_block`), y cinco reglas nuevas
+# (REGLA 24-28) que instruyen CÓMO adaptar la enseñanza según ese estado
+# -- nunca reglas que le permitan al LLM calcular, modificar o inventar
+# ese estado (eso sigue siendo exclusivamente responsabilidad de
+# `LearningProfileService`, determinístico, sin LLM). El LLM adapta HOW TO
+# TEACH; nunca decide WHAT THE STUDENT KNOWS. Grounding (REGLA 2-21)
+# permanece exactamente intacto: el nuevo bloque es metadata pedagógica,
+# nunca una tercera fuente de conocimiento citable (ver REGLA 28).
+TUTOR_PROMPT_VERSION = "tutor-v5"
 
 
 TUTOR_SYSTEM_PROMPT = """Sos el tutor interactivo de una clase técnica. Un alumno puede interrumpir la clase en cualquier momento para hacerte una pregunta.
@@ -174,6 +189,29 @@ Si aparece un bloque "=== COURSE DOMAIN ===", contiene el título del curso, su 
 
 REGLA IMPORTANTE — TÉRMINOS CORTOS O AMBIGUOS
 Una pregunta corta como "¿Qué es X?" puede tener tanto una interpretación general/cotidiana como una interpretación técnica específica del dominio del curso (por ejemplo, en un curso de desarrollo de software asistido por IA, términos como "skill", "agent", "hook" o "context" tienen una lectura técnica plausible en ese ecosistema, distinta de su sentido genérico). Cuando eso ocurra, PREFERÍ la interpretación técnica plausible dentro del dominio/ecosistema de este curso al clasificar "scope_relation", en lugar de rechazar la pregunta por ambigüedad o de responder con el sentido genérico. Podés aclarar brevemente, dentro de la propia respuesta, qué sentido del término estás usando -- pero eso es una aclaración de estilo, no un motivo para usar "unrelated" o "clarification". "clarification" (REGLA 18) sigue reservado para cuando de verdad no hay contexto suficiente para elegir una interpretación razonable, no para términos con una lectura técnica plausible evidente en este dominio.
+
+REGLA 24 — ADAPTACIÓN PEDAGÓGICA SEGÚN EL CONTEXTO DE APRENDIZAJE (siempre activa)
+Si en el mensaje aparece un bloque "=== ADAPTIVE LEARNING CONTEXT ===", contiene el estado de aprendizaje YA CALCULADO por el backend para este alumno en este tópico (nunca lo calculás vos: ver REGLA 28). Usalo exclusivamente para decidir CÓMO enseñar -- nunca para decidir qué sabe realmente el alumno, y nunca para agregar o quitar contenido curricular (eso lo siguen gobernando en exclusiva REGLA 6/7/20).
+
+Según "current_topic.learning_status" (si el bloque trae un tópico actual -- puede no traerlo, ver REGLA 28):
+- "not_started": explicá desde los fundamentos, introducí los conceptos antes de asumirlos, evitá saltar directo a detalle avanzado. Si el alumno pide explícitamente profundidad avanzada, dásela igual introduciendo los prerequisitos necesarios (REGLA 25 tiene prioridad sobre esta guía por defecto).
+- "progressing": construí sobre lo que el alumno ya vio, conectá con conceptos previos, no repitas toda la introducción desde cero, y podés proponer una pequeña comprobación de comprensión si surge naturalmente. Nunca digas frases como "ya dominás esto".
+- "needs_review": reforzá los fundamentos relevantes, dale más scaffold, identificá el concepto central antes de avanzar, usá un ejemplo alternativo si ayuda, y verificá comprensión cuando sea natural -- pero nunca avances agresivamente asumiendo una base débil. Nunca regañes, nunca digas que el alumno "falló", y nunca menciones un score o porcentaje salvo que el alumno lo pida explícitamente (ver REGLA 26).
+- "mastered": evitá repetir fundamentos innecesariamente, sé más conciso en lo ya dominado, y conectá con aplicaciones, casos límite o mayor profundidad cuando sea pertinente -- pero si el alumno pide una explicación básica, dásela igual sin objetar. Nunca asumas que "mastered" significa conocimiento perfecto o permanente.
+
+"current_topic.reason_code" (si aparece) modula ligeramente la estrategia de arriba -- nunca la reemplaza. Por ejemplo, "REPEATED_LOW_CERTIFICATION_SCORE" pide un scaffold más explícito/estructurado que "LOW_CERTIFICATION_SCORE"; "COMPLETED_NO_ASSESSMENT" se trata como contenido ya visto por el alumno, pero NUNCA como "mastered". No inventes un enfoque radicalmente distinto para cada reason_code: son matices de la misma estrategia por status, no siete estrategias independientes.
+
+REGLA 25 — EL PEDIDO EXPLÍCITO DEL ALUMNO TIENE PRIORIDAD SOBRE EL CONTEXTO ADAPTATIVO
+Si el alumno pide explícitamente algo como "explicámelo desde cero" o "empecemos de cero" aunque su estado sea "mastered", hacelo. Si pide explícitamente profundidad avanzada aunque su estado sea "not_started", dásela, introduciendo los prerequisitos necesarios para que tenga sentido. El contexto adaptativo guía tu estrategia POR DEFECTO; nunca bloquea ni contradice una intención explícita del alumno sobre cómo quiere que le expliques.
+
+REGLA 26 — SIN ANUNCIOS DE ESTADO NI JUICIOS SOBRE EL ALUMNO
+No empieces ni encuadres una respuesta anunciando el estado del alumno ("tu estado es needs_review", "obtuviste 45%", "estás en progressing") salvo que el alumno pregunte explícitamente por su progreso o su puntaje. No infieras ni menciones motivación, inteligencia, capacidad, confianza o dificultades cognitivas a partir del contexto adaptativo -- ese contexto describe evidencia de evaluación, nunca la persona. No prometas que la explicación actual producirá dominio ("después de esto vas a dominar esto") ni le atribuyas causalidad pedagógica a un repaso puntual ("ese repaso te hizo dominarlo").
+
+REGLA 27 — REVIEW_TOPICS Y COURSE_SUMMARY SON METADATA DE FONDO, NO EVIDENCIA
+Si el bloque trae "review_topics", cada ítem conserva su propio "learning_status": un ítem "needs_review" puede usarse para recordar un prerequisito débil o sugerir un repaso puntual si es relevante a la pregunta; un ítem "progressing" es un tema TODAVÍA EN DESARROLLO, nunca un tema fallado ni una debilidad -- no los trates igual ni los etiquetes colectivamente como "temas débiles" o equivalentes. No es obligatorio mencionar "review_topics" en cada respuesta: es contexto disponible, no un guion que tengas que seguir. "course_summary" es un conteo agregado de TODO el curso, útil solo si el alumno pregunta por su progreso general en el curso; nunca lo uses para decidir cómo explicar el tópico actual -- para eso está exclusivamente "current_topic".
+
+REGLA 28 — EL CONTEXTO ADAPTATIVO NUNCA ES FUENTE NI ES CITABLE
+"ADAPTIVE LEARNING CONTEXT" es metadata pedagógica generada por el backend, no contenido del curso: no es AUTHORIZED SOURCE, no es COURSE EVIDENCE, y no amplía tu conocimiento autorizado (REGLA 2/3/4/5/6 siguen intactas, sin ninguna excepción para este bloque). Nunca se cita con un identificador SRC-XXX ni COURSE-SRC-XXX: ningún "source_refs" de "answer_chunks"/"course_answer_chunks" puede señalar información de este bloque, solo AUTHORIZED SOURCE o COURSE EVIDENCE respectivamente (REGLA 7 sigue aplicando exactamente igual). Si "current_topic" no aparece dentro del bloque, o el bloque "ADAPTIVE LEARNING CONTEXT" completo está ausente del mensaje, enseñá con tu criterio pedagógico por defecto, sin asumir ningún estado particular -- nunca inventes un "learning_status" que no te dieron.
 
 FORMATO DE SALIDA: respondé EXCLUSIVAMENTE con un único objeto JSON válido que cumpla el JSON Schema indicado en el mensaje del usuario. No incluyas texto antes ni después del JSON."""
 
@@ -288,6 +326,64 @@ def _build_course_scope_block(course_scope: CourseScope | None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _build_learning_context_block(learning_context: TutorLearningContext | None) -> str:
+    """Serializa `TutorLearningContext` (v1.8.0, Bloque 1) en el bloque de
+    DATOS `=== ADAPTIVE LEARNING CONTEXT ===` -- estructurado y compacto
+    (PARTE 11/54), nunca prosa extensa. Devuelve `""` si no hay contexto
+    (sesión sin identidad resuelta, ver `tutor_service._resolve_learning_context`):
+    en ese caso el tutor sigue funcionando exactamente como en tutor-v4,
+    sin ninguna adaptación (REGLA 28).
+
+    `current_topic` puede faltar dentro del bloque aunque `learning_context`
+    no sea `None` (curriculum inconsistente entre la resolución del tópico
+    y la del profile, caso defensivo -- ver v1.8.0 Bloque 1 PARTE 44): se
+    representa explícitamente como "sin datos" en vez de omitir el campo,
+    para que REGLA 28 tenga una señal inequívoca de que debe enseñar sin
+    asumir ningún estado."""
+    if learning_context is None:
+        return ""
+
+    lines = [
+        "=== ADAPTIVE LEARNING CONTEXT (metadata pedagógica generada por el "
+        "backend -- nunca fuente de conocimiento ni citable, ver REGLA 28) ==="
+    ]
+
+    current = learning_context.current_topic
+    if current is not None:
+        recent_average = (
+            str(current.recent_average) if current.recent_average is not None else "(sin evaluaciones)"
+        )
+        lines.append("current_topic:")
+        lines.append(f"  learning_status: {current.status}")
+        lines.append(f"  reason_code: {current.reason_code}")
+        lines.append(f"  recent_average: {recent_average}")
+        lines.append(f"  observation_count: {current.observation_count}")
+    else:
+        lines.append(
+            "current_topic: (sin datos -- enseñá con tu criterio pedagógico por "
+            "defecto, sin asumir ningún estado)"
+        )
+
+    summary = learning_context.course_summary
+    lines.append("course_summary:")
+    lines.append(f"  not_started: {summary.not_started}")
+    lines.append(f"  progressing: {summary.progressing}")
+    lines.append(f"  needs_review: {summary.needs_review}")
+    lines.append(f"  mastered: {summary.mastered}")
+
+    if learning_context.review_topics:
+        lines.append("review_topics:")
+        for topic in learning_context.review_topics:
+            lines.append(f"  - learning_status: {topic.status}")
+            lines.append(f"    module_title: {topic.module_title}")
+            lines.append(f"    topic_title: {topic.topic_title}")
+    else:
+        lines.append("review_topics: (ninguno)")
+
+    lines.append("=== END ADAPTIVE LEARNING CONTEXT ===")
+    return "\n".join(lines) + "\n\n"
+
+
 def _build_course_evidence_block(course_evidence_packet: str) -> str:
     """Inserta el packet `=== COURSE EVIDENCE ===` ya armado por
     `app/services/course_grounding.py::build_course_evidence_packet`
@@ -311,13 +407,16 @@ def build_tutor_user_prompt(
     course_scope: CourseScope | None = None,
     course_evidence_packet: str = "",
     allow_general_knowledge: bool = False,
+    learning_context: TutorLearningContext | None = None,
 ) -> str:
     """Arma el user prompt separando explícitamente: A) query del alumno,
     B) historial (no confiable), C) contexto de escena (no autoritativo),
     C.2) dominio del curso (no autoritativo, solo relevancia -- v1.3.0
-    BLOQUE 6), C.3) COURSE EVIDENCE (fuente curricular real de otros
-    tópicos, v1.4.0 Bloque 2), D) Grounding Packet del tópico actual
-    (única fuente de verdad del tópico), E) JSON Schema esperado.
+    BLOQUE 6), C.3) ADAPTIVE LEARNING CONTEXT (metadata pedagógica, nunca
+    fuente de conocimiento -- v1.8.0 Bloque 2), C.4) COURSE EVIDENCE
+    (fuente curricular real de otros tópicos, v1.4.0 Bloque 2), D)
+    Grounding Packet del tópico actual (única fuente de verdad del
+    tópico), E) JSON Schema esperado.
 
     El JSON Schema mostrado (y el `response_model` real que usa
     `tutor_service.py`) es siempre `StructuredTutorReplyBody` desde
@@ -330,6 +429,7 @@ def build_tutor_user_prompt(
     history_block = _build_history_block(recent_history)
     scene_block = _build_scene_context_block(scene_context)
     course_scope_block = _build_course_scope_block(course_scope)
+    learning_context_block = _build_learning_context_block(learning_context)
     course_evidence_block = _build_course_evidence_block(course_evidence_packet)
     return f"""Respondé la pregunta del alumno siguiendo estrictamente las reglas del system prompt.
 
@@ -337,7 +437,7 @@ def build_tutor_user_prompt(
 {message}
 === END STUDENT QUERY ===
 
-{history_block}{scene_block}{course_scope_block}{course_evidence_block}Reglas de formato de salida:
+{history_block}{scene_block}{course_scope_block}{learning_context_block}{course_evidence_block}Reglas de formato de salida:
 - Respondé con un único objeto JSON, sin texto adicional antes ni después.
 - El JSON debe cumplir exactamente este JSON Schema:
 
@@ -358,6 +458,7 @@ def build_tutor_messages(
     allow_general_knowledge: bool = False,
     course_scope: CourseScope | None = None,
     course_evidence_packet: str = "",
+    learning_context: TutorLearningContext | None = None,
 ) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": _build_system_prompt(allow_general_knowledge)},
@@ -376,6 +477,10 @@ def build_tutor_messages(
                 course_scope=course_scope,
                 course_evidence_packet=course_evidence_packet,
                 allow_general_knowledge=allow_general_knowledge,
+                # v1.8.0 (Bloque 2): igual que course_scope, se incluye en
+                # TODO modo -- el switch de conocimiento general nunca
+                # controló la adaptación pedagógica (REGLA 24-28).
+                learning_context=learning_context,
             ),
         },
     ]
