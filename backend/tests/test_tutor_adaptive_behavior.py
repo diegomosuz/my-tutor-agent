@@ -568,3 +568,104 @@ def test_repeated_micro_checks_never_create_cumulative_evidence(tmp_path):
         assert context_after.model_dump() == context_before.model_dump()
     finally:
         session.close()
+
+
+# ==========================================================================
+# v1.8.0 Bloque 5 ("ADAPTIVE TUTOR PRODUCT HARDENING") -- Parte D (PASO
+# 19-20: 10 repeticiones) y Parte E (PASO 21-24: aislamiento multiusuario).
+# ==========================================================================
+
+
+def test_ten_repeated_correct_micro_checks_never_mutate_learning_state(tmp_path):
+    from app.services import tutor_learning_context_service, tutor_microcheck_feedback_service
+    from tests.tutor_fixtures import valid_microcheck_feedback_dict
+
+    settings = _settings(tmp_path)
+    session = _session()
+    try:
+        user_id = _create_app_user()
+        context_before = tutor_learning_context_service.build(
+            settings=settings, session=session, user_id=user_id,
+            course_id=COURSE, module_id=MODULE, topic_id=TOPIC,
+        )
+        for i in range(10):
+            provider = FakeLLMProvider(responses=[valid_microcheck_feedback_dict("correct")])
+            tutor_microcheck_feedback_service.evaluate_microcheck_feedback(
+                settings=settings, course_id=COURSE, module_id=MODULE, topic_id=TOPIC,
+                micro_check_question=f"¿Pregunta {i}?", student_answer="una respuesta correcta",
+                session=session, user_id=user_id, provider=provider,
+            )
+        session.commit()
+
+        context_after = tutor_learning_context_service.build(
+            settings=settings, session=session, user_id=user_id,
+            course_id=COURSE, module_id=MODULE, topic_id=TOPIC,
+        )
+        assert context_after.model_dump() == context_before.model_dump()
+        assert context_after.current_topic.status == "not_started"  # nunca "mastered" por 10 correct
+    finally:
+        session.close()
+
+
+def test_ten_repeated_incorrect_micro_checks_never_mutate_learning_state(tmp_path):
+    from app.services import tutor_learning_context_service, tutor_microcheck_feedback_service
+    from tests.tutor_fixtures import valid_microcheck_feedback_dict
+
+    settings = _settings(tmp_path)
+    session = _session()
+    try:
+        user_id = _create_app_user()
+        context_before = tutor_learning_context_service.build(
+            settings=settings, session=session, user_id=user_id,
+            course_id=COURSE, module_id=MODULE, topic_id=TOPIC,
+        )
+        for i in range(10):
+            provider = FakeLLMProvider(responses=[valid_microcheck_feedback_dict("needs_revision")])
+            tutor_microcheck_feedback_service.evaluate_microcheck_feedback(
+                settings=settings, course_id=COURSE, module_id=MODULE, topic_id=TOPIC,
+                micro_check_question=f"¿Pregunta {i}?", student_answer="una respuesta incorrecta",
+                session=session, user_id=user_id, provider=provider,
+            )
+        session.commit()
+
+        context_after = tutor_learning_context_service.build(
+            settings=settings, session=session, user_id=user_id,
+            course_id=COURSE, module_id=MODULE, topic_id=TOPIC,
+        )
+        assert context_after.model_dump() == context_before.model_dump()
+        assert context_after.current_topic.status == "not_started"  # nunca "needs_review" por 10 needs_revision
+    finally:
+        session.close()
+
+
+def test_cross_user_microcheck_feedback_never_affects_another_user(tmp_path):
+    """PARTE 23: la interacción de micro-check de un alumno NUNCA puede
+    afectar a otro -- ambos comparten curso/tópico/pregunta, solo A
+    responde repetidamente, y el LearningProfile real de B permanece
+    intacto (not_started, igual que si nunca hubiera pasado nada)."""
+    from app.services import tutor_learning_context_service, tutor_microcheck_feedback_service
+    from tests.tutor_fixtures import valid_microcheck_feedback_dict
+
+    settings = _settings(tmp_path)
+    session = _session()
+    try:
+        student_a = _create_app_user()
+        student_b = _create_app_user()
+
+        for verdict in ["correct", "partially_correct", "needs_revision"]:
+            provider = FakeLLMProvider(responses=[valid_microcheck_feedback_dict(verdict)])
+            tutor_microcheck_feedback_service.evaluate_microcheck_feedback(
+                settings=settings, course_id=COURSE, module_id=MODULE, topic_id=TOPIC,
+                micro_check_question="¿Qué es Kubernetes?", student_answer="respuesta de A",
+                session=session, user_id=student_a, provider=provider,
+            )
+        session.commit()
+
+        context_b = tutor_learning_context_service.build(
+            settings=settings, session=session, user_id=student_b,
+            course_id=COURSE, module_id=MODULE, topic_id=TOPIC,
+        )
+        assert context_b.current_topic.status == "not_started"
+        assert context_b.current_topic.observation_count == 0
+    finally:
+        session.close()

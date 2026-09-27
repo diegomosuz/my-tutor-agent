@@ -4,6 +4,7 @@ Bloque 4). Usa `FakeLLMProvider`: ningún test hace llamadas de red.
 Cubre la Parte Q de la especificación del bloque (tests 84-92)."""
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import pytest
@@ -207,3 +208,38 @@ def test_nonexistent_src_rejected_after_retries(tmp_path):
     with pytest.raises(GenerationFailedError):
         _evaluate(settings, provider)
     assert len(provider.calls) == 3
+
+
+# --------------------------------------------------------------------------
+# v1.8.0 Bloque 5 -- Parte J (PASO 46): fallo real de Postgres durante la
+# resolución de TeachingPolicy (tono) propaga error real, nunca feedback
+# falso desde un estado por defecto.
+# --------------------------------------------------------------------------
+
+
+def test_db_outage_during_tone_resolution_propagates_real_error(tmp_path):
+    from sqlalchemy import create_engine
+    from sqlalchemy.exc import SQLAlchemyError
+    from sqlalchemy.orm import Session
+
+    from tests.conftest import TEST_DATABASE_URL
+
+    settings = _settings(tmp_path)
+    user_id = uuid.uuid4()
+    unreachable_url = TEST_DATABASE_URL.replace(":5432/", ":59999/")
+    broken_engine = create_engine(unreachable_url)
+    broken_session = Session(broken_engine)
+    try:
+        provider = FakeLLMProvider(responses=[valid_microcheck_feedback_dict("correct")])
+        with pytest.raises(SQLAlchemyError):
+            tutor_microcheck_feedback_service.evaluate_microcheck_feedback(
+                settings=settings, course_id=COURSE, module_id=MODULE, topic_id=TOPIC,
+                micro_check_question="x", student_answer="y",
+                session=broken_session, user_id=user_id, provider=provider,
+            )
+        # Nunca debe haber llegado a llamar al proveedor LLM: la falla de
+        # tono ocurre ANTES de generar el feedback.
+        assert len(provider.calls) == 0
+    finally:
+        broken_session.close()
+        broken_engine.dispose()
