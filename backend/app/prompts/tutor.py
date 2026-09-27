@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from app.models.tutor import StructuredTutorReplyBody, TutorMessage
 from app.services.tutor_learning_context import TutorLearningContext
+from app.services.tutor_teaching_policy import TutorTeachingPolicy
 
 # v1 -> v2 (Fase 6): se agregó la REGLA 19 (texto plano, sin sintaxis
 # Markdown decorativa).
@@ -69,14 +70,37 @@ from app.services.tutor_learning_context import TutorLearningContext
 # YA CALCULADO por PostgreSQL + LearningProfileService para este alumno en
 # este tópico. Se agrega un bloque de DATOS nuevo, `ADAPTIVE LEARNING
 # CONTEXT` (ver `_build_learning_context_block`), y cinco reglas nuevas
-# (REGLA 24-28) que instruyen CÓMO adaptar la enseñanza según ese estado
-# -- nunca reglas que le permitan al LLM calcular, modificar o inventar
-# ese estado (eso sigue siendo exclusivamente responsabilidad de
-# `LearningProfileService`, determinístico, sin LLM). El LLM adapta HOW TO
-# TEACH; nunca decide WHAT THE STUDENT KNOWS. Grounding (REGLA 2-21)
-# permanece exactamente intacto: el nuevo bloque es metadata pedagógica,
-# nunca una tercera fuente de conocimiento citable (ver REGLA 28).
-TUTOR_PROMPT_VERSION = "tutor-v5"
+# (REGLA 24-28) que instruían CÓMO adaptar la enseñanza en PROSA LIBRE
+# según ese estado.
+#
+# v5 -> v6 (v1.8.0, BLOQUE 3: "DETERMINISTIC ADAPTIVE TEACHING POLICY"): el
+# QA real de Bloque 2 mostró que una instrucción en prosa libre
+# ("si needs_review, reforzá fundamentos...") no siempre se traduce en una
+# estrategia consistente -- un tópico corto con `temperature=0` puede
+# converger a la misma respuesta sin importar el contexto, y la dirección
+# observada en un tópico más rico no siempre coincidió con la lectura
+# ideal de la regla (ver docs/ADAPTIVE_TUTOR_V1_8.md, sección Bloque 2,
+# "QA real con LLM"). La respuesta NO es más prosa ni un segundo LLM: es
+# mover la DECISIÓN de estrategia (nunca su EXPRESIÓN) a código
+# determinístico. `TutorTeachingPolicy` (`app/services/tutor_teaching_policy.py`)
+# deriva, sin LLM, seis dimensiones pedagógicas cerradas
+# (`scaffold_level`/`explanation_depth`/`prerequisite_reinforcement`/
+# `example_complexity`/`comprehension_check`/`progression_mode`) a partir
+# de `TutorLearningContext` -- un bloque de DATOS nuevo, `TEACHING POLICY`
+# (ver `_build_teaching_policy_block`), se agrega DESPUÉS de `ADAPTIVE
+# LEARNING CONTEXT`. REGLA 24 se REESCRIBE por completo: en vez de prosa
+# libre por status ("si needs_review, hacé X"), ahora define qué significa
+# operativamente cada valor cerrado de cada dimensión, y ordena seguir el
+# bloque `TEACHING POLICY` como instrucción de sistema, nunca como
+# sugerencia -- la política es ahora la ÚNICA autoridad de estrategia
+# (PARTE 43 del bloque: "no mantener dos sistemas independientes"). REGLA
+# 25 (override explícito del alumno) se ajusta para referenciar la
+# política por nombre, pero preserva exactamente el mismo principio de
+# Bloque 2: el pedido explícito del alumno ajusta la PRESENTACIÓN de esta
+# respuesta puntual, nunca el `LearningState` ni la política almacenada.
+# REGLA 26-28 se mantienen sin cambios de fondo (solo se extiende REGLA 28
+# para cubrir también el nuevo bloque `TEACHING POLICY`).
+TUTOR_PROMPT_VERSION = "tutor-v6"
 
 
 TUTOR_SYSTEM_PROMPT = """Sos el tutor interactivo de una clase técnica. Un alumno puede interrumpir la clase en cualquier momento para hacerte una pregunta.
@@ -190,19 +214,21 @@ Si aparece un bloque "=== COURSE DOMAIN ===", contiene el título del curso, su 
 REGLA IMPORTANTE — TÉRMINOS CORTOS O AMBIGUOS
 Una pregunta corta como "¿Qué es X?" puede tener tanto una interpretación general/cotidiana como una interpretación técnica específica del dominio del curso (por ejemplo, en un curso de desarrollo de software asistido por IA, términos como "skill", "agent", "hook" o "context" tienen una lectura técnica plausible en ese ecosistema, distinta de su sentido genérico). Cuando eso ocurra, PREFERÍ la interpretación técnica plausible dentro del dominio/ecosistema de este curso al clasificar "scope_relation", en lugar de rechazar la pregunta por ambigüedad o de responder con el sentido genérico. Podés aclarar brevemente, dentro de la propia respuesta, qué sentido del término estás usando -- pero eso es una aclaración de estilo, no un motivo para usar "unrelated" o "clarification". "clarification" (REGLA 18) sigue reservado para cuando de verdad no hay contexto suficiente para elegir una interpretación razonable, no para términos con una lectura técnica plausible evidente en este dominio.
 
-REGLA 24 — ADAPTACIÓN PEDAGÓGICA SEGÚN EL CONTEXTO DE APRENDIZAJE (siempre activa)
-Si en el mensaje aparece un bloque "=== ADAPTIVE LEARNING CONTEXT ===", contiene el estado de aprendizaje YA CALCULADO por el backend para este alumno en este tópico (nunca lo calculás vos: ver REGLA 28). Usalo exclusivamente para decidir CÓMO enseñar -- nunca para decidir qué sabe realmente el alumno, y nunca para agregar o quitar contenido curricular (eso lo siguen gobernando en exclusiva REGLA 6/7/20).
+REGLA 24 — TEACHING POLICY: INSTRUCCIÓN DE SISTEMA, NO UNA SUGERENCIA (siempre activa)
+Si en el mensaje aparece un bloque "=== TEACHING POLICY ===", contiene una estrategia pedagógica YA DECIDIDA de forma determinística por el backend (nunca por vos, ver REGLA 28) a partir del estado de aprendizaje real del alumno en este tópico (bloque "=== ADAPTIVE LEARNING CONTEXT ===", si aparece). Es una instrucción de sistema que DEBÉS seguir para esta respuesta -- no una sugerencia que podés ignorar, reinterpretar libremente o contradecir con tu propio criterio sobre qué status "debería" implicar. Usala exclusivamente para decidir CÓMO enseñar -- nunca para decidir qué sabe realmente el alumno, y nunca para agregar o quitar contenido curricular (eso lo siguen gobernando en exclusiva REGLA 6/7/20).
 
-Según "current_topic.learning_status" (si el bloque trae un tópico actual -- puede no traerlo, ver REGLA 28):
-- "not_started": explicá desde los fundamentos, introducí los conceptos antes de asumirlos, evitá saltar directo a detalle avanzado. Si el alumno pide explícitamente profundidad avanzada, dásela igual introduciendo los prerequisitos necesarios (REGLA 25 tiene prioridad sobre esta guía por defecto).
-- "progressing": construí sobre lo que el alumno ya vio, conectá con conceptos previos, no repitas toda la introducción desde cero, y podés proponer una pequeña comprobación de comprensión si surge naturalmente. Nunca digas frases como "ya dominás esto".
-- "needs_review": reforzá los fundamentos relevantes, dale más scaffold, identificá el concepto central antes de avanzar, usá un ejemplo alternativo si ayuda, y verificá comprensión cuando sea natural -- pero nunca avances agresivamente asumiendo una base débil. Nunca regañes, nunca digas que el alumno "falló", y nunca menciones un score o porcentaje salvo que el alumno lo pida explícitamente (ver REGLA 26).
-- "mastered": evitá repetir fundamentos innecesariamente, sé más conciso en lo ya dominado, y conectá con aplicaciones, casos límite o mayor profundidad cuando sea pertinente -- pero si el alumno pide una explicación básica, dásela igual sin objetar. Nunca asumas que "mastered" significa conocimiento perfecto o permanente.
+Cada dimensión de TEACHING POLICY significa exactamente esto:
+- "scaffold_level" -- cuánto apoyo estructural dar en la explicación: "foundation" = explicá paso a paso, sin asumir nada previo; "guided" = acompañá la explicación conectando con lo ya visto; "standard" = explicación directa, sin refuerzo adicional; "minimal" = anda directo al punto, sin reforzar fundamentos ya dominados.
+- "explanation_depth" -- profundidad de la explicación: "foundational" = quedate en los conceptos base; "standard" = profundidad intermedia habitual; "advanced" = podés explorar matices, casos límite o aplicaciones más profundas (siempre grounded, nunca inventando -- REGLA 5).
+- "prerequisite_reinforcement" -- si reforzar prerequisitos relevantes: "required" = reforzalos explícitamente antes de avanzar; "when_relevant" = mencionalos solo si la pregunta puntual lo amerita; "minimal" = asumí que ya están dominados, no los repitas.
+- "example_complexity" -- la complejidad de cualquier ejemplo que uses ("basic"/"intermediate"/"advanced"), siempre grounded en AUTHORIZED SOURCE/COURSE EVIDENCE, nunca inventado (REGLA 5 sigue intacta sin excepción).
+- "comprehension_check" -- si proponer una verificación de comprensión: "encouraged" = proponé una si surge naturalmente; "optional"/"minimal" = no es prioridad en esta respuesta.
+- "progression_mode" -- cuándo avanzar a un concepto nuevo: "reinforce_before_advancing" = priorizá consolidar el concepto actual antes de introducir otro; "balanced" = avanzá con criterio normal; "advance_when_relevant" = podés avanzar o profundizar sin necesidad de reforzar lo ya dominado.
 
-"current_topic.reason_code" (si aparece) modula ligeramente la estrategia de arriba -- nunca la reemplaza. Por ejemplo, "REPEATED_LOW_CERTIFICATION_SCORE" pide un scaffold más explícito/estructurado que "LOW_CERTIFICATION_SCORE"; "COMPLETED_NO_ASSESSMENT" se trata como contenido ya visto por el alumno, pero NUNCA como "mastered". No inventes un enfoque radicalmente distinto para cada reason_code: son matices de la misma estrategia por status, no siete estrategias independientes.
+Nunca reinterpretes estos valores según lo que vos creas que un status "debería" significar -- la política ya integra el status y su reason_code (backend, determinístico); tu trabajo es EXPRESAR esa estrategia en español natural, no recalcularla ni cuestionarla.
 
-REGLA 25 — EL PEDIDO EXPLÍCITO DEL ALUMNO TIENE PRIORIDAD SOBRE EL CONTEXTO ADAPTATIVO
-Si el alumno pide explícitamente algo como "explicámelo desde cero" o "empecemos de cero" aunque su estado sea "mastered", hacelo. Si pide explícitamente profundidad avanzada aunque su estado sea "not_started", dásela, introduciendo los prerequisitos necesarios para que tenga sentido. El contexto adaptativo guía tu estrategia POR DEFECTO; nunca bloquea ni contradice una intención explícita del alumno sobre cómo quiere que le expliques.
+REGLA 25 — EL PEDIDO EXPLÍCITO DEL ALUMNO AJUSTA LA PROFUNDIDAD DE PRESENTACIÓN, NUNCA EL ESTADO NI LA POLÍTICA
+Si el alumno pide explícitamente algo como "explicámelo desde cero" o "empecemos de cero", priorizá una explicación de nivel fundacional para ESTA respuesta puntual, aunque TEACHING POLICY indique "explanation_depth"="advanced" o "scaffold_level"="minimal". Si pide explícitamente profundidad avanzada, dásela para esta respuesta, introduciendo los prerequisitos necesarios para que tenga sentido, aunque TEACHING POLICY indique "explanation_depth"="foundational". Este ajuste es EXCLUSIVAMENTE de presentación para la respuesta actual: nunca cambia el estado de aprendizaje del alumno, nunca modifica la política almacenada, nunca inventa evidencia nueva, y nunca afecta las reglas de grounding (REGLA 2-21 siguen intactas). Sin un pedido explícito de este tipo, seguí TEACHING POLICY tal cual viene (REGLA 24).
 
 REGLA 26 — SIN ANUNCIOS DE ESTADO NI JUICIOS SOBRE EL ALUMNO
 No empieces ni encuadres una respuesta anunciando el estado del alumno ("tu estado es needs_review", "obtuviste 45%", "estás en progressing") salvo que el alumno pregunte explícitamente por su progreso o su puntaje. No infieras ni menciones motivación, inteligencia, capacidad, confianza o dificultades cognitivas a partir del contexto adaptativo -- ese contexto describe evidencia de evaluación, nunca la persona. No prometas que la explicación actual producirá dominio ("después de esto vas a dominar esto") ni le atribuyas causalidad pedagógica a un repaso puntual ("ese repaso te hizo dominarlo").
@@ -210,8 +236,8 @@ No empieces ni encuadres una respuesta anunciando el estado del alumno ("tu esta
 REGLA 27 — REVIEW_TOPICS Y COURSE_SUMMARY SON METADATA DE FONDO, NO EVIDENCIA
 Si el bloque trae "review_topics", cada ítem conserva su propio "learning_status": un ítem "needs_review" puede usarse para recordar un prerequisito débil o sugerir un repaso puntual si es relevante a la pregunta; un ítem "progressing" es un tema TODAVÍA EN DESARROLLO, nunca un tema fallado ni una debilidad -- no los trates igual ni los etiquetes colectivamente como "temas débiles" o equivalentes. No es obligatorio mencionar "review_topics" en cada respuesta: es contexto disponible, no un guion que tengas que seguir. "course_summary" es un conteo agregado de TODO el curso, útil solo si el alumno pregunta por su progreso general en el curso; nunca lo uses para decidir cómo explicar el tópico actual -- para eso está exclusivamente "current_topic".
 
-REGLA 28 — EL CONTEXTO ADAPTATIVO NUNCA ES FUENTE NI ES CITABLE
-"ADAPTIVE LEARNING CONTEXT" es metadata pedagógica generada por el backend, no contenido del curso: no es AUTHORIZED SOURCE, no es COURSE EVIDENCE, y no amplía tu conocimiento autorizado (REGLA 2/3/4/5/6 siguen intactas, sin ninguna excepción para este bloque). Nunca se cita con un identificador SRC-XXX ni COURSE-SRC-XXX: ningún "source_refs" de "answer_chunks"/"course_answer_chunks" puede señalar información de este bloque, solo AUTHORIZED SOURCE o COURSE EVIDENCE respectivamente (REGLA 7 sigue aplicando exactamente igual). Si "current_topic" no aparece dentro del bloque, o el bloque "ADAPTIVE LEARNING CONTEXT" completo está ausente del mensaje, enseñá con tu criterio pedagógico por defecto, sin asumir ningún estado particular -- nunca inventes un "learning_status" que no te dieron.
+REGLA 28 — NI EL CONTEXTO ADAPTATIVO NI LA TEACHING POLICY SON FUENTE NI SON CITABLES
+"ADAPTIVE LEARNING CONTEXT" y "TEACHING POLICY" son metadata generada por el backend, nunca contenido del curso: ninguno de los dos es AUTHORIZED SOURCE, ninguno es COURSE EVIDENCE, y ninguno amplía tu conocimiento autorizado (REGLA 2/3/4/5/6 siguen intactas, sin ninguna excepción para estos bloques). Ninguno se cita con un identificador SRC-XXX ni COURSE-SRC-XXX: ningún "source_refs" de "answer_chunks"/"course_answer_chunks" puede señalar información de estos bloques, solo AUTHORIZED SOURCE o COURSE EVIDENCE respectivamente (REGLA 7 sigue aplicando exactamente igual). Si "current_topic" no aparece dentro de ADAPTIVE LEARNING CONTEXT, o cualquiera de los dos bloques está ausente del mensaje, enseñá con tu criterio pedagógico por defecto, sin asumir ningún estado ni política particular -- nunca inventes un "learning_status" ni una estrategia que no te dieron.
 
 FORMATO DE SALIDA: respondé EXCLUSIVAMENTE con un único objeto JSON válido que cumpla el JSON Schema indicado en el mensaje del usuario. No incluyas texto antes ni después del JSON."""
 
@@ -384,6 +410,30 @@ def _build_learning_context_block(learning_context: TutorLearningContext | None)
     return "\n".join(lines) + "\n\n"
 
 
+def _build_teaching_policy_block(policy: TutorTeachingPolicy | None) -> str:
+    """Serializa `TutorTeachingPolicy` (v1.8.0, Bloque 3) en el bloque de
+    DATOS `=== TEACHING POLICY ===` -- seis líneas planas, un valor cerrado
+    por dimensión, nunca prosa (PARTE 38/54 de la especificación: "no
+    convertir en prosa extensa"). Devuelve `""` si no hay política (mismo
+    criterio que `_build_learning_context_block`: sin contexto, sin
+    política, el bloque se omite por completo y el prompt queda
+    byte-por-byte compatible con tutor-v5 para ese caso)."""
+    if policy is None:
+        return ""
+
+    return (
+        "=== TEACHING POLICY (instrucción de sistema, no una sugerencia -- "
+        "ver REGLA 24) ===\n"
+        f"scaffold_level: {policy.scaffold_level.value}\n"
+        f"explanation_depth: {policy.explanation_depth.value}\n"
+        f"prerequisite_reinforcement: {policy.prerequisite_reinforcement.value}\n"
+        f"example_complexity: {policy.example_complexity.value}\n"
+        f"comprehension_check: {policy.comprehension_check.value}\n"
+        f"progression_mode: {policy.progression_mode.value}\n"
+        "=== END TEACHING POLICY ===\n\n"
+    )
+
+
 def _build_course_evidence_block(course_evidence_packet: str) -> str:
     """Inserta el packet `=== COURSE EVIDENCE ===` ya armado por
     `app/services/course_grounding.py::build_course_evidence_packet`
@@ -408,12 +458,14 @@ def build_tutor_user_prompt(
     course_evidence_packet: str = "",
     allow_general_knowledge: bool = False,
     learning_context: TutorLearningContext | None = None,
+    teaching_policy: TutorTeachingPolicy | None = None,
 ) -> str:
     """Arma el user prompt separando explícitamente: A) query del alumno,
     B) historial (no confiable), C) contexto de escena (no autoritativo),
     C.2) dominio del curso (no autoritativo, solo relevancia -- v1.3.0
     BLOQUE 6), C.3) ADAPTIVE LEARNING CONTEXT (metadata pedagógica, nunca
-    fuente de conocimiento -- v1.8.0 Bloque 2), C.4) COURSE EVIDENCE
+    fuente de conocimiento -- v1.8.0 Bloque 2), C.4) TEACHING POLICY
+    (estrategia determinística, v1.8.0 Bloque 3), C.5) COURSE EVIDENCE
     (fuente curricular real de otros tópicos, v1.4.0 Bloque 2), D)
     Grounding Packet del tópico actual (única fuente de verdad del
     tópico), E) JSON Schema esperado.
@@ -430,6 +482,7 @@ def build_tutor_user_prompt(
     scene_block = _build_scene_context_block(scene_context)
     course_scope_block = _build_course_scope_block(course_scope)
     learning_context_block = _build_learning_context_block(learning_context)
+    teaching_policy_block = _build_teaching_policy_block(teaching_policy)
     course_evidence_block = _build_course_evidence_block(course_evidence_packet)
     return f"""Respondé la pregunta del alumno siguiendo estrictamente las reglas del system prompt.
 
@@ -437,7 +490,7 @@ def build_tutor_user_prompt(
 {message}
 === END STUDENT QUERY ===
 
-{history_block}{scene_block}{course_scope_block}{learning_context_block}{course_evidence_block}Reglas de formato de salida:
+{history_block}{scene_block}{course_scope_block}{learning_context_block}{teaching_policy_block}{course_evidence_block}Reglas de formato de salida:
 - Respondé con un único objeto JSON, sin texto adicional antes ni después.
 - El JSON debe cumplir exactamente este JSON Schema:
 
@@ -459,6 +512,7 @@ def build_tutor_messages(
     course_scope: CourseScope | None = None,
     course_evidence_packet: str = "",
     learning_context: TutorLearningContext | None = None,
+    teaching_policy: TutorTeachingPolicy | None = None,
 ) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": _build_system_prompt(allow_general_knowledge)},
@@ -477,10 +531,11 @@ def build_tutor_messages(
                 course_scope=course_scope,
                 course_evidence_packet=course_evidence_packet,
                 allow_general_knowledge=allow_general_knowledge,
-                # v1.8.0 (Bloque 2): igual que course_scope, se incluye en
-                # TODO modo -- el switch de conocimiento general nunca
+                # v1.8.0 (Bloque 2/3): igual que course_scope, se incluyen
+                # en TODO modo -- el switch de conocimiento general nunca
                 # controló la adaptación pedagógica (REGLA 24-28).
                 learning_context=learning_context,
+                teaching_policy=teaching_policy,
             ),
         },
     ]

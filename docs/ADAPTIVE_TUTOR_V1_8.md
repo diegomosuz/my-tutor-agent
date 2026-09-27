@@ -10,6 +10,11 @@ lo largo de v1.8.0, en bloques incrementales:
   primera integración real de `TutorLearningContext` en el prompt del
   Tutor (`tutor-v5`) -- el Tutor empieza a adaptar CÓMO enseña, nunca QUÉ
   sabe el alumno.
+- **Bloque 3 — Deterministic Adaptive Teaching Policy** (sección dedicada
+  más abajo): el QA real de Bloque 2 mostró que una instrucción en prosa
+  libre no siempre produce una estrategia consistente. Bloque 3 mueve la
+  DECISIÓN de estrategia (nunca su expresión) a código determinístico
+  (`TutorTeachingPolicy`), bump a `tutor-v6`.
 
 ## Bloque 1: Context Foundation
 
@@ -524,18 +529,287 @@ sigue verde porque valida la PRESENCIA de la regla en el prompt, nunca
 la adherencia real de un LLM -- el mismo patrón de limitación que ya
 documentaba `test_prompt_injection.py`).
 
-### Limitaciones conocidas (honestas)
+### Limitaciones conocidas (honestas, revisadas en Bloque 3)
 
-- La adaptación es una instrucción de PROMPT, no una restricción
-  estructural: un LLM real puede, en un caso raro, ignorar parcialmente
-  REGLA 24-28 (igual que puede desviarse de cualquier otra regla del
-  prompt) -- no hay una validación determinística que rechace una
-  respuesta "no suficientemente adaptada" (a diferencia del grounding,
-  que sí se valida estructuralmente vía `source_refs`). Esto es
-  consistente con la naturaleza del problema (tono/profundidad
-  pedagógica no es verificable con un chequeo de contrato Pydantic).
+- ~~La adaptación es una instrucción de PROMPT, no una restricción
+  estructural~~ -- Bloque 3 aborda directamente esta limitación (ver su
+  sección más abajo): la DECISIÓN de estrategia deja de depender de que
+  el LLM interprete correctamente una instrucción en prosa, y pasa a ser
+  código determinístico. La EXPRESIÓN final sigue siendo del LLM (no hay
+  forma de validar estructuralmente "tono", eso no cambia), pero la
+  decisión de QUÉ estrategia corresponde ya no depende de steerability.
 - No hay wiring hacia Checkpoint/Certification -- Bloque 2 es
-  exclusivamente el Tutor conversacional, tal como pedía el alcance.
+  exclusivamente el Tutor conversacional, tal como pedía el alcance
+  (sigue sin cambios en Bloque 3).
 - `review_topics` sigue sin mencionarse obligatoriamente en cada
   respuesta (deliberado, REGLA 27) -- no hay una forma de forzar/probar
   determinísticamente que el LLM los use cuando son relevantes.
+
+---
+
+## Bloque 3: Deterministic Adaptive Teaching Policy
+
+Esta sección describe el **Bloque 3** de v1.8.0 ("DETERMINISTIC ADAPTIVE
+TEACHING POLICY"): el QA real de Bloque 2 demostró que una instrucción de
+adaptación en PROSA LIBRE (REGLA 24-28 de `tutor-v5`) no siempre se
+traduce en una estrategia pedagógica consistente. Bloque 3 no agrega más
+prosa, ni un segundo LLM, ni un "LLM judge", ni una heurística post-hoc
+que puntúe la respuesta ya generada -- mueve la DECISIÓN de estrategia
+(nunca su expresión) a código determinístico. Bump de versión: `tutor-v5`
+→ **`tutor-v6`**.
+
+### Auditoría de Bloque 2 que motiva este bloque
+
+QA real (`gpt-4o-mini`, `temperature=0`) con dos identidades dev reales
+(`needs_review` vs. `mastered`, evidencia real de Certification):
+
+- **Tópico introductorio corto**: outputs prácticamente idénticos --
+  sin margen real para que una instrucción de tono se manifieste.
+- **Tópico más rico**: diferencia observable, pero no siempre alineada
+  con la dirección "ideal" de la regla (`mastered` recibió MÁS
+  elaboración/síntesis en vez de que `needs_review` recibiera claramente
+  MÁS scaffold).
+- **Override explícito ("desde cero")**: efecto real pero modesto.
+
+Esto NO se trata como un bug del modelo -- es una limitación de
+"steerability" (qué tan bien un LLM sigue una instrucción de tono/prosa)
+inherente a instrucciones en lenguaje natural, no a este prompt en
+particular.
+
+### Arquitectura
+
+```
+LearningProfile (PostgreSQL, v1.7.0 Bloque 4)
+    ↓  learning_profile_service.get_learning_profile
+TutorLearningContext (v1.8.0 Bloque 1)
+    ↓  build_tutor_teaching_policy (v1.8.0 Bloque 3, ESTE documento) -- 100% determinístico
+TutorTeachingPolicy  -- QUÉ estrategia (6 dimensiones cerradas)
+    ↓  _build_teaching_policy_block (app/prompts/tutor.py)
+Tutor Prompt (tutor-v6) -- instrucción de sistema
+    ↓
+LLM  -- CÓMO expresar esa estrategia en español natural
+```
+
+Principio central: `LearningState` es determinístico (v1.7.0). Ahora
+`TutorTeachingPolicy` TAMBIÉN es determinístico (v1.8.0 Bloque 3). Solo
+la expresión final en lenguaje natural sigue siendo del LLM.
+
+### `TutorTeachingPolicy`: seis dimensiones
+
+Definido en `backend/app/services/tutor_teaching_policy.py`:
+
+```python
+class TutorTeachingPolicy(BaseModel):
+    scaffold_level: ScaffoldLevel                    # foundation | guided | standard | minimal
+    explanation_depth: ExplanationDepth               # foundational | standard | advanced
+    prerequisite_reinforcement: PrerequisiteReinforcement  # required | when_relevant | minimal
+    example_complexity: ExampleComplexity              # basic | intermediate | advanced
+    comprehension_check: ComprehensionCheck            # encouraged | optional | minimal
+    progression_mode: ProgressionMode                  # reinforce_before_advancing | balanced | advance_when_relevant
+```
+
+Se auditaron las seis dimensiones propuestas originalmente y se
+mantuvieron todas: cada una corresponde a un concepto operativo distinto
+que aparece explícitamente en la tabla de mapeo (abajo), y ninguna es
+derivable de otra sin perder información real. `SCAFFOLD_LEVEL_RANK`
+expone una relación de orden explícita (`foundation > guided > standard >
+minimal`) para que cualquier código (tests, auditorías futuras) pueda
+afirmar "needs_review tiene más scaffold que mastered" de forma
+verificable, sin comparar strings arbitrariamente.
+
+### Tabla de mapeo (base, antes de modulación por reason_code)
+
+| `learning_status` | scaffold | depth | prerequisites | examples | check | progression |
+|---|---|---|---|---|---|---|
+| `not_started` | foundation | foundational | when_relevant | basic | optional | reinforce_before_advancing |
+| `progressing` | guided | standard | when_relevant | intermediate | optional | balanced |
+| `needs_review` | foundation | foundational | when_relevant → **required** (ver modulación) | basic | encouraged | reinforce_before_advancing |
+| `mastered` | minimal | advanced | minimal | advanced | minimal | advance_when_relevant |
+
+Curricular/pedagógica, nunca psicológica: `mastered` no significa
+"experto", `needs_review` no significa "principiante", `not_started` no
+implica baja capacidad -- cada valor describe una estrategia de
+ENSEÑANZA, nunca un juicio sobre la persona.
+
+### Modulación por `reason_code` (nunca reemplaza la base)
+
+`learning_status` es la señal PRIMARIA; `reason_code` solo modula. Solo
+dos códigos mueven una dimensión (`LOW_CERTIFICATION_SCORE`/
+`REPEATED_LOW_CERTIFICATION_SCORE`, ambos llevan `prerequisite_reinforcement`
+a `required` -- el mismo techo para ambos, deliberado: con un enum
+cerrado de 3 valores, "el máximo reinforcement permitido" es el mismo
+límite superior para los dos, en vez de inventar un cuarto valor sin
+justificación pedagógica real). El resto son no-ops EXPLÍCITOS y
+documentados en el código, no omisiones:
+
+| `reason_code` | Efecto |
+|---|---|
+| `NOT_STARTED` | Sin cambio (base ya es la estrategia completa) |
+| `STARTED_NOT_COMPLETED` | Sin cambio (base "progressing" ya es continuity-oriented) |
+| `COMPLETED_NO_ASSESSMENT` | Sin cambio (base "progressing" nunca usa valores de "mastered" -- nunca asume dominio) |
+| `LOW_CERTIFICATION_SCORE` | `prerequisite_reinforcement` → `required` |
+| `REPEATED_LOW_CERTIFICATION_SCORE` | `prerequisite_reinforcement` → `required` (mismo techo, nunca menos que LOW) |
+| `MEDIUM_CERTIFICATION_SCORE` | Sin cambio (base "progressing" ya es "moderate scaffold") |
+| `HIGH_CERTIFICATION_SCORE` | Sin cambio (base "mastered" ya tiene el mínimo posible -- sin margen para bajar más, y el status sigue siendo la autoridad final, nunca se recalcula) |
+
+### Sin reclasificación
+
+El builder nunca recalcula `current.status` -- lee el status tal cual
+viene de `TutorLearningContext` y aplica su base; la modulación de
+`reason_code` es un ajuste puntual sobre esa base, nunca una segunda
+oportunidad de decidir el status. Un `test_no_reclassification_status_always_governs`
+ejercita deliberadamente una combinación que hoy nunca ocurre en
+producción (`needs_review` + `HIGH_CERTIFICATION_SCORE`) para confirmar
+que el builder no "corrige" la inconsistencia -- simplemente no aplica
+ninguna modulación (`HIGH_CERTIFICATION_SCORE` no está en el set que
+modula needs_review), y la base de `needs_review` queda intacta.
+
+### Override explícito del alumno (REGLA 25, sin cambios de principio)
+
+El pedido explícito del alumno ("explicámelo desde cero" / "quiero algo
+avanzado") sigue ajustando la PROFUNDIDAD DE PRESENTACIÓN para esa
+respuesta puntual -- nunca el `LearningState` almacenado, nunca la
+`TutorTeachingPolicy` misma (que sigue siendo la que el backend calculó).
+No se implementó un parser de lenguaje natural en el core determinístico
+(PASO 28: "no crear un NLP parser complejo") -- el ajuste vive
+exclusivamente en el prompt (REGLA 25), como ya ocurría en Bloque 2.
+
+### `current_topic=None`: fallback seguro
+
+Cuando `TutorLearningContext.current_topic` es `None` (caso defensivo de
+Bloque 1, curriculum inconsistente), `build_tutor_teaching_policy` NUNCA
+inventa un `learning_status` -- usa `STANDARD_FALLBACK_POLICY`, una
+política explícitamente neutral y no-asuntiva (`scaffold_level=standard`,
+`progression_mode=balanced`, ni el extremo de "mastered" ni el de
+"needs_review"). Cuando `learning_context` es `None` (sin identidad
+resuelta), el builder devuelve `None`: sin contexto, sin política, el
+prompt omite el bloque por completo (idéntico a no tener Bloque 3).
+
+### Prompt: `TEACHING POLICY` como bloque separado (`tutor-v6`)
+
+`_build_teaching_policy_block` inserta, DESPUÉS de `ADAPTIVE LEARNING
+CONTEXT` y ANTES de `COURSE EVIDENCE`:
+
+```
+=== TEACHING POLICY (instrucción de sistema, no una sugerencia -- ver REGLA 24) ===
+scaffold_level: foundation
+explanation_depth: foundational
+prerequisite_reinforcement: required
+example_complexity: basic
+comprehension_check: encouraged
+progression_mode: reinforce_before_advancing
+=== END TEACHING POLICY ===
+```
+
+**Contexto vs. política, claramente separados** (nunca fusionados en un
+único bloque): `ADAPTIVE LEARNING CONTEXT` son HECHOS sobre el estado de
+aprendizaje (`learning_status`/`reason_code`/`recent_average`); `TEACHING
+POLICY` es la ESTRATEGIA pedagógica ya decidida a partir de esos hechos.
+
+**REGLA 24 se reescribió por completo**: en vez de prosa libre por
+status ("si needs_review, hacé X"), ahora define qué significa
+operativamente cada valor cerrado de cada dimensión, y ordena seguir
+`TEACHING POLICY` como instrucción de sistema, "no una sugerencia que
+podés ignorar, reinterpretar libremente o contradecir con tu propio
+criterio sobre qué status debería significar" -- la política es ahora la
+ÚNICA autoridad de estrategia (evita el riesgo de dos sistemas
+independientes y potencialmente contradictorios, PARTE 43-45 de la
+especificación). REGLA 26-27 (sin anuncios de estado, sin juicios
+psicológicos, `review_topics`/`course_summary` como metadata de fondo)
+se mantienen sin cambios de fondo; REGLA 28 se extiende para cubrir
+también el nuevo bloque `TEACHING POLICY` (metadata, nunca fuente,
+nunca citable).
+
+### Contrato de respuesta / frontend: sin cambios
+
+`TutorReplyBody` no gana ningún campo -- `TutorTeachingPolicy` nunca se
+expone al alumno ni al frontend (nada de `"scaffold_level": "guided"` en
+la respuesta HTTP). El frontend (`useTutor.ts`, `TutorPanel`,
+`TutorConversation`) sigue sin cambios, igual que en Bloque 2.
+
+### Cache y no-persistencia
+
+El Tutor sigue sin cache de respuestas (sin cambios respecto a Bloque
+2). `TutorTeachingPolicy` nunca se persiste -- se deriva por request,
+igual que `TutorLearningContext`. Si en el futuro se introdujera una
+cache de Tutor, `TutorTeachingPolicy` debería formar parte del
+fingerprint junto con `TutorLearningContext` (documentado para ese
+escenario hipotético, no implementado en este bloque).
+
+### Privacidad
+
+`TutorTeachingPolicy` no contiene identidad (ni `user_id`, ni ningún
+campo de `TutorLearningContext` más allá de los seis valores cerrados
+derivados). El payload real enviado al proveedor LLM contiene
+exclusivamente: grounding (AUTHORIZED SOURCE/COURSE EVIDENCE), la
+pregunta del alumno, `ADAPTIVE LEARNING CONTEXT` y `TEACHING POLICY` --
+nunca PII. Tests dedicados (`TestTeachingPolicyPrivacyAndCitations`)
+serializan el bloque `TEACHING POLICY` y confirman ausencia de PII y de
+cualquier identificador `SRC-XXX`/`COURSE-SRC-XXX`.
+
+### QA real con LLM -- resultado observado, honesto
+
+Repetido con el mismo tópico rico de Bloque 2 ("Patrones técnicos y
+componentes de referencia"), mismas dos identidades dev reales
+(`needs_review` score 15, `mastered` score 100), proveedor real
+(`openai`/`gpt-4o-mini`, `temperature=0` sin cambios -- nunca se subió
+para "forzar" diferencias), **3 preguntas comparativas**:
+
+1. **Pregunta de explicación** ("explicame los patrones técnicos..."):
+   `needs_review` recibió una respuesta de 3 chunks bien estructurada;
+   `mastered` recibió 5 chunks con una oración de cierre-síntesis
+   adicional -- diferencia real pero modesta, dirección similar a Bloque 2.
+2. **Pregunta de comparación conceptual** ("compará API Gateway con
+   Kubernetes"): ambas respuestas fueron prácticamente idénticas --
+   confirma que algunas preguntas siguen sin mostrar diferencia visible
+   incluso con la política determinística (la EXPRESIÓN sigue siendo del
+   LLM, Bloque 3 nunca prometió eliminar esta variabilidad).
+3. **Pregunta de aplicación/ejemplo** ("dame un ejemplo real"): **señal
+   mucho más fuerte y clara que cualquier resultado de Bloque 2** --
+   `needs_review` se mantuvo DENTRO del tópico actual con un ejemplo
+   básico grounded en `SRC-005` (consistente con
+   `progression_mode=reinforce_before_advancing`); `mastered` avanzó a
+   evidencia de OTRO tópico del curso (`COURSE-SRC-001`, "Patrones De
+   Despliegue") para dar una aplicación más rica y real, con provenance
+   completa y grounding intacto (consistente con
+   `progression_mode=advance_when_relevant` + `explanation_depth=advanced`).
+
+**Overrides**: `mastered` pidiendo "explicámelo desde cero" recibió una
+explicación fundacional real (citando bloques introductorios del
+tópico); `needs_review` pidiendo "una explicación avanzada" recibió una
+respuesta más densa y sintetizada en un único párrafo (en vez de la
+lista de 3 puntos de la pregunta neutral), sin omitir ningún componente
+-- consistente con "avanzada pero con prerequisitos cuando corresponda".
+
+**Sin status leak**: ninguna de las respuestas mencionó el estado, el
+score ni el `reason_code`. **Grounding intacto**: todas las citas
+`SRC-XXX`/`COURSE-SRC-XXX` fueron válidas, sin necesidad de reintento.
+
+**Lectura honesta**: la Pregunta 3 demuestra que `TutorTeachingPolicy`
+puede producir una señal MÁS clara y consistente que la prosa libre de
+Bloque 2 (particularmente en `progression_mode`, que se tradujo en una
+decisión observable de quedarse en el tópico vs. cruzar a evidencia de
+otro tópico) -- pero la Pregunta 2 confirma que esto sigue sin ser una
+garantía universal: la naturaleza de la pregunta puntual sigue
+determinando cuánto margen real tiene el LLM para expresar una
+diferencia. Esto es exactamente lo que Bloque 3 se propuso demostrar: una
+señal más consistente, nunca una garantía al 100%.
+
+**DB outage real**: se detuvo el Postgres de desarrollo real y se llamó
+al endpoint HTTP real (`POST .../tutor`) -- `503` limpio
+("La base de datos no está disponible en este momento..."), confirmado
+end-to-end a través del handler global ya existente. Se reinició
+Postgres y el mismo request volvió a responder `200` con la política
+correcta, sin ninguna intervención manual adicional.
+
+### Limitaciones conocidas (honestas)
+
+- La EXPRESIÓN final sigue siendo del LLM -- Bloque 3 determina QUÉ
+  estrategia corresponde, nunca puede garantizar CÓMO el modelo la va a
+  expresar en cada pregunta puntual (Pregunta 2 del QA real lo confirma).
+- `LOW_CERTIFICATION_SCORE`/`REPEATED_LOW_CERTIFICATION_SCORE` producen
+  el mismo valor de `prerequisite_reinforcement` (ambos llegan a
+  `required`, el techo del enum) -- una futura revisión podría justificar
+  una séptima dimensión o un valor intermedio si apareciera evidencia
+  pedagógica real de que hace falta distinguirlos más.
+- Sin wiring hacia Checkpoint/Certification (mismo alcance que Bloque 2).

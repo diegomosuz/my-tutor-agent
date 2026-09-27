@@ -319,3 +319,110 @@ def test_tutor_request_schema_has_no_learning_state_fields():
     fields = set(TutorRequest.model_fields.keys())
     for forbidden in ["learning_status", "reason_code", "recent_average", "mastery", "profile", "review_topics"]:
         assert forbidden not in fields
+
+
+# ==========================================================================
+# v1.8.0 Bloque 3 ("DETERMINISTIC ADAPTIVE TEACHING POLICY") -- Parte M
+# (PASO 68-70): misma pregunta, distinto LearningState real -> distinta
+# TeachingPolicy determinística.
+# ==========================================================================
+
+
+def test_same_question_different_real_state_produces_different_deterministic_policy(tmp_path):
+    """PASO 68/69: NO depende de la salida generativa del LLM -- se
+    afirma determinísticamente que la política capturada en el prompt de
+    A es distinta de la de B, para la MISMA pregunta/tópico/grounding."""
+    settings = _settings(tmp_path)
+    session = _session()
+    try:
+        student_needs_review = _create_app_user()
+        student_mastered = _create_app_user()
+
+        certification_history_service.import_legacy_attempts(
+            session, student_needs_review, COURSE, [_legacy_entry("p-a", 20, "2026-01-01T00:00:00+00:00")]
+        )
+        certification_history_service.import_legacy_attempts(
+            session, student_mastered, COURSE, [_legacy_entry("p-b", 95, "2026-01-01T00:00:00+00:00")]
+        )
+        session.commit()
+
+        provider_a = FakeLLMProvider(responses=[valid_answer_reply_dict(["SRC-002"])])
+        provider_b = FakeLLMProvider(responses=[valid_answer_reply_dict(["SRC-002"])])
+        _ask(settings, provider_a, session, student_needs_review)
+        _ask(settings, provider_b, session, student_mastered)
+
+        prompt_a = provider_a.calls[0][1]["content"]
+        prompt_b = provider_b.calls[0][1]["content"]
+
+        def _extract_policy_block(prompt: str) -> str:
+            start = prompt.index("=== TEACHING POLICY")
+            end = prompt.index("=== END TEACHING POLICY ===")
+            return prompt[start:end]
+
+        policy_a = _extract_policy_block(prompt_a)
+        policy_b = _extract_policy_block(prompt_b)
+        assert policy_a != policy_b
+    finally:
+        session.close()
+
+
+def test_needs_review_policy_has_more_scaffold_than_mastered_policy_real(tmp_path):
+    """PASO 70: 'needs_review produce más scaffold que mastered' -- esto
+    SÍ es deterministically provable ahora (a diferencia del Bloque 2,
+    donde solo podíamos observar el prompt, nunca garantizar la
+    dirección)."""
+    from app.services.tutor_teaching_policy import SCAFFOLD_LEVEL_RANK, ScaffoldLevel
+
+    settings = _settings(tmp_path)
+    session = _session()
+    try:
+        student_needs_review = _create_app_user()
+        student_mastered = _create_app_user()
+        certification_history_service.import_legacy_attempts(
+            session, student_needs_review, COURSE, [_legacy_entry("p-a", 20, "2026-01-01T00:00:00+00:00")]
+        )
+        certification_history_service.import_legacy_attempts(
+            session, student_mastered, COURSE, [_legacy_entry("p-b", 95, "2026-01-01T00:00:00+00:00")]
+        )
+        session.commit()
+
+        provider_a = FakeLLMProvider(responses=[valid_answer_reply_dict(["SRC-002"])])
+        provider_b = FakeLLMProvider(responses=[valid_answer_reply_dict(["SRC-002"])])
+        _ask(settings, provider_a, session, student_needs_review)
+        _ask(settings, provider_b, session, student_mastered)
+
+        def _scaffold_rank_from_prompt(prompt: str) -> int:
+            for level in ScaffoldLevel:
+                if f"scaffold_level: {level.value}" in prompt:
+                    return SCAFFOLD_LEVEL_RANK[level]
+            raise AssertionError("scaffold_level no encontrado en el prompt")
+
+        rank_a = _scaffold_rank_from_prompt(provider_a.calls[0][1]["content"])
+        rank_b = _scaffold_rank_from_prompt(provider_b.calls[0][1]["content"])
+        assert rank_a > rank_b
+    finally:
+        session.close()
+
+
+def test_state_change_produces_updated_policy_not_stale(tmp_path):
+    """Extiende test_state_change_produces_updated_context_not_stale
+    (arriba) a la política: sin cache, un cambio real de estado entre dos
+    preguntas se refleja de inmediato en la policy del prompt siguiente."""
+    settings = _settings(tmp_path)
+    session = _session()
+    try:
+        user_id = _create_app_user()
+        provider_before = FakeLLMProvider(responses=[valid_answer_reply_dict(["SRC-002"])])
+        _ask(settings, provider_before, session, user_id)
+        assert "scaffold_level: foundation" in provider_before.calls[0][1]["content"]  # not_started
+
+        certification_history_service.import_legacy_attempts(
+            session, user_id, COURSE, [_legacy_entry("p1", 95, "2026-01-01T00:00:00+00:00")]
+        )
+        session.commit()
+
+        provider_after = FakeLLMProvider(responses=[valid_answer_reply_dict(["SRC-002"])])
+        _ask(settings, provider_after, session, user_id)
+        assert "scaffold_level: minimal" in provider_after.calls[0][1]["content"]  # mastered
+    finally:
+        session.close()

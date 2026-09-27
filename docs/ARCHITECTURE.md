@@ -66,20 +66,23 @@ trust boundaries, invariantes). El resto de la arquitectura descrita en
 este documento (generación de lecciones, tutor, certificación, cache en
 filesystem) no cambió.
 
-Desde v1.8.0 (Bloque 1, "ADAPTIVE TUTOR CONTEXT FOUNDATION") existe una
-transformación adicional, puramente de datos, sobre ese mismo
-`LearningProfile` — todavía SIN wiring hacia ningún LLM:
+Desde v1.8.0, el mismo `LearningProfile` alimenta una cadena adicional
+hacia el Tutor -- **Adaptive Tutor behavior ACTIVE**, pero únicamente en
+la interacción del Tutor (Lesson/Certification/Guided Review no cambian):
 
 ```
 LearningProfile (ya derivado arriba)
-    ↓  tutor_learning_context_service.build (app/services/tutor_learning_context*.py)
+    ↓  tutor_learning_context_service.build (app/services/tutor_learning_context*.py, v1.8.0 Bloque 1)
 TutorLearningContext (estado del tópico actual + tópicos a repasar, acotado, sin PII)
-    ↓  (futuro Bloque 2, no implementado todavía)
-Tutor LLM
+    ↓  build_tutor_teaching_policy (app/services/tutor_teaching_policy.py, v1.8.0 Bloque 3) -- 100% determinístico
+TutorTeachingPolicy (6 dimensiones cerradas: QUÉ estrategia pedagógica)
+    ↓  Prompt Builder (app/prompts/tutor.py, tutor-v6)
+Tutor LLM -- adapta CÓMO EXPRESAR esa estrategia, nunca decide LearningState
 ```
 
-Ver `docs/ADAPTIVE_TUTOR_V1_8.md` para el detalle completo. El Tutor real
-(`tutor-v4`) no consume `TutorLearningContext` en este bloque.
+Ver `docs/ADAPTIVE_TUTOR_V1_8.md` para el detalle completo de los tres
+bloques (Context Foundation, Adaptive Tutor Prompting, Deterministic
+Adaptive Teaching Policy).
 
 ## 2. Componentes
 

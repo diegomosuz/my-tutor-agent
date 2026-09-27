@@ -1,8 +1,9 @@
 """Orquestador del tutor interactivo grounded (Fase 5, extendido en
-v1.3.0 con el modo ampliado, en v1.4.0 Bloque 2 con evidencia course-wide
-y en v1.8.0 Bloque 2 con adaptación pedagógica).
+v1.3.0 con el modo ampliado, en v1.4.0 Bloque 2 con evidencia course-wide,
+en v1.8.0 Bloque 2 con adaptación pedagógica en prosa y en v1.8.0 Bloque 3
+con una política de enseñanza determinística).
 
-Pipeline (v1.8.0):
+Pipeline (v1.8.0 Bloque 3):
 
     CanonicalTopicContent + Grounding Packet (Fase 2, vía app/services/courses.py)
         -> contexto de escena (opcional, vía lesson_generator.get_cached_lesson_plan)
@@ -12,6 +13,9 @@ Pipeline (v1.8.0):
         -> TutorLearningContext (v1.8.0 Bloque 2: app/services/
            tutor_learning_context_service.py, SIEMPRE que haya identidad
            resuelta -- ver `_resolve_learning_context`)
+        -> TutorTeachingPolicy (v1.8.0 Bloque 3: app/services/
+           tutor_teaching_policy.py -- función PURA, deriva de
+           TutorLearningContext, nunca de una segunda consulta a DB)
         -> Prompt Builder (app/prompts/tutor.py)
         -> LLMProvider.generate_structured (Fase 3, reutilizado tal cual)
         -> StructuredTutorReplyBody (validación Pydantic automática)
@@ -22,11 +26,12 @@ Pipeline (v1.8.0):
 Regla de fuente de verdad: el Grounding Packet del tópico actual y el
 COURSE EVIDENCE de otros tópicos del mismo curso son las ÚNICAS fuentes
 autorizadas de conocimiento curricular. `recent_history`, el contexto de
-escena (GENERATED CLASS CONTEXT), el dominio del curso (COURSE DOMAIN) y
-`TutorLearningContext` (ADAPTIVE LEARNING CONTEXT) son exclusivamente
-contexto conversacional/generado/estructural/pedagógico NO confiable como
-fuente de conocimiento — nunca se usan para responder qué dice el curso,
-y nunca se envían al LLM como si lo fueran (ver `app/prompts/tutor.py`).
+escena (GENERATED CLASS CONTEXT), el dominio del curso (COURSE DOMAIN),
+`TutorLearningContext` (ADAPTIVE LEARNING CONTEXT) y `TutorTeachingPolicy`
+(TEACHING POLICY) son exclusivamente contexto conversacional/generado/
+estructural/pedagógico NO confiable como fuente de conocimiento — nunca
+se usan para responder qué dice el curso, y nunca se envían al LLM como
+si lo fueran (ver `app/prompts/tutor.py`).
 
 v1.4.0 (Bloque 2) -- decisión de producto no negociable: el switch
 "Ampliar con conocimiento general" (`allow_general_knowledge`) NUNCA
@@ -37,13 +42,19 @@ switch controla EXCLUSIVAMENTE si, además de eso, el tutor puede usar
 conocimiento general del modelo para lo que ni el tópico actual ni el
 resto del curso alcanzan a cubrir (ver `_validate` y REGLA 22 del prompt).
 
-v1.8.0 (Bloque 2) -- mismo principio: el switch tampoco controla la
-adaptación pedagógica. `TutorLearningContext` se resuelve SIEMPRE que
-`session`/`user_id` estén presentes (ver `_resolve_learning_context`),
-sin importar `allow_general_knowledge`. El LLM adapta CÓMO enseñar según
-ese contexto (REGLA 24-28 del prompt); nunca calcula, modifica ni
-persiste el estado de aprendizaje -- eso sigue siendo exclusivamente
-`LearningProfileService` (v1.7.0 Bloque 4), determinístico, sin LLM.
+v1.8.0 (Bloque 2/3) -- mismo principio: el switch tampoco controla la
+adaptación pedagógica. `TutorLearningContext`/`TutorTeachingPolicy` se
+resuelven SIEMPRE que `session`/`user_id` estén presentes, sin importar
+`allow_general_knowledge`. El QA real de Bloque 2 mostró que una
+instrucción de adaptación en PROSA LIBRE no siempre produce una
+estrategia consistente (ver docs/ADAPTIVE_TUTOR_V1_8.md); Bloque 3 mueve
+la DECISIÓN de estrategia -- nunca su expresión -- a
+`build_tutor_teaching_policy` (función pura, sin LLM, sin DB, sin
+randomness). El LLM adapta CÓMO EXPRESAR esa estrategia ya decidida;
+nunca calcula, modifica ni persiste el estado de aprendizaje ni la
+política -- eso sigue siendo exclusivamente `LearningProfileService`
+(v1.7.0 Bloque 4) + `tutor_teaching_policy.py` (v1.8.0 Bloque 3), ambos
+determinísticos, sin LLM.
 
 Diseñado para inyección de dependencias simple, igual que
 `lesson_generator.py`: `ask_tutor` acepta un `provider: LLMProvider | None`
@@ -90,6 +101,7 @@ from app.services.llm_provider import LLMConfigurationError, LLMProvider, get_ll
 from app.services.llm_retry import GenerationFailedError, ValidationFailure, generate_with_retries
 from app.services.service_logging import log_event
 from app.services.tutor_learning_context import TutorLearningContext
+from app.services.tutor_teaching_policy import build_tutor_teaching_policy
 from app.services.tutor_validation import validate_tutor_reply
 
 logger = logging.getLogger("pwc_tutor.tutor")
@@ -372,6 +384,11 @@ def ask_tutor(
         module_id=module_id,
         topic_id=topic_id,
     )
+    # v1.8.0 (Bloque 3): función pura, sin DB/LLM/side effects -- deriva
+    # SIEMPRE de `learning_context` ya resuelto, nunca reinterpreta
+    # evidencia. `None` si `learning_context` es `None` (mismo criterio de
+    # "sin contexto, sin bloque" que Bloque 2 ya establecía).
+    teaching_policy = build_tutor_teaching_policy(learning_context)
 
     log_context = {
         "course_id": course_id,
@@ -381,14 +398,17 @@ def ask_tutor(
         "provider": llm_provider.name,
         "model": llm_provider.model,
         "allow_general_knowledge": allow_general_knowledge,
-        # Observabilidad segura (PARTE 88): un ENUM cerrado (o "-" sin
-        # contexto), nunca el TutorLearningContext completo -- mismo
-        # criterio ya establecido para scope_relation/topic_coverage más
-        # abajo.
+        # Observabilidad segura (PARTE 88): ENUMs cerrados (o "-" sin
+        # contexto), nunca el TutorLearningContext/TutorTeachingPolicy
+        # completos -- mismo criterio ya establecido para
+        # scope_relation/topic_coverage más abajo.
         "learning_status": (
             learning_context.current_topic.status
             if learning_context is not None and learning_context.current_topic is not None
             else "-"
+        ),
+        "scaffold_level": (
+            teaching_policy.scaffold_level.value if teaching_policy is not None else "-"
         ),
     }
     log_event(
@@ -409,6 +429,7 @@ def ask_tutor(
         course_scope=course_scope,
         course_evidence_packet=course_evidence_packet,
         learning_context=learning_context,
+        teaching_policy=teaching_policy,
     )
 
     def _validate(body: StructuredTutorReplyBody) -> None:

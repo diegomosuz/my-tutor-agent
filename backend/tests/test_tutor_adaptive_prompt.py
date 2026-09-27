@@ -20,6 +20,7 @@ from app.services.tutor_learning_context import (
     TutorLearningContext,
     TutorReviewTopic,
 )
+from app.services.tutor_teaching_policy import build_tutor_teaching_policy
 
 _EMPTY_SUMMARY = TutorCourseSummary(total_topics=0, not_started=0, progressing=0, needs_review=0, mastered=0)
 
@@ -63,8 +64,11 @@ def _user_prompt(learning_context: TutorLearningContext | None) -> str:
 # --------------------------------------------------------------------------
 
 
-def test_prompt_version_is_v5():
-    assert TUTOR_PROMPT_VERSION == "tutor-v5"
+def test_prompt_version_is_v6():
+    # v1.8.0 (Bloque 3) bumpeó tutor-v5 -> tutor-v6 (Teaching Policy
+    # determinística) -- este test de Bloque 2 solo confirma que la
+    # constante sigue existiendo con el valor vigente.
+    assert TUTOR_PROMPT_VERSION == "tutor-v6"
 
 
 def test_system_prompt_contains_all_adaptive_rules():
@@ -281,3 +285,99 @@ def test_full_messages_never_contain_pii_or_identity_metadata():
     full_text = (messages[0]["content"] + "\n" + messages[1]["content"]).lower()
     for forbidden in _PROHIBITED_SUBSTRINGS:
         assert forbidden not in full_text, f"campo prohibido encontrado en el prompt: {forbidden}"
+
+
+# ==========================================================================
+# v1.8.0 Bloque 3 ("DETERMINISTIC ADAPTIVE TEACHING POLICY") -- Parte L
+# (PASO 60-67): TEACHING POLICY como bloque de prompt separado.
+# ==========================================================================
+
+
+def _user_prompt_with_policy(ctx: TutorLearningContext | None) -> str:
+    policy = build_tutor_teaching_policy(ctx)
+    return build_tutor_user_prompt(
+        message="¿Qué es esto?",
+        recent_history=[],
+        scene_context=None,
+        grounding_packet="=== AUTHORIZED SOURCE: TOPIC ===\n[SRC-001]\ncontenido\n=== END AUTHORIZED SOURCE ===",
+        learning_context=ctx,
+        teaching_policy=policy,
+    )
+
+
+def test_prompt_contains_both_learning_context_and_teaching_policy():
+    """PASO 60/61: ambos bloques presentes y CLARAMENTE separados (nunca
+    fusionados en un único bloque)."""
+    ctx = _context(_current("needs_review", "LOW_CERTIFICATION_SCORE"))
+    prompt = _user_prompt_with_policy(ctx)
+    assert "=== ADAPTIVE LEARNING CONTEXT" in prompt
+    assert "=== TEACHING POLICY" in prompt
+    learning_start = prompt.index("=== ADAPTIVE LEARNING CONTEXT")
+    learning_end = prompt.index("=== END ADAPTIVE LEARNING CONTEXT ===")
+    policy_start = prompt.index("=== TEACHING POLICY")
+    assert policy_start > learning_end > learning_start  # bloques secuenciales, no anidados
+
+
+def test_teaching_policy_block_matches_context_exactly():
+    """PASO 62: la policy en el prompt corresponde EXACTAMENTE al
+    contexto (misma derivación que build_tutor_teaching_policy)."""
+    ctx = _context(_current("needs_review", "REPEATED_LOW_CERTIFICATION_SCORE"))
+    prompt = _user_prompt_with_policy(ctx)
+    assert "scaffold_level: foundation" in prompt
+    assert "prerequisite_reinforcement: required" in prompt
+    assert "comprehension_check: encouraged" in prompt
+
+
+def test_teaching_policy_block_absent_when_no_context():
+    """Sin TutorLearningContext, sin policy -- el bloque se omite por
+    completo (backward compatible con tutor-v5)."""
+    prompt = _user_prompt_with_policy(None)
+    assert "TEACHING POLICY" not in prompt
+
+
+def test_teaching_policy_uses_standard_fallback_when_current_topic_none():
+    ctx = _context(current_topic=None)
+    prompt = _user_prompt_with_policy(ctx)
+    assert "scaffold_level: standard" in prompt
+    assert "progression_mode: balanced" in prompt
+
+
+def test_tutor_v6_is_single_production_version():
+    """PASO 67: una única versión de producción -- ninguna rama de
+    build_tutor_messages debería depender de una versión distinta según
+    si hay o no TeachingPolicy (el bloque se agrega/omite, la versión no
+    cambia dentro de una misma corrida)."""
+    assert TUTOR_PROMPT_VERSION == "tutor-v6"
+
+
+class TestTeachingPolicyPrivacyAndCitations:
+    def test_no_pii_in_teaching_policy_block(self):
+        """PASO 63: sin PII dentro del bloque TEACHING POLICY mismo."""
+        ctx = _context(_current("mastered", "HIGH_CERTIFICATION_SCORE"))
+        prompt = _user_prompt_with_policy(ctx)
+        start = prompt.index("=== TEACHING POLICY")
+        end = prompt.index("=== END TEACHING POLICY ===")
+        block = prompt[start:end].lower()
+        for forbidden in _PROHIBITED_SUBSTRINGS:
+            assert forbidden not in block
+
+    def test_no_profile_citations_in_teaching_policy_block(self):
+        """PASO 64: nunca un identificador SRC-XXX/COURSE-SRC-XXX dentro
+        del bloque de policy."""
+        ctx = _context(_current("progressing", "MEDIUM_CERTIFICATION_SCORE"))
+        prompt = _user_prompt_with_policy(ctx)
+        start = prompt.index("=== TEACHING POLICY")
+        end = prompt.index("=== END TEACHING POLICY ===")
+        assert "SRC-" not in prompt[start:end]
+
+    def test_no_raw_attempts_or_answer_data_in_teaching_policy_block(self):
+        """PASO 65/66: el bloque de policy nunca contiene evidencia cruda
+        de Certification (answers/answer key/question_results) -- solo
+        seis valores cerrados, ver TutorTeachingPolicy."""
+        ctx = _context(_current("needs_review", "LOW_CERTIFICATION_SCORE", recent_average=20.0, observation_count=2))
+        prompt = _user_prompt_with_policy(ctx)
+        start = prompt.index("=== TEACHING POLICY")
+        end = prompt.index("=== END TEACHING POLICY ===")
+        block = prompt[start:end].lower()
+        for forbidden in ["answer", "question_results", "practice_id", "recent_average", "observation_count"]:
+            assert forbidden not in block
