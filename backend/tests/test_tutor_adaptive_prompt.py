@@ -66,9 +66,10 @@ def _user_prompt(learning_context: TutorLearningContext | None) -> str:
 
 def test_prompt_version_is_v6():
     # v1.8.0 (Bloque 3) bumpeó tutor-v5 -> tutor-v6 (Teaching Policy
-    # determinística) -- este test de Bloque 2 solo confirma que la
-    # constante sigue existiendo con el valor vigente.
-    assert TUTOR_PROMPT_VERSION == "tutor-v6"
+    # determinística); v1.8.0 (Bloque 4) bumpeó tutor-v6 -> tutor-v7
+    # (micro-checks formativos) -- este test de Bloque 2 solo confirma
+    # que la constante sigue existiendo con el valor vigente.
+    assert TUTOR_PROMPT_VERSION == "tutor-v7"
 
 
 def test_system_prompt_contains_all_adaptive_rules():
@@ -346,8 +347,10 @@ def test_tutor_v6_is_single_production_version():
     """PASO 67: una única versión de producción -- ninguna rama de
     build_tutor_messages debería depender de una versión distinta según
     si hay o no TeachingPolicy (el bloque se agrega/omite, la versión no
-    cambia dentro de una misma corrida)."""
-    assert TUTOR_PROMPT_VERSION == "tutor-v6"
+    cambia dentro de una misma corrida). Rebautizado de facto a tutor-v7
+    por el bump de Bloque 4 (micro-checks), el nombre del test se
+    conserva por historial de commits."""
+    assert TUTOR_PROMPT_VERSION == "tutor-v7"
 
 
 class TestTeachingPolicyPrivacyAndCitations:

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
-import type { TutorCourseSource, TutorMessage, TutorReplyBody } from "../types/api";
+import type { TutorCourseSource, TutorMessage, TutorMicroCheck, TutorReplyBody } from "../types/api";
 import { dedupeCourseSourcesByTopic } from "./courseSources";
 import { describeTutorError } from "./tutorErrors";
 
@@ -70,6 +70,12 @@ export interface TutorConversationMessage {
   sourceRefs?: string[];
   /** Solo presente en mensajes del tutor de tipo "answer". */
   provenance?: TutorAnswerProvenance;
+  /** v1.8.0 (Bloque 4): interacción formativa EFÍMERA opcional -- solo
+   * presente en mensajes del tutor de tipo "answer" cuando el backend la
+   * generó (ver TutorInteractionPolicy). `null`/ausente en el resto de
+   * los casos; el panel la renderiza como una tarjeta aparte debajo de
+   * este mensaje (ver TutorPanel/TutorConversation/MicroCheckCard). */
+  microCheck?: TutorMicroCheck | null;
 }
 
 function replyToMessage(reply: TutorReplyBody): TutorConversationMessage {
@@ -87,6 +93,7 @@ function replyToMessage(reply: TutorReplyBody): TutorConversationMessage {
       responseType: "answer",
       sourceRefs: Array.from(new Set(reply.answer_chunks.flatMap((c) => c.source_refs))),
       provenance: { currentTopicTexts, courseTexts, generalTexts, courseSources },
+      microCheck: reply.micro_check ?? null,
     };
   }
   if (reply.response_type === "clarification") {

@@ -101,6 +101,7 @@ from app.services.llm_provider import LLMConfigurationError, LLMProvider, get_ll
 from app.services.llm_retry import GenerationFailedError, ValidationFailure, generate_with_retries
 from app.services.service_logging import log_event
 from app.services.tutor_learning_context import TutorLearningContext
+from app.services.tutor_interaction_policy import build_tutor_interaction_policy
 from app.services.tutor_teaching_policy import build_tutor_teaching_policy
 from app.services.tutor_validation import validate_tutor_reply
 
@@ -297,6 +298,10 @@ def _to_public_reply(
         general_knowledge_chunks=raw.general_knowledge_chunks,
         clarification_question=raw.clarification_question,
         general_knowledge_used=raw.general_knowledge_used,
+        # v1.8.0 (Bloque 4): passthrough directo -- ya validado
+        # estructuralmente (Pydantic) y de grounding (_validate, más
+        # abajo) antes de llegar acá.
+        micro_check=raw.micro_check,
     )
 
 
@@ -389,6 +394,9 @@ def ask_tutor(
     # evidencia. `None` si `learning_context` es `None` (mismo criterio de
     # "sin contexto, sin bloque" que Bloque 2 ya establecía).
     teaching_policy = build_tutor_teaching_policy(learning_context)
+    # v1.8.0 (Bloque 4): igual criterio -- función pura, deriva SIEMPRE de
+    # `teaching_policy` (nunca vuelve a leer LearningProfile/DB).
+    interaction_policy = build_tutor_interaction_policy(teaching_policy)
 
     log_context = {
         "course_id": course_id,
@@ -399,9 +407,9 @@ def ask_tutor(
         "model": llm_provider.model,
         "allow_general_knowledge": allow_general_knowledge,
         # Observabilidad segura (PARTE 88): ENUMs cerrados (o "-" sin
-        # contexto), nunca el TutorLearningContext/TutorTeachingPolicy
-        # completos -- mismo criterio ya establecido para
-        # scope_relation/topic_coverage más abajo.
+        # contexto), nunca el TutorLearningContext/TutorTeachingPolicy/
+        # TutorInteractionPolicy completos -- mismo criterio ya
+        # establecido para scope_relation/topic_coverage más abajo.
         "learning_status": (
             learning_context.current_topic.status
             if learning_context is not None and learning_context.current_topic is not None
@@ -409,6 +417,9 @@ def ask_tutor(
         ),
         "scaffold_level": (
             teaching_policy.scaffold_level.value if teaching_policy is not None else "-"
+        ),
+        "micro_check_mode": (
+            interaction_policy.micro_check_mode.value if interaction_policy is not None else "-"
         ),
     }
     log_event(
@@ -430,6 +441,7 @@ def ask_tutor(
         course_evidence_packet=course_evidence_packet,
         learning_context=learning_context,
         teaching_policy=teaching_policy,
+        interaction_policy=interaction_policy,
     )
 
     def _validate(body: StructuredTutorReplyBody) -> None:
@@ -438,6 +450,7 @@ def ask_tutor(
             course_answer_chunks=body.course_answer_chunks,
             canonical=canonical,
             course_bindings=course_bindings,
+            micro_check=body.micro_check,
         )
 
         if not allow_general_knowledge:
@@ -572,5 +585,9 @@ def ask_tutor(
         response_type=body.response_type.value,
         general_knowledge_used=body.general_knowledge_used,
         course_sources_count=len(body.course_sources),
+        # v1.8.0 (Bloque 4): solo un booleano -- nunca la pregunta del
+        # micro-check ni ningún otro contenido (PARTE 88, mismo criterio
+        # que el resto de este log).
+        micro_check_generated=body.micro_check is not None,
     )
     return body

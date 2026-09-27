@@ -76,13 +76,19 @@ LearningProfile (ya derivado arriba)
 TutorLearningContext (estado del tópico actual + tópicos a repasar, acotado, sin PII)
     ↓  build_tutor_teaching_policy (app/services/tutor_teaching_policy.py, v1.8.0 Bloque 3) -- 100% determinístico
 TutorTeachingPolicy (6 dimensiones cerradas: QUÉ estrategia pedagógica)
-    ↓  Prompt Builder (app/prompts/tutor.py, tutor-v6)
-Tutor LLM -- adapta CÓMO EXPRESAR esa estrategia, nunca decide LearningState
+    ↓  build_tutor_interaction_policy (app/services/tutor_interaction_policy.py, v1.8.0 Bloque 4) -- 100% determinístico
+TutorInteractionPolicy (CUÁNDO ofrecer un micro-check formativo)
+    ↓  Prompt Builder (app/prompts/tutor.py, tutor-v7)
+Tutor LLM -- explicación + micro_check opcional; adapta CÓMO enseñar/interactuar, nunca decide LearningState
+    ↓ (si el alumno responde el micro-check)
+POST .../tutor/micro-check/feedback (endpoint dedicado, sin persistencia)
+    ↓
+FORMATIVE FEEDBACK DOES NOT FEED LEARNINGSTATE
 ```
 
-Ver `docs/ADAPTIVE_TUTOR_V1_8.md` para el detalle completo de los tres
+Ver `docs/ADAPTIVE_TUTOR_V1_8.md` para el detalle completo de los cuatro
 bloques (Context Foundation, Adaptive Tutor Prompting, Deterministic
-Adaptive Teaching Policy).
+Adaptive Teaching Policy, Adaptive Interaction & Formative Micro-Checks).
 
 ## 2. Componentes
 

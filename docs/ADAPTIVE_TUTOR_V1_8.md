@@ -15,6 +15,12 @@ lo largo de v1.8.0, en bloques incrementales:
   libre no siempre produce una estrategia consistente. Bloque 3 mueve la
   DECISIÓN de estrategia (nunca su expresión) a código determinístico
   (`TutorTeachingPolicy`), bump a `tutor-v6`.
+- **Bloque 4 — Adaptive Interaction & Formative Micro-Checks** (sección
+  dedicada más abajo): el Tutor ya sabe QUÉ sabe el sistema y CÓMO debería
+  enseñar; Bloque 4 agrega, de forma acotada, CUÁNDO conviene interactuar
+  con una comprobación formativa breve (micro-check) -- efímera, sin
+  persistencia, sin conexión a Certification/Checkpoint/LearningState.
+  Bump a `tutor-v7`.
 
 ## Bloque 1: Context Foundation
 
@@ -813,3 +819,353 @@ correcta, sin ninguna intervención manual adicional.
   una séptima dimensión o un valor intermedio si apareciera evidencia
   pedagógica real de que hace falta distinguirlos más.
 - Sin wiring hacia Checkpoint/Certification (mismo alcance que Bloque 2).
+
+---
+
+## Bloque 4: Adaptive Interaction & Formative Micro-Checks
+
+Esta sección describe el **Bloque 4** de v1.8.0 ("ADAPTIVE INTERACTION &
+FORMATIVE MICRO-CHECKS"): el Tutor ya sabe QUÉ sabe el sistema
+(`TutorLearningContext`, Bloque 1) y CÓMO debería enseñar
+(`TutorTeachingPolicy`, Bloque 3). Este bloque agrega, de forma acotada,
+CUÁNDO es pedagógicamente útil interactuar con el alumno mediante una
+comprobación formativa breve -- un **micro-check**. Bump de versión:
+`tutor-v6` → **`tutor-v7`**.
+
+### Principio central: Micro-Check ≠ Checkpoint ≠ Certification
+
+Las tres interacciones evaluativas del producto son deliberadamente
+DISTINTAS, con semánticas que nunca se mezclan:
+
+| | Checkpoint (Fase 5) | Certification (Fase 6) | Tutor Micro-Check (Bloque 4) |
+|---|---|---|---|
+| Origen | `scene.interaction` de una `LessonPlan` cacheada | `QuestionBank` generado por tópico | Generado dinámicamente dentro de la conversación libre del Tutor |
+| Persistencia | No (evaluación efímera, pero ligada a una escena real) | Sí (`certification_attempts`/`certification_topic_results`) | **No, nunca** |
+| Contribuye a `LearningState` | No | Sí (única fuente evaluativa real) | **No, nunca** |
+| Vocabulario de veredicto | `correct`/`partially_correct`/`incorrect`/`not_assessable` | Determinístico (`correct`/`partially_correct`/`incorrect`) | `correct`/`partially_correct`/`needs_revision`/`unclear` (deliberadamente distinto) |
+
+El micro-check es una interacción **formativa y efímera**: nunca cambia
+`LearningState`, nunca genera `TopicProgress`, nunca genera un intento de
+Certification ni evidencia por tópico, nunca declara mastery.
+
+### Auditoría previa (Parte A) -- decisiones de reutilización
+
+Antes de implementar se auditó exhaustivamente la interacción actual del
+Tutor y la infraestructura de Checkpoint ya existente:
+
+- El Tutor **ya mantenía** conversación multi-turn real (`useTutor.ts`,
+  en memoria de React, con `recent_history` enviado al backend en cada
+  request) -- pero esta conversación NUNCA fue suficiente para producir
+  un veredicto ESTRUCTURADO (`correct`/`partially_correct`/etc.) de la
+  respuesta del alumno a una pregunta puntual: una respuesta libre del
+  alumno dentro del historial solo produce otro `TutorReplyBody`
+  genérico, sin ninguna señal estructurada de "esto responde a mi
+  pregunta anterior" (PARTE 31/32 de la especificación). Por eso se
+  decidió un endpoint dedicado, minúsculo, para el feedback.
+- Checkpoint (`checkpoint_service.py`) ya tenía el DISEÑO correcto para
+  imitar (evaluación grounded + veredicto cerrado + `expected_answer`
+  nunca autoridad), pero su CÓDIGO está atado a una `LessonPlan` cacheada
+  y a `scene.interaction.comprehension_check` -- semántica inadecuada
+  para una pregunta generada al vuelo sobre CUALQUIER explicación del
+  Tutor, no solo sobre escenas pre-generadas. Se reutilizó el PATRÓN
+  (`generate_with_retries`, `validate_source_refs`, un módulo de prompt
+  dedicado y versionado) sin reutilizar el código ni la semántica de
+  persistencia/evidencia.
+
+### Arquitectura
+
+```
+TutorTeachingPolicy (Bloque 3, ya calculado)
+    ↓  build_tutor_interaction_policy (app/services/tutor_interaction_policy.py) -- 100% determinístico
+TutorInteractionPolicy (micro_check_mode: encouraged | optional | on_request_only)
+    ↓  Prompt Builder (app/prompts/tutor.py, tutor-v7)
+LLM
+    ├── explanation (answer_chunks, igual que siempre)
+    └── micro_check opcional (TutorMicroCheck: question + kind)
+              ↓  (si el alumno responde)
+         POST .../tutor/micro-check/feedback
+              ↓  tutor_microcheck_feedback_service.py (nuevo, endpoint dedicado)
+         LLM evaluador (microcheck-feedback-v1, prompt propio)
+              ↓
+         TutorMicroCheckFeedbackBody (verdict + feedback grounded)
+              ↓
+         X  NO learning mutation -- nunca escribe TopicProgress/CertificationAttempt/LearningState
+```
+
+### `TutorInteractionPolicy`: pequeña, derivada exclusivamente de `comprehension_check`
+
+Definido en `backend/app/services/tutor_interaction_policy.py`:
+
+```python
+class TutorInteractionPolicy(BaseModel):
+    max_micro_checks: Literal[1] = 1
+    micro_check_mode: MicroCheckMode  # encouraged | optional | on_request_only
+```
+
+Se auditó si `progression_mode` (otra dimensión de `TutorTeachingPolicy`)
+aportaba algo real a esta decisión y se concluyó que no: `comprehension_check`
+ya encapsula la misma señal subyacente (status + reason_code) con el
+nivel de granularidad exacto que esta política necesita. Mapeo
+determinístico 1 a 1 (sin randomness, sin "preguntar el 30% de las
+veces", sin contadores de "engagement"):
+
+| `comprehension_check` (Bloque 3) | `micro_check_mode` |
+|---|---|
+| `encouraged` | `encouraged` |
+| `optional` | `optional` |
+| `minimal` | `on_request_only` |
+
+`max_micro_checks` es una invariante GLOBAL fija (siempre 1) -- nunca una
+decisión pedagógica variable, vive en el modelo como parte explícita del
+contrato que el LLM lee, no como un valor que este builder calcule de
+forma distinta según el contexto. `teaching_policy=None` (sin contexto
+resuelto) devuelve `None`: sin política de enseñanza, tampoco hay
+política de interacción -- mismo criterio que Bloque 2/3.
+
+### `TutorMicroCheck`: contrato mínimo, sin answer key
+
+Definido en `backend/app/models/tutor.py`:
+
+```python
+class TutorMicroCheck(BaseModel):
+    question: GroundedText  # reutiliza el mismo tipo que answer_chunks
+    kind: MicroCheckKind    # conceptual | application (solo dos, sin taxonomía compleja)
+```
+
+- **Grounded exclusivamente al tópico actual**: `question.source_refs`
+  solo puede citar `SRC-XXX` -- un `model_validator` en
+  `TutorMicroCheck` (`_question_refs_current_topic_only`) rechaza
+  estructuralmente cualquier `COURSE-SRC-XXX`, incluso con el switch de
+  conocimiento general activado (PARTE 22: reduce ambigüedad al evaluar
+  la respuesta más adelante).
+- **Sin answer key, sin score, sin mastery**: el modelo solo tiene dos
+  campos -- no hay dónde poner una `correct_answer`, una rúbrica, un
+  puntaje ni un `learning_status`. Confirmado por
+  `test_micro_check_never_has_score_or_mastery_fields`.
+- **Generado en la MISMA llamada LLM que la explicación**: `micro_check`
+  es un campo opcional (`None` por defecto) de `StructuredTutorReplyBody`/
+  `TutorReplyBody` -- nunca una segunda llamada oculta al proveedor
+  (PARTE 114: "no hidden/background LLM calls").
+- **Solo válido junto a una explicación real**: un `model_validator`
+  compartido (`_validate_tutor_reply_shape`) rechaza `micro_check` cuando
+  `response_type` no es `"answer"` (nunca junto a `not_covered`/
+  `clarification`/`unrelated` -- no hubo explicación de la que derivar
+  una comprobación).
+
+### Prompt (`tutor-v7`): REGLA 29, deliberadamente compacta
+
+Se agregó un tercer bloque de DATOS, `=== INTERACTION POLICY ===`
+(después de `TEACHING POLICY`, antes de `COURSE EVIDENCE`), y una única
+regla nueva -- **REGLA 29**, no se infló REGLA 24 (que sigue siendo
+exclusivamente sobre `TEACHING POLICY`). REGLA 29 cubre, en un solo
+bloque: seguir `micro_check_mode`, máximo un micro-check, formativo
+(nunca Certification/Checkpoint/score/mastery), grounded exclusivamente
+al tópico actual, sin answer key, respetar un opt-out explícito del
+alumno ("solo respondeme", "sin preguntas", "no me evalúes"), y permitir
+un pedido explícito ("preguntame", "quiz me") incluso en modo
+`on_request_only` -- sin ningún parser de lenguaje natural determinístico
+en el core (PASO 28): la detección de intención vive enteramente en la
+instrucción del prompt, resuelta por el LLM.
+
+### Feedback formativo: endpoint dedicado, sin persistencia
+
+`POST /api/courses/{course_id}/modules/{module_id}/topics/{topic_id}/tutor/micro-check/feedback`
+(`app/routers/courses.py` + `app/services/tutor_microcheck_feedback_service.py`
++ `app/prompts/tutor_microcheck_feedback.py`, versión propia
+`microcheck-feedback-v1`):
+
+```python
+class TutorMicroCheckFeedbackRequest(BaseModel):
+    micro_check_question: str  # DATO de interacción, nunca autoridad
+    student_answer: str
+    # NUNCA: correct_answer, score, learning_status, user_id
+
+class MicroCheckVerdict(str, Enum):
+    correct = "correct"
+    partially_correct = "partially_correct"
+    needs_revision = "needs_revision"  # nunca "incorrect" (lenguaje punitivo)
+    unclear = "unclear"
+
+class TutorMicroCheckFeedbackBody(BaseModel):
+    verdict: MicroCheckVerdict
+    feedback: GroundedText  # UN solo elemento breve, nunca una lista
+```
+
+- **La pregunta del cliente nunca es autoridad** (PARTE 33): el backend
+  siempre reconstruye el Grounding Packet real del tópico
+  (`course_service.get_grounding_packet`) y valida `feedback.source_refs`
+  contra ESE material -- nunca confía en que la pregunta que envía el
+  frontend sea genuina.
+- **Identidad server-side, solo para tono** (PARTE 46/59): el endpoint
+  usa el mismo trust boundary que `/tutor`
+  (`get_current_app_user`/`get_db_session`) para re-derivar
+  `TutorTeachingPolicy` y ajustar el TONO del feedback (más scaffold para
+  `needs_review`, más conciso para `mastered`) -- **nunca** para influir
+  el `verdict`, que depende exclusivamente de la consistencia real con el
+  material. `session`/`user_id` son opcionales a nivel de función (mismo
+  criterio que `ask_tutor`): sin identidad, el feedback se genera igual,
+  simplemente sin ese ajuste de tono.
+- **Sin persistencia, en ningún punto**: ni la pregunta, ni la respuesta
+  del alumno, ni el feedback, ni el veredicto se escriben en ninguna
+  tabla. `TutorTeachingPolicy` tampoco se persiste -- se deriva de nuevo
+  en cada request, exactamente igual que en Bloque 3.
+- **Sin failure mode de DB propio**: reutiliza tal cual el de
+  `tutor_learning_context_service` (ya probado en Bloque 1/2) -- un fallo
+  real de Postgres se propaga como excepción real, capturado por el
+  mismo handler global (`503` limpio).
+
+### Frontend: tarjeta compacta, estado 100% efímero
+
+`MicroCheckCard.tsx` (nuevo) se renderiza DEBAJO del mensaje del Tutor al
+que pertenece (nunca modal, nunca pantalla separada) cuando
+`message.microCheck` está presente. Estado exclusivamente
+`useState` de React -- **nunca** `localStorage`, **nunca**
+`sessionStorage`, **nunca** persistido en el backend. Un refresh de
+página lo hace desaparecer por completo, junto con el resto de la
+conversación del Tutor (que ya funciona así desde Fase 5) -- aceptado y
+documentado explícitamente como interacción transitoria.
+
+`TutorReplyBody`/`TutorConversationMessage` ganan un campo opcional
+`micro_check`/`microCheck` (`null` por defecto) -- el frontend puede
+ignorarlo con un simple check de truthiness; ningún otro campo de la
+respuesta (`answer_chunks`, citas, provenance, Temas relacionados)
+cambió. Responder correctamente NUNCA completa el tópico, NUNCA inicia
+Certification ni Guided Review -- el único efecto visible es el
+feedback dentro de la misma tarjeta.
+
+**Voz**: la respuesta normal del Tutor sigue exactamente el mismo
+pipeline de voz de siempre (`speakSequenceUnified`). El texto del
+micro-check **no se lee automáticamente** -- se auditó si encajaba
+naturalmente en el pipeline existente y se decidió que no (evita
+cualquier riesgo de un segundo dueño de voz simultáneo); es una
+limitación conocida y documentada, no un vacío accidental. Ownership de
+voz de v1.5 (IA gana sobre el Reader, sin overlap) permanece sin
+cambios.
+
+**Accesibilidad**: input con label accesible (visualmente oculto,
+`.micro-check-card__label`), `role="group"` con `aria-label`, sin
+auto-submit (`e.preventDefault()` + solo se evalúa al hacer submit
+explícito del form), navegable 100% por teclado (confirmado con QA real
+de navegador: foco → tipeo → Enter).
+
+### Privacidad y trust boundary (Parte M)
+
+- El frontend nunca puede enviar `mastery`/`LearningState`/
+  `TeachingPolicy`/`InteractionPolicy`/`score` -- confirmado
+  estructuralmente (`TutorMicroCheckFeedbackRequest` solo tiene dos
+  campos) y con un test HTTP real que envía esos campos extra y confirma
+  que Pydantic los ignora silenciosamente (`extra="ignore"` por default),
+  nunca influyen en el veredicto real.
+- `LearningContext`/`TeachingPolicy`/`InteractionPolicy` se derivan
+  SIEMPRE server-side.
+- La respuesta del alumno al micro-check es user input: se sanitiza/valida
+  con el mismo patrón ya existente (`Field(min_length=1, max_length=4000)`,
+  mismo límite que `TutorRequest.message`).
+- Sin HTML crudo, sin contenido ejecutable generado: la tarjeta renderiza
+  texto React plano, igual que el resto del Tutor (nunca
+  `dangerouslySetInnerHTML`).
+- Sin identidad/PII en el payload al proveedor LLM (mismo criterio que
+  Bloque 2/3, verificado con un test de privacidad dedicado).
+
+### No-mutation (Parte N) -- probado con Postgres real
+
+Tests dedicados con Postgres real confirman, con snapshots antes/después:
+
+- Generar un micro-check + que el alumno responda + recibir feedback NO
+  modifica `topic_progress` ni `certification_attempts` (conteo de filas
+  idéntico).
+- El `LearningProfile` del alumno permanece exactamente igual
+  (`needs_review` sigue siendo `needs_review`) después de un veredicto
+  `"correct"` -- una respuesta correcta a un micro-check NUNCA produce
+  `mastered`, ni una incorrecta produce `needs_review` (eso solo lo
+  decide `LearningProfileService` a partir de evidencia real de
+  Certification).
+- Múltiples micro-checks consecutivos (con veredictos mixtos: correct/
+  partially_correct/needs_revision/correct) NUNCA acumulan evidencia --
+  el `TutorLearningContext` derivado es exactamente el mismo antes y
+  después de la ronda completa.
+
+### QA real (Partes R/S/AA)
+
+Con Postgres real (dos identidades dev reales ya usadas en Bloque 2/3,
+`adaptive-qa-review`/`adaptive-qa-mastered`, mismo tópico rico "Patrones
+técnicos y componentes de referencia") y proveedor real
+(`openai`/`gpt-4o-mini`) contra un navegador Chromium real
+(Playwright, instalado en un scratchpad aislado, nunca como dependencia
+del repo):
+
+1. El aula carga con el panel del Tutor visible.
+2. Una pregunta explicativa real produjo un micro-check visible bajo la
+   respuesta del alumno con `needs_review` (modo `encouraged`), con una
+   pregunta real y no vacía.
+3. Responder el micro-check produjo feedback formativo real en la misma
+   tarjeta, sin mencionar status/score/mastery, sin recargar la página
+   ni navegar.
+4. El `LearningProfile` real del alumno, confirmado vía la API real
+   después de toda la interacción, siguió siendo exactamente
+   `needs_review` con la misma evidencia (`recent_average: 15`,
+   `observation_count: 1`) -- cero mutación.
+5. Un opt-out explícito ("...y no me hagas preguntas de comprobación")
+   en un tópico distinto produjo una respuesta SIN tarjeta de
+   micro-check.
+6. Una interacción 100% por teclado (foco → tipeo → Enter, sin mouse)
+   funcionó de punta a punta.
+7. Cero errores de consola inesperados durante toda la sesión.
+
+Este QA real es una demostración cualitativa (una corrida real de LLM),
+no una garantía determinística de que SIEMPRE aparecerá un micro-check
+en modo `encouraged` -- documentado con la misma honestidad que Bloque
+2/3: la decisión de OFRECER un micro-check es determinística
+(`TutorInteractionPolicy`), pero si el LLM efectivamente genera uno para
+una pregunta puntual sigue siendo una decisión generativa del modelo
+dentro de esa política (PASO 95 de la especificación: "no exigir que el
+LLM SIEMPRE genere uno si la política es solo optional/encouraged").
+
+### Fallas / DB outage (Parte U)
+
+Mismo comportamiento que el resto del Tutor desde Bloque 2: una caída
+real de Postgres durante la resolución de `TutorTeachingPolicy` (para el
+tono del feedback) se propaga como `SQLAlchemyError` real, capturada por
+el handler global (`503` limpio) -- nunca una `TutorInteractionPolicy`
+o `TutorTeachingPolicy` falsa. Un fallo del proveedor LLM al generar el
+feedback (timeout/5xx) usa el mismo comportamiento controlado ya
+existente (`LLMUpstreamError` → `502`, reintentos acotados vía
+`generate_with_retries`) -- sin ninguna mutación de aprendizaje en
+ningún caso de falla.
+
+### Performance
+
+- `build_tutor_interaction_policy`: unos pocos lookups de diccionario,
+  overhead negligible (sub-milisegundo).
+- Sin N+1: el feedback re-deriva `TutorLearningContext`/`TutorTeachingPolicy`
+  con la misma única consulta ya usada por `/tutor` (vía
+  `learning_profile_service.get_learning_profile`).
+- Una llamada LLM adicional ocurre ÚNICAMENTE cuando el alumno envía una
+  respuesta al micro-check (acción explícita del usuario) -- nunca en
+  segundo plano, nunca pre-generada.
+
+### Cache
+
+El Tutor sigue sin cache de respuestas (sin cambios). Documentado para
+un escenario hipotético futuro: si alguna vez se introdujera cache de
+Tutor, `TutorTeachingPolicy` ya se documentó (Bloque 3) como parte
+necesaria del fingerprint junto con `TutorLearningContext` -- Bloque 4 no
+agrega una dimensión nueva a esa recomendación (`TutorInteractionPolicy`
+se deriva de `TutorTeachingPolicy` sin agregar información nueva).
+
+### Limitaciones conocidas (honestas)
+
+- La generación real de un micro-check en modo `encouraged`/`optional`
+  sigue siendo una decisión del LLM dentro de la política -- no hay (ni
+  se buscó) una garantía de que aparezca en el 100% de las respuestas
+  elegibles.
+- El micro-check no se lee por voz automáticamente (decisión deliberada
+  de Bloque 4, ver sección "Frontend" arriba) -- una futura iteración
+  podría integrarlo al pipeline de voz existente si se valida que no
+  introduce ambigüedad de "qué se está leyendo ahora".
+- Estado 100% efímero: un refresh de página pierde el micro-check y su
+  feedback (igual que el resto de la conversación del Tutor) -- aceptado
+  explícitamente, nunca un objetivo de este bloque resolverlo.
+- Sin wiring hacia Guided Review/Certification (fuera del alcance,
+  intencional: el micro-check nunca debe iniciar automáticamente otro
+  flujo).

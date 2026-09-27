@@ -2618,6 +2618,144 @@ p {
   font-style: italic;
 }
 
+/* ---------- Micro-check formativo del tutor (v1.8.0, Bloque 4) ----------
+   Mismo lenguaje visual que .checkpoint-panel (tarjeta compacta, nunca
+   modal ni pantalla separada) -- deliberadamente un namespace de clases
+   DISTINTO: un micro-check es efímero/formativo, nunca un Checkpoint. */
+
+.micro-check-card {
+  margin-top: 10px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+}
+
+.micro-check-card__title {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--color-primary);
+  margin-bottom: 6px;
+}
+
+.micro-check-card__question {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 8px;
+}
+
+.micro-check-card__form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.micro-check-card__label {
+  /* Label accesible, presente en el DOM pero visualmente oculto -- la
+     pregunta ya cumple el rol de encabezado visible del campo. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.micro-check-card__form input {
+  flex: 1;
+  min-width: 160px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  font-size: 13px;
+  font-family: inherit;
+  background: #fff;
+}
+
+.micro-check-card__form input:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.micro-check-card__form button {
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: var(--color-primary);
+  color: #fff;
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.micro-check-card__form button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.micro-check-card__error {
+  background: #fdf3f2;
+  border: 1px solid var(--color-accent-red);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.micro-check-card__result {
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+}
+
+.micro-check-card__result--correct {
+  background: #e6f6ea;
+  border-color: #1a7a3a;
+}
+
+.micro-check-card__result--partially_correct {
+  background: #fff7e0;
+  border-color: var(--color-accent-yellow);
+}
+
+.micro-check-card__result--needs_revision {
+  background: #fdf3f2;
+  border-color: var(--color-accent-red);
+}
+
+.micro-check-card__result--unclear {
+  background: var(--color-bg-muted);
+  border-color: var(--color-border-strong);
+}
+
+.micro-check-card__verdict {
+  display: inline-block;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  margin-bottom: 6px;
+}
+
+.micro-check-card__feedback {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text);
+}
+
+.micro-check-card__retry {
+  margin-top: 8px;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 /* ---------- Panel de grounding (solo modo desarrollo) ---------- */
 
 .grounding-panel {

@@ -76,6 +76,45 @@ class CourseGroundedText(BaseModel):
     source_refs: list[str] = Field(min_length=1)
 
 
+class MicroCheckKind(str, Enum):
+    """Tipos cerrados de micro-check (v1.8.0, Bloque 4) -- deliberadamente
+    solo dos, sin taxonomía compleja (PARTE 18 de la especificación)."""
+
+    conceptual = "conceptual"
+    application = "application"
+
+
+class TutorMicroCheck(BaseModel):
+    """Interacción formativa EFÍMERA (v1.8.0, Bloque 4: "ADAPTIVE
+    INTERACTION & FORMATIVE MICRO-CHECKS") -- NUNCA Certification, NUNCA
+    Checkpoint, NUNCA entra a `LearningState` (ver
+    docs/ADAPTIVE_TUTOR_V1_8.md sección Bloque 4 para la distinción
+    explícita entre las tres). `question` reutiliza `GroundedText` (misma
+    invariante: `source_refs` nunca vacío, validado estructuralmente
+    igual que `answer_chunks`) pero restringido a namespace `SRC-XXX` del
+    tópico actual únicamente -- nunca `COURSE-SRC-XXX` (PARTE 22: reduce
+    ambigüedad de feedback manteniendo el micro-check siempre dentro del
+    tópico actual, incluso con conocimiento general habilitado).
+
+    Deliberadamente NO incluye `correct_answer`/answer key/rubric/hidden
+    reasoning/score/ningún campo de mastery o status -- el frontend
+    recibe exclusivamente pregunta + tipo (PARTE 19-21)."""
+
+    question: GroundedText
+    kind: MicroCheckKind
+
+    @model_validator(mode="after")
+    def _question_refs_current_topic_only(self) -> "TutorMicroCheck":
+        course_refs = [ref for ref in self.question.source_refs if ref.startswith("COURSE-SRC-")]
+        if course_refs:
+            raise ValueError(
+                "TutorMicroCheck.question.source_refs no puede citar COURSE-SRC-XXX "
+                f"({course_refs}) -- el micro-check se mantiene siempre dentro del "
+                "tópico actual (namespace SRC-XXX únicamente)."
+            )
+        return self
+
+
 class TutorCourseSource(BaseModel):
     """Metadata de UNA fuente de COURSE EVIDENCE efectivamente citada en
     la respuesta (v1.4.0, Bloque 2) -- nunca los 6 candidatos que
@@ -149,6 +188,11 @@ class TutorReplyBody(BaseModel):
     # estructurada que ya produce la respuesta (PARTE 28: sin segunda
     # clasificación).
     general_knowledge_used: bool = False
+    # v1.8.0 (Bloque 4): interacción formativa EFÍMERA opcional, generada
+    # en la MISMA llamada LLM que la explicación -- default None preserva
+    # backward compatibility total con tutor-v6 (un cliente viejo que
+    # ignora el campo sigue funcionando exactamente igual).
+    micro_check: TutorMicroCheck | None = None
 
     @model_validator(mode="after")
     def _validate_shape_by_response_type(self) -> "TutorReplyBody":
@@ -159,6 +203,7 @@ class TutorReplyBody(BaseModel):
             general_knowledge_chunks=self.general_knowledge_chunks,
             clarification_question=self.clarification_question,
             general_knowledge_used=self.general_knowledge_used,
+            micro_check=self.micro_check,
         )
         return self
 
@@ -171,11 +216,13 @@ def _validate_tutor_reply_shape(
     general_knowledge_chunks: list[str],
     clarification_question: str | None,
     general_knowledge_used: bool,
+    micro_check: "TutorMicroCheck | None" = None,
 ) -> None:
     """Invariantes de forma compartidas entre `TutorReplyBody` y
     `StructuredTutorReplyBody` (v1.4.0, Bloque 2 -- extiende el mismo
     invariante ya compartido entre `TutorReplyBody`/`ExpandedTutorReplyBody`
-    desde v1.3.0, ahora con un tercer canal de evidencia)."""
+    desde v1.3.0, ahora con un tercer canal de evidencia; v1.8.0 Bloque 4
+    agrega `micro_check`)."""
     if response_type == TutorResponseType.answer:
         if not answer_chunks and not course_answer_chunks and not general_knowledge_chunks:
             raise ValueError(
@@ -216,6 +263,15 @@ def _validate_tutor_reply_shape(
             # fijo, nunca el LLM (mismo criterio para ambos).
             raise ValueError(
                 f"response_type='{response_type.value}' no debe incluir clarification_question."
+            )
+        if micro_check is not None:
+            # v1.8.0 (Bloque 4): un micro-check formativo solo tiene
+            # sentido después de una explicación real -- nunca junto a
+            # "not_covered"/"clarification"/"unrelated" (no hubo
+            # explicación de la que derivar una comprobación).
+            raise ValueError(
+                f"response_type='{response_type.value}' no debe incluir micro_check "
+                "(no hubo explicación de la que derivar una comprobación formativa)."
             )
 
 
@@ -425,6 +481,8 @@ class StructuredTutorReplyBody(BaseModel):
     general_knowledge_chunks: list[str] = Field(default_factory=list)
     clarification_question: str | None = Field(default=None, max_length=300)
     general_knowledge_used: bool = False
+    # v1.8.0 (Bloque 4): ver TutorReplyBody -- mismo campo, mismo default.
+    micro_check: TutorMicroCheck | None = None
 
     @model_validator(mode="after")
     def _validate_shape_by_response_type(self) -> "StructuredTutorReplyBody":
@@ -451,6 +509,7 @@ class StructuredTutorReplyBody(BaseModel):
             general_knowledge_chunks=self.general_knowledge_chunks,
             clarification_question=self.clarification_question,
             general_knowledge_used=self.general_knowledge_used,
+            micro_check=self.micro_check,
         )
         return self
 
@@ -484,3 +543,54 @@ class CheckpointEvaluationBody(BaseModel):
         if not self.feedback:
             raise ValueError("feedback no puede estar vacío.")
         return self
+
+
+# ==========================================================================
+# v1.8.0 Bloque 4 ("ADAPTIVE INTERACTION & FORMATIVE MICRO-CHECKS"):
+# evaluación de la respuesta del alumno a un TutorMicroCheck. Deliberadamente
+# UN MODELO DISTINTO de CheckpointRequest/CheckpointEvaluationBody -- misma
+# familia de forma (pregunta abierta -> respuesta libre -> veredicto +
+# feedback grounded), pero semántica NO equivalente: efímero, sin
+# persistencia, sin score, sin conexión a LessonPlan/scene, nunca contribuye
+# a LearningState (ver docs/ADAPTIVE_TUTOR_V1_8.md sección Bloque 4).
+# ==========================================================================
+
+
+class TutorMicroCheckFeedbackRequest(BaseModel):
+    """Lo único que el navegador puede enviar para pedir feedback formativo
+    de un micro-check. Nunca acepta `correct_answer`/score/`learning_status`/
+    `user_id` (PARTE 32 de la especificación) -- el backend resuelve
+    identidad, grounding y política pedagógica siempre server-side.
+
+    `micro_check_question` es DATOS de interacción, nunca autoridad (PARTE
+    33): el backend siempre reconstruye el Grounding Packet real del
+    tópico y valida `feedback.source_refs` contra ese material, sin
+    confiar en que la pregunta enviada por el cliente sea genuina."""
+
+    micro_check_question: str = Field(min_length=1, max_length=1000)
+    student_answer: str = Field(min_length=1, max_length=4000)
+
+
+class MicroCheckVerdict(str, Enum):
+    """Semántica FORMATIVA, deliberadamente distinta de
+    `CheckpointVerdict`/`LearningStateStatus` -- nunca reutiliza
+    "mastered"/"needs_review"/"passed"/"failed" (PARTE 37: esos vocablos
+    pertenecen a evidencia evaluativa real, nunca a una interacción
+    efímera)."""
+
+    correct = "correct"
+    partially_correct = "partially_correct"
+    needs_revision = "needs_revision"
+    unclear = "unclear"
+
+
+class TutorMicroCheckFeedbackBody(BaseModel):
+    """Lo único que el LLM evaluador de micro-checks produce. `verdict`
+    mide únicamente consistencia con el material autorizado del tópico
+    (nunca mastery, nunca se traduce a `LearningState`). `feedback` es UN
+    solo `GroundedText` breve (PARTE 36: "breve, pedagógico, grounded"),
+    nunca una lista -- a diferencia de `CheckpointEvaluationBody.feedback`,
+    que sí acepta varios chunks."""
+
+    verdict: MicroCheckVerdict
+    feedback: GroundedText

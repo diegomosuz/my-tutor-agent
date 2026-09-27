@@ -334,6 +334,9 @@ def test_reply_schema_never_exposes_internal_fields():
     # 28). v1.4.0 (Bloque 2): course_answer_chunks + course_sources
     # (evidencia grounded de otros tópicos del curso y su metadata pública,
     # nunca los candidatos no citados -- ver tutor_service._to_public_reply).
+    # v1.8.0 (Bloque 4): micro_check (interacción formativa EFÍMERA
+    # opcional, default None -- nunca learning_status/reason_code/score,
+    # ver app/models/tutor.py::TutorMicroCheck).
     assert fields == {
         "response_type",
         "answer_chunks",
@@ -342,6 +345,7 @@ def test_reply_schema_never_exposes_internal_fields():
         "general_knowledge_chunks",
         "clarification_question",
         "general_knowledge_used",
+        "micro_check",
     }
     forbidden = {"prompt", "system_prompt", "grounding_packet", "api_key", "provider", "model"}
     assert fields.isdisjoint(forbidden)
@@ -773,7 +777,8 @@ def test_expanded_E_existing_reply_fixtures_still_valid_with_course_scope_presen
 def test_expanded_F_tutor_prompt_version_bumped_for_course_scope():
     # v1.8.0 (Bloque 2) bumpeó tutor-v4 -> tutor-v5 (adaptación
     # pedagógica en prosa); v1.8.0 (Bloque 3) bumpeó tutor-v5 -> tutor-v6
-    # (Teaching Policy determinística, ver app/prompts/tutor.py) -- este
-    # test solo confirma que la constante sigue existiendo con el valor
-    # vigente, nunca que este bloque la haya modificado.
-    assert TUTOR_PROMPT_VERSION == "tutor-v6"
+    # (Teaching Policy determinística); v1.8.0 (Bloque 4) bumpeó tutor-v6
+    # -> tutor-v7 (micro-checks formativos, ver app/prompts/tutor.py) --
+    # este test solo confirma que la constante sigue existiendo con el
+    # valor vigente, nunca que este bloque la haya modificado.
+    assert TUTOR_PROMPT_VERSION == "tutor-v7"

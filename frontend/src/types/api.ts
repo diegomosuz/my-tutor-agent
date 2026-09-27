@@ -270,6 +270,23 @@ export interface TutorCourseSource {
   heading_path: string[];
 }
 
+// v1.8.0 (Bloque 4, "ADAPTIVE INTERACTION & FORMATIVE MICRO-CHECKS"):
+// tipos cerrados, solo dos, sin taxonomía compleja. Espejo manual de
+// `backend/app/models/tutor.py::MicroCheckKind`.
+export type MicroCheckKind = "conceptual" | "application";
+
+// Interacción formativa EFÍMERA -- NUNCA Certification, NUNCA Checkpoint,
+// NUNCA entra a LearningState (ver docs/ADAPTIVE_TUTOR_V1_8.md sección
+// Bloque 4). `question.source_refs` siempre namespace SRC-XXX del tópico
+// actual (nunca COURSE-SRC-XXX -- reforzado estructuralmente en el
+// backend). Deliberadamente SIN correct_answer/answer_key/rubric/score/
+// ningún campo de mastery o status. Espejo manual de
+// `backend/app/models/tutor.py::TutorMicroCheck`.
+export interface TutorMicroCheck {
+  question: GroundedText;
+  kind: MicroCheckKind;
+}
+
 export interface TutorReplyBody {
   response_type: TutorResponseType;
   answer_chunks: GroundedText[];
@@ -291,6 +308,34 @@ export interface TutorReplyBody {
   general_knowledge_chunks: string[];
   clarification_question: string | null;
   general_knowledge_used: boolean;
+  // v1.8.0 (Bloque 4): opcional a nivel de tipo (mismo criterio que
+  // course_answer_chunks/course_sources arriba: ningún fixture/mock de
+  // test existente necesita tocarse) aunque el backend SIEMPRE lo
+  // incluye (con default `null`) -- el consumo real siempre debe usar
+  // `?? null`/truthiness, nunca asumir que la clave está ausente.
+  micro_check?: TutorMicroCheck | null;
+}
+
+// v1.8.0 (Bloque 4): lo único que el navegador puede enviar para pedir
+// feedback formativo de un micro-check. Nunca correct_answer/score/
+// learning_status/user_id -- el backend resuelve identidad, grounding y
+// tono siempre server-side. Espejo manual de
+// `backend/app/models/tutor.py::TutorMicroCheckFeedbackRequest`.
+export interface TutorMicroCheckFeedbackRequest {
+  micro_check_question: string;
+  student_answer: string;
+}
+
+// Semántica FORMATIVA, deliberadamente distinta de CheckpointVerdict/
+// LearningStateStatus -- nunca "mastered"/"needs_review"/"passed"/
+// "failed". Espejo manual de
+// `backend/app/models/tutor.py::MicroCheckVerdict`.
+export type MicroCheckVerdict = "correct" | "partially_correct" | "needs_revision" | "unclear";
+
+// Espejo manual de `backend/app/models/tutor.py::TutorMicroCheckFeedbackBody`.
+export interface TutorMicroCheckFeedbackBody {
+  verdict: MicroCheckVerdict;
+  feedback: GroundedText;
 }
 
 export interface CheckpointRequest {

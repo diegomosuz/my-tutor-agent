@@ -13,6 +13,7 @@ import json
 from dataclasses import dataclass
 
 from app.models.tutor import StructuredTutorReplyBody, TutorMessage
+from app.services.tutor_interaction_policy import TutorInteractionPolicy
 from app.services.tutor_learning_context import TutorLearningContext
 from app.services.tutor_teaching_policy import TutorTeachingPolicy
 
@@ -100,7 +101,38 @@ from app.services.tutor_teaching_policy import TutorTeachingPolicy
 # respuesta puntual, nunca el `LearningState` ni la política almacenada.
 # REGLA 26-28 se mantienen sin cambios de fondo (solo se extiende REGLA 28
 # para cubrir también el nuevo bloque `TEACHING POLICY`).
-TUTOR_PROMPT_VERSION = "tutor-v6"
+#
+# v6 -> v7 (v1.8.0, BLOQUE 4: "ADAPTIVE INTERACTION & FORMATIVE
+# MICRO-CHECKS"): el Tutor ya sabe QUÉ sabe el sistema del alumno
+# (`TutorLearningContext`) y CÓMO debería enseñar (`TutorTeachingPolicy`).
+# Este bloque agrega, de forma acotada, CUÁNDO es pedagógicamente útil
+# interactuar: `TutorInteractionPolicy` (`app/services/
+# tutor_interaction_policy.py`) deriva, sin LLM, un `micro_check_mode`
+# determinístico a partir de `TutorTeachingPolicy.comprehension_check`. Se
+# agrega un tercer bloque de DATOS, `INTERACTION POLICY` (ver
+# `_build_interaction_policy_block`), después de `TEACHING POLICY`. El
+# contrato de respuesta gana un campo OPCIONAL, `micro_check`
+# (`TutorMicroCheck | None`, default `None` -- backward compatible con
+# tutor-v6): una interacción formativa EFÍMERA (pregunta + tipo, sin
+# answer key, sin score), generada en la MISMA llamada LLM que la
+# explicación normal, nunca Certification, nunca Checkpoint, nunca
+# entrada a `LearningState` (ver docs/ADAPTIVE_TUTOR_V1_8.md sección
+# Bloque 4 para la distinción explícita entre las tres). Una REGLA nueva,
+# mínima (REGLA 29 -- deliberadamente NO se infla REGLA 24, que sigue
+# siendo exclusivamente sobre TEACHING POLICY), cubre: seguir
+# INTERACTION POLICY, máximo un micro-check, formativo, grounded al
+# tópico actual únicamente (namespace SRC-XXX, nunca COURSE-SRC-XXX --
+# reforzado estructuralmente por `TutorMicroCheck._question_refs_current_topic_only`
+# en `app/models/tutor.py`), sin answer key, sin score, respetar
+# opt-out explícito del alumno, y permitir un pedido explícito ("hacéme
+# una pregunta") incluso en modo `on_request_only`. La RESPUESTA del
+# alumno a un micro-check se evalúa vía un endpoint nuevo y dedicado
+# (`app/services/tutor_microcheck_feedback_service.py` +
+# `app/prompts/tutor_microcheck_feedback.py`, versión propia
+# `microcheck-feedback-v1`) -- nunca reutiliza `checkpoint_service.py`
+# (semántica de LessonPlan/scene inadecuada para una interacción
+# generada dinámicamente dentro de la conversación libre del Tutor).
+TUTOR_PROMPT_VERSION = "tutor-v7"
 
 
 TUTOR_SYSTEM_PROMPT = """Sos el tutor interactivo de una clase técnica. Un alumno puede interrumpir la clase en cualquier momento para hacerte una pregunta.
@@ -236,8 +268,23 @@ No empieces ni encuadres una respuesta anunciando el estado del alumno ("tu esta
 REGLA 27 — REVIEW_TOPICS Y COURSE_SUMMARY SON METADATA DE FONDO, NO EVIDENCIA
 Si el bloque trae "review_topics", cada ítem conserva su propio "learning_status": un ítem "needs_review" puede usarse para recordar un prerequisito débil o sugerir un repaso puntual si es relevante a la pregunta; un ítem "progressing" es un tema TODAVÍA EN DESARROLLO, nunca un tema fallado ni una debilidad -- no los trates igual ni los etiquetes colectivamente como "temas débiles" o equivalentes. No es obligatorio mencionar "review_topics" en cada respuesta: es contexto disponible, no un guion que tengas que seguir. "course_summary" es un conteo agregado de TODO el curso, útil solo si el alumno pregunta por su progreso general en el curso; nunca lo uses para decidir cómo explicar el tópico actual -- para eso está exclusivamente "current_topic".
 
-REGLA 28 — NI EL CONTEXTO ADAPTATIVO NI LA TEACHING POLICY SON FUENTE NI SON CITABLES
-"ADAPTIVE LEARNING CONTEXT" y "TEACHING POLICY" son metadata generada por el backend, nunca contenido del curso: ninguno de los dos es AUTHORIZED SOURCE, ninguno es COURSE EVIDENCE, y ninguno amplía tu conocimiento autorizado (REGLA 2/3/4/5/6 siguen intactas, sin ninguna excepción para estos bloques). Ninguno se cita con un identificador SRC-XXX ni COURSE-SRC-XXX: ningún "source_refs" de "answer_chunks"/"course_answer_chunks" puede señalar información de estos bloques, solo AUTHORIZED SOURCE o COURSE EVIDENCE respectivamente (REGLA 7 sigue aplicando exactamente igual). Si "current_topic" no aparece dentro de ADAPTIVE LEARNING CONTEXT, o cualquiera de los dos bloques está ausente del mensaje, enseñá con tu criterio pedagógico por defecto, sin asumir ningún estado ni política particular -- nunca inventes un "learning_status" ni una estrategia que no te dieron.
+REGLA 28 — NI EL CONTEXTO ADAPTATIVO NI LAS POLÍTICAS SON FUENTE NI SON CITABLES
+"ADAPTIVE LEARNING CONTEXT", "TEACHING POLICY" e "INTERACTION POLICY" (si aparece) son metadata generada por el backend, nunca contenido del curso: ninguno de los tres es AUTHORIZED SOURCE, ninguno es COURSE EVIDENCE, y ninguno amplía tu conocimiento autorizado (REGLA 2/3/4/5/6 siguen intactas, sin ninguna excepción para estos bloques). Ninguno se cita con un identificador SRC-XXX ni COURSE-SRC-XXX: ningún "source_refs" de "answer_chunks"/"course_answer_chunks" puede señalar información de estos bloques, solo AUTHORIZED SOURCE o COURSE EVIDENCE respectivamente (REGLA 7 sigue aplicando exactamente igual). Si "current_topic" no aparece dentro de ADAPTIVE LEARNING CONTEXT, o cualquiera de estos bloques está ausente del mensaje, enseñá con tu criterio pedagógico por defecto, sin asumir ningún estado ni política particular -- nunca inventes un "learning_status" ni una estrategia que no te dieron.
+
+REGLA 29 — MICRO-CHECK FORMATIVO OPCIONAL (según INTERACTION POLICY)
+Si en el mensaje aparece un bloque "=== INTERACTION POLICY ===", seguí su "micro_check_mode" para decidir si ofrecer un micro-check junto con tu explicación:
+- "encouraged": si la explicación se presta naturalmente (hay un concepto puntual que valga la pena comprobar), proponé UN micro-check en el campo "micro_check" de tu respuesta.
+- "optional": podés proponer un micro-check si aporta valor real, sin necesidad de insistir en cada respuesta.
+- "on_request_only": NO generes un micro-check salvo que el alumno lo pida explícitamente en ESTA consulta puntual (frases como "preguntame", "comprobá si entendí", "haceme una pregunta", "quiz me" habilitan un micro-check incluso en este modo).
+
+Reglas que aplican SIEMPRE, sin importar "micro_check_mode":
+- Máximo UN micro-check por respuesta (nunca más de uno, sin importar cuántos conceptos cubriste).
+- El micro-check es EXCLUSIVAMENTE formativo: nunca es Certification, nunca es un Checkpoint de la clase generada, nunca produce un puntaje, nunca declara "mastered"/"needs_review"/"aprobado"/"reprobado" -- es solo una pregunta breve para reforzar la explicación.
+- "micro_check.question" debe ser grounded EXCLUSIVAMENTE en AUTHORIZED SOURCE (namespace SRC-XXX del tópico actual) -- NUNCA en COURSE EVIDENCE ni en conocimiento general, incluso si el modo ampliado está activo para esta consulta (esto reduce ambigüedad al evaluar la respuesta del alumno más adelante).
+- Nunca incluyas la respuesta correcta, un answer key, una rúbrica ni una explicación de cómo llegaste a la pregunta en "micro_check" -- el campo solo tiene "question" (grounded) y "kind" ("conceptual" o "application").
+- Nunca generes un micro-check junto a una respuesta administrativa, de navegación, un mensaje de error, una pregunta sobre configuración, o una respuesta extremadamente trivial.
+- Si el alumno pidió explícitamente NO recibir preguntas ("solo respondeme", "sin preguntas", "no me evalúes", o equivalente) en esta consulta o en el historial reciente de la conversación, NO generes ningún micro-check en esta respuesta, sin importar "micro_check_mode".
+- Un micro-check es OPCIONAL incluso en modo "encouraged": está perfectamente bien responder solo con la explicación, sin "micro_check", cuando no hay un concepto puntual que valga la pena comprobar.
 
 FORMATO DE SALIDA: respondé EXCLUSIVAMENTE con un único objeto JSON válido que cumpla el JSON Schema indicado en el mensaje del usuario. No incluyas texto antes ni después del JSON."""
 
@@ -434,6 +481,25 @@ def _build_teaching_policy_block(policy: TutorTeachingPolicy | None) -> str:
     )
 
 
+def _build_interaction_policy_block(policy: TutorInteractionPolicy | None) -> str:
+    """Serializa `TutorInteractionPolicy` (v1.8.0, Bloque 4) en el bloque
+    de DATOS `=== INTERACTION POLICY ===` -- dos líneas planas, mismo
+    criterio de compactación que `_build_teaching_policy_block`. Devuelve
+    `""` si no hay política (sin contexto adaptativo, sin política de
+    interacción -- el bloque se omite por completo, comportamiento
+    idéntico a tutor-v6 para ese caso)."""
+    if policy is None:
+        return ""
+
+    return (
+        "=== INTERACTION POLICY (instrucción de sistema, no una sugerencia -- "
+        "ver REGLA 29) ===\n"
+        f"micro_check_mode: {policy.micro_check_mode.value}\n"
+        f"max_micro_checks: {policy.max_micro_checks}\n"
+        "=== END INTERACTION POLICY ===\n\n"
+    )
+
+
 def _build_course_evidence_block(course_evidence_packet: str) -> str:
     """Inserta el packet `=== COURSE EVIDENCE ===` ya armado por
     `app/services/course_grounding.py::build_course_evidence_packet`
@@ -459,15 +525,17 @@ def build_tutor_user_prompt(
     allow_general_knowledge: bool = False,
     learning_context: TutorLearningContext | None = None,
     teaching_policy: TutorTeachingPolicy | None = None,
+    interaction_policy: TutorInteractionPolicy | None = None,
 ) -> str:
     """Arma el user prompt separando explícitamente: A) query del alumno,
     B) historial (no confiable), C) contexto de escena (no autoritativo),
     C.2) dominio del curso (no autoritativo, solo relevancia -- v1.3.0
     BLOQUE 6), C.3) ADAPTIVE LEARNING CONTEXT (metadata pedagógica, nunca
     fuente de conocimiento -- v1.8.0 Bloque 2), C.4) TEACHING POLICY
-    (estrategia determinística, v1.8.0 Bloque 3), C.5) COURSE EVIDENCE
-    (fuente curricular real de otros tópicos, v1.4.0 Bloque 2), D)
-    Grounding Packet del tópico actual (única fuente de verdad del
+    (estrategia determinística, v1.8.0 Bloque 3), C.5) INTERACTION POLICY
+    (cuándo interactuar con un micro-check, v1.8.0 Bloque 4), C.6) COURSE
+    EVIDENCE (fuente curricular real de otros tópicos, v1.4.0 Bloque 2),
+    D) Grounding Packet del tópico actual (única fuente de verdad del
     tópico), E) JSON Schema esperado.
 
     El JSON Schema mostrado (y el `response_model` real que usa
@@ -483,6 +551,7 @@ def build_tutor_user_prompt(
     course_scope_block = _build_course_scope_block(course_scope)
     learning_context_block = _build_learning_context_block(learning_context)
     teaching_policy_block = _build_teaching_policy_block(teaching_policy)
+    interaction_policy_block = _build_interaction_policy_block(interaction_policy)
     course_evidence_block = _build_course_evidence_block(course_evidence_packet)
     return f"""Respondé la pregunta del alumno siguiendo estrictamente las reglas del system prompt.
 
@@ -490,7 +559,7 @@ def build_tutor_user_prompt(
 {message}
 === END STUDENT QUERY ===
 
-{history_block}{scene_block}{course_scope_block}{learning_context_block}{teaching_policy_block}{course_evidence_block}Reglas de formato de salida:
+{history_block}{scene_block}{course_scope_block}{learning_context_block}{teaching_policy_block}{interaction_policy_block}{course_evidence_block}Reglas de formato de salida:
 - Respondé con un único objeto JSON, sin texto adicional antes ni después.
 - El JSON debe cumplir exactamente este JSON Schema:
 
@@ -498,6 +567,7 @@ def build_tutor_user_prompt(
 
 - Cada "source_refs" dentro de answer_chunks debe contener únicamente identificadores SRC-XXX que existan literalmente en AUTHORIZED SOURCE, a continuación.
 - Cada "source_refs" dentro de course_answer_chunks debe contener únicamente identificadores COURSE-SRC-XXX que existan literalmente en el bloque COURSE EVIDENCE de arriba (si aparece) -- nunca un SRC-XXX del tópico actual.
+- Si incluís "micro_check", su "question.source_refs" debe contener únicamente identificadores SRC-XXX que existan literalmente en AUTHORIZED SOURCE -- NUNCA COURSE-SRC-XXX (REGLA 29).
 
 {grounding_packet}"""
 
@@ -513,6 +583,7 @@ def build_tutor_messages(
     course_evidence_packet: str = "",
     learning_context: TutorLearningContext | None = None,
     teaching_policy: TutorTeachingPolicy | None = None,
+    interaction_policy: TutorInteractionPolicy | None = None,
 ) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": _build_system_prompt(allow_general_knowledge)},
@@ -531,11 +602,13 @@ def build_tutor_messages(
                 course_scope=course_scope,
                 course_evidence_packet=course_evidence_packet,
                 allow_general_knowledge=allow_general_knowledge,
-                # v1.8.0 (Bloque 2/3): igual que course_scope, se incluyen
-                # en TODO modo -- el switch de conocimiento general nunca
-                # controló la adaptación pedagógica (REGLA 24-28).
+                # v1.8.0 (Bloque 2/3/4): igual que course_scope, se
+                # incluyen en TODO modo -- el switch de conocimiento
+                # general nunca controló la adaptación pedagógica ni la
+                # política de interacción (REGLA 24-29).
                 learning_context=learning_context,
                 teaching_policy=teaching_policy,
+                interaction_policy=interaction_policy,
             ),
         },
     ]

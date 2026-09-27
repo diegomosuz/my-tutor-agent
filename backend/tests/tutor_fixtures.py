@@ -216,3 +216,32 @@ def valid_checkpoint_evaluation_dict(
             "source_refs": refs or ["SRC-002"],
         },
     }
+
+
+# --------------------------------------------------------------------------
+# v1.8.0 (Bloque 4 -- "ADAPTIVE INTERACTION & FORMATIVE MICRO-CHECKS")
+# --------------------------------------------------------------------------
+
+
+def valid_answer_with_micro_check_reply_dict(
+    answer_refs: list[str] | None = None, micro_check_refs: list[str] | None = None, kind: str = "conceptual"
+) -> dict:
+    body = valid_answer_reply_dict(answer_refs)
+    body["micro_check"] = {
+        "question": {
+            "text": "¿Qué diferencia hay entre un orquestador de contenedores y un API Gateway?",
+            "source_refs": micro_check_refs or ["SRC-002"],
+        },
+        "kind": kind,
+    }
+    return body
+
+
+def valid_microcheck_feedback_dict(verdict: str = "correct", refs: list[str] | None = None) -> dict:
+    return {
+        "verdict": verdict,
+        "feedback": {
+            "text": "Tu respuesta identifica correctamente el rol de Kubernetes como orquestador.",
+            "source_refs": refs or ["SRC-002"],
+        },
+    }

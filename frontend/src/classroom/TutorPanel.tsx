@@ -160,6 +160,9 @@ export function TutorPanel({
         showSourceRefs={import.meta.env.DEV}
         onInspectRef={onInspectRef}
         onNavigateToTopic={onNavigateToTopic}
+        courseId={courseId}
+        moduleId={moduleId}
+        topicId={topicId}
       />
 
       {tutor.loading && <p className="tutor-panel__loading">El tutor está pensando…</p>}

@@ -334,4 +334,36 @@ describe("useTutor", () => {
       await firstCall;
     });
   });
+
+  // v1.8.0 (Bloque 4): micro-checks formativos.
+  it("20. micro_check de la respuesta se mapea a message.microCheck", async () => {
+    mockedAskTutor.mockResolvedValue({
+      ...answerReply(),
+      micro_check: {
+        question: { text: "¿Qué diferencia hay entre A y B?", source_refs: ["SRC-002"] },
+        kind: "conceptual",
+      },
+    });
+    const { result } = renderHook(() => useTutor({ ...IDS, sceneId: null }));
+
+    await act(async () => {
+      await result.current.sendMessage("¿Qué es esto?");
+    });
+
+    expect(result.current.messages[1].microCheck).toEqual({
+      question: { text: "¿Qué diferencia hay entre A y B?", source_refs: ["SRC-002"] },
+      kind: "conceptual",
+    });
+  });
+
+  it("21. respuesta sin micro_check (tutor-v6 legacy) mapea microCheck a null", async () => {
+    mockedAskTutor.mockResolvedValue(answerReply());
+    const { result } = renderHook(() => useTutor({ ...IDS, sceneId: null }));
+
+    await act(async () => {
+      await result.current.sendMessage("¿Qué es esto?");
+    });
+
+    expect(result.current.messages[1].microCheck).toBeNull();
+  });
 });

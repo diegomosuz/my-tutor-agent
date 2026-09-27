@@ -13,11 +13,14 @@ from app.models.schemas import CourseDetail, CourseSummary, GroundingResponse, T
 from app.models.tutor import (
     CheckpointEvaluationBody,
     CheckpointRequest,
+    TutorMicroCheckFeedbackBody,
+    TutorMicroCheckFeedbackRequest,
     TutorReplyBody,
     TutorRequest,
 )
 from app.services import checkpoint_service, courses as course_service, tutor_service
 from app.services import lesson_generator
+from app.services import tutor_microcheck_feedback_service
 from app.services.llm_provider import LLMAuthError, LLMConfigurationError, LLMUpstreamError
 from app.services.llm_retry import GenerationFailedError
 
@@ -312,4 +315,65 @@ def evaluate_topic_checkpoint(
         raise HTTPException(
             status_code=422,
             detail="No se pudo evaluar el checkpoint a partir del material de este tópico.",
+        ) from exc
+
+
+@router.post(
+    "/{course_id}/modules/{module_id}/topics/{topic_id}/tutor/micro-check/feedback",
+    response_model=TutorMicroCheckFeedbackBody,
+)
+def evaluate_tutor_microcheck_feedback(
+    course_id: str,
+    module_id: str,
+    topic_id: str,
+    body: TutorMicroCheckFeedbackRequest,
+    settings: Settings = Depends(get_settings),
+    session: Session = Depends(get_db_session),
+    user: AppUser = Depends(get_current_app_user),
+) -> TutorMicroCheckFeedbackBody:
+    """Evalúa la respuesta del alumno a un micro-check formativo efímero
+    del Tutor (v1.8.0, Bloque 4). El navegador solo puede enviar la
+    pregunta del micro-check (tal como la recibió) y su respuesta -- NUNCA
+    una respuesta correcta, un score ni un `learning_status` (PARTE 32).
+    `micro_check_question` se trata siempre como dato de interacción,
+    nunca como autoridad: el backend reconstruye el Grounding Packet real
+    del tópico y evalúa contra ese material (PARTE 33). Nada de esta
+    interacción se persiste ni afecta `LearningState`/Certification/Topic
+    Progress -- misma identidad server-side que `/tutor` (PARTE 58/59),
+    usada exclusivamente para adaptar el TONO del feedback via
+    `TutorTeachingPolicy`, nunca el veredicto.
+    """
+    try:
+        return tutor_microcheck_feedback_service.evaluate_microcheck_feedback(
+            settings=settings,
+            course_id=course_id,
+            module_id=module_id,
+            topic_id=topic_id,
+            micro_check_question=body.micro_check_question,
+            student_answer=body.student_answer,
+            session=session,
+            user_id=user.id,
+        )
+    except course_service.CourseNotFoundError:
+        raise HTTPException(status_code=404, detail=_COURSE_NOT_FOUND.format(course_id))
+    except course_service.ModuleNotFoundError:
+        raise HTTPException(status_code=404, detail=_MODULE_NOT_FOUND.format(module_id))
+    except course_service.TopicNotFoundError:
+        raise HTTPException(status_code=404, detail=_TOPIC_NOT_FOUND.format(topic_id))
+    except LLMConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except LLMAuthError:
+        raise HTTPException(status_code=503, detail=_LLM_AUTH_REJECTED)
+    except LLMUpstreamError:
+        raise HTTPException(status_code=502, detail=_LLM_UPSTREAM_FAILED)
+    except GenerationFailedError as exc:
+        logger.warning(
+            "microcheck_feedback_rejected course_id=%s module_id=%s topic_id=%s",
+            course_id,
+            module_id,
+            topic_id,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail="No se pudo generar feedback formativo a partir del material de este tópico.",
         ) from exc

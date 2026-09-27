@@ -22,6 +22,8 @@ import type {
   SystemStatusResponse,
   TopicProgressEntry,
   TopicResponse,
+  TutorMicroCheckFeedbackBody,
+  TutorMicroCheckFeedbackRequest,
   TutorReplyBody,
   TutorRequest,
 } from "../types/api";
@@ -151,6 +153,19 @@ export const api = {
   ) =>
     request<CheckpointEvaluationBody>(
       `/api/courses/${courseId}/modules/${moduleId}/topics/${topicId}/checkpoint`,
+      { method: "POST", body, signal }
+    ),
+  // v1.8.0 (Bloque 4): feedback formativo EFÍMERO de un micro-check del
+  // tutor -- nunca Certification, nunca Checkpoint, nunca persistido.
+  evaluateMicroCheckFeedback: (
+    courseId: string,
+    moduleId: string,
+    topicId: string,
+    body: TutorMicroCheckFeedbackRequest,
+    signal?: AbortSignal
+  ) =>
+    request<TutorMicroCheckFeedbackBody>(
+      `/api/courses/${courseId}/modules/${moduleId}/topics/${topicId}/tutor/micro-check/feedback`,
       { method: "POST", body, signal }
     ),
   // Fase 6: práctica/simulacro de certificación grounded. `prepare` NUNCA

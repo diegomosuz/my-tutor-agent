@@ -170,4 +170,52 @@ describe("TutorConversation", () => {
     expect(container.textContent).not.toMatch(/COURSE-SRC-\d{3}/);
     expect(container.textContent).not.toMatch(/SRC-009/);
   });
+
+  // v1.8.0 (Bloque 4): micro-checks formativos.
+  describe("micro-check", () => {
+    const messagesWithMicroCheck: TutorConversationMessage[] = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Kubernetes orquesta contenedores.",
+        responseType: "answer",
+        microCheck: {
+          question: { text: "¿Qué diferencia hay entre A y B?", source_refs: ["SRC-002"] },
+          kind: "conceptual",
+        },
+      },
+    ];
+
+    it("renderiza la tarjeta de micro-check cuando el mensaje la trae y hay ids de curso/módulo/tópico", () => {
+      render(
+        <TutorConversation
+          messages={messagesWithMicroCheck}
+          showSourceRefs={false}
+          courseId="curso-demo"
+          moduleId="modulo-demo"
+          topicId="topico-demo"
+        />
+      );
+      expect(screen.getByText("¿Qué diferencia hay entre A y B?")).toBeInTheDocument();
+      expect(screen.getByRole("group", { name: "Comprobación rápida" })).toBeInTheDocument();
+    });
+
+    it("NO renderiza la tarjeta si faltan courseId/moduleId/topicId (defensivo)", () => {
+      render(<TutorConversation messages={messagesWithMicroCheck} showSourceRefs={false} />);
+      expect(screen.queryByRole("group", { name: "Comprobación rápida" })).not.toBeInTheDocument();
+    });
+
+    it("NO renderiza ninguna tarjeta cuando microCheck es null/ausente", () => {
+      render(
+        <TutorConversation
+          messages={MESSAGES}
+          showSourceRefs={false}
+          courseId="curso-demo"
+          moduleId="modulo-demo"
+          topicId="topico-demo"
+        />
+      );
+      expect(screen.queryByRole("group", { name: "Comprobación rápida" })).not.toBeInTheDocument();
+    });
+  });
 });

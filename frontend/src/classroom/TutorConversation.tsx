@@ -1,4 +1,5 @@
 import type { TutorCourseSource } from "../types/api";
+import { MicroCheckCard } from "./MicroCheckCard";
 import type { TutorAnswerProvenance, TutorConversationMessage } from "./useTutor";
 
 export interface TutorConversationProps {
@@ -13,6 +14,13 @@ export interface TutorConversationProps {
    * segundo sistema de routing. Si no se provee, el CTA simplemente no
    * hace nada (defensivo, nunca debería pasar en producción real). */
   onNavigateToTopic?: (moduleId: string, topicId: string) => void;
+  /** v1.8.0 (Bloque 4): necesarios para poder pedir feedback formativo de
+   * un micro-check (POST .../tutor/micro-check/feedback). Si faltan, la
+   * tarjeta de micro-check simplemente no se renderiza (defensivo, nunca
+   * debería pasar en producción real -- ver TutorPanel). */
+  courseId?: string;
+  moduleId?: string;
+  topicId?: string;
 }
 
 /** Renderiza la conversación como texto React plano (nunca
@@ -23,6 +31,9 @@ export function TutorConversation({
   showSourceRefs,
   onInspectRef,
   onNavigateToTopic,
+  courseId,
+  moduleId,
+  topicId,
 }: TutorConversationProps) {
   if (messages.length === 0) {
     return (
@@ -58,6 +69,15 @@ export function TutorConversation({
                 </button>
               ))}
             </div>
+          )}
+          {message.microCheck && courseId && moduleId && topicId && (
+            <MicroCheckCard
+              key={message.id + "-micro-check"}
+              courseId={courseId}
+              moduleId={moduleId}
+              topicId={topicId}
+              microCheck={message.microCheck}
+            />
           )}
         </div>
       ))}

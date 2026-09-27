@@ -426,3 +426,145 @@ def test_state_change_produces_updated_policy_not_stale(tmp_path):
         assert "scaffold_level: minimal" in provider_after.calls[0][1]["content"]  # mastered
     finally:
         session.close()
+
+
+# ==========================================================================
+# v1.8.0 Bloque 4 ("ADAPTIVE INTERACTION & FORMATIVE MICRO-CHECKS") -- Parte
+# R (PASO 93-95) y Parte N (PASO 64, no-mutation) con Postgres REAL.
+# ==========================================================================
+
+
+def test_real_needs_review_vs_mastered_produce_different_interaction_policy(tmp_path):
+    """PASO 93/94: dos identidades reales, mismo curso/tópico/pregunta --
+    needs_review debe corresponder a un micro_check_mode al menos tan
+    proactivo como el de mastered (encouraged/optional > on_request_only),
+    determinísticamente, sin depender de la salida generativa del LLM."""
+    from app.services.tutor_interaction_policy import MicroCheckMode
+
+    settings = _settings(tmp_path)
+    session = _session()
+    try:
+        student_needs_review = _create_app_user()
+        student_mastered = _create_app_user()
+        certification_history_service.import_legacy_attempts(
+            session, student_needs_review, COURSE, [_legacy_entry("p-a", 20, "2026-01-01T00:00:00+00:00")]
+        )
+        certification_history_service.import_legacy_attempts(
+            session, student_mastered, COURSE, [_legacy_entry("p-b", 95, "2026-01-01T00:00:00+00:00")]
+        )
+        session.commit()
+
+        provider_a = FakeLLMProvider(responses=[valid_answer_reply_dict(["SRC-002"])])
+        provider_b = FakeLLMProvider(responses=[valid_answer_reply_dict(["SRC-002"])])
+        _ask(settings, provider_a, session, student_needs_review)
+        _ask(settings, provider_b, session, student_mastered)
+
+        def _mode_from_prompt(prompt: str) -> str:
+            for mode in MicroCheckMode:
+                if f"micro_check_mode: {mode.value}" in prompt:
+                    return mode.value
+            raise AssertionError("micro_check_mode no encontrado en el prompt")
+
+        mode_a = _mode_from_prompt(provider_a.calls[0][1]["content"])
+        mode_b = _mode_from_prompt(provider_b.calls[0][1]["content"])
+        # needs_review -> comprehension_check=encouraged -> encouraged;
+        # mastered -> comprehension_check=minimal -> on_request_only.
+        assert mode_a == "encouraged"
+        assert mode_b == "on_request_only"
+        assert mode_a != mode_b
+    finally:
+        session.close()
+
+
+def test_microcheck_feedback_never_mutates_learning_evidence(tmp_path):
+    """PASO 64/88/89: snapshot de TopicProgress/CertificationAttempt antes
+    y después de generar+responder+recibir feedback de un micro-check --
+    deben permanecer exactamente iguales."""
+    from sqlalchemy import func, select
+
+    from app.db.models import CertificationAttempt, TopicProgress
+    from app.services import tutor_microcheck_feedback_service
+    from tests.tutor_fixtures import valid_microcheck_feedback_dict
+
+    settings = _settings(tmp_path)
+    session = _session()
+    try:
+        user_id = _create_app_user()
+        certification_history_service.import_legacy_attempts(
+            session, user_id, COURSE, [_legacy_entry("p1", 20, "2026-01-01T00:00:00+00:00")]
+        )
+        session.commit()
+
+        before_progress = session.execute(select(func.count()).select_from(TopicProgress)).scalar_one()
+        before_attempts = session.execute(select(func.count()).select_from(CertificationAttempt)).scalar_one()
+
+        # 1. Explicación + micro-check generado.
+        from tests.tutor_fixtures import valid_answer_with_micro_check_reply_dict
+
+        provider_explain = FakeLLMProvider(
+            responses=[valid_answer_with_micro_check_reply_dict(["SRC-002"], ["SRC-002"])]
+        )
+        reply = _ask(settings, provider_explain, session, user_id)
+        assert reply.micro_check is not None
+
+        # 2. El alumno responde el micro-check -> feedback formativo.
+        provider_feedback = FakeLLMProvider(responses=[valid_microcheck_feedback_dict("correct")])
+        feedback = tutor_microcheck_feedback_service.evaluate_microcheck_feedback(
+            settings=settings, course_id=COURSE, module_id=MODULE, topic_id=TOPIC,
+            micro_check_question=reply.micro_check.question.text,
+            student_answer="Kubernetes orquesta contenedores, el otro expone servicios.",
+            session=session, user_id=user_id, provider=provider_feedback,
+        )
+        assert feedback.verdict.value == "correct"
+        session.commit()
+
+        after_progress = session.execute(select(func.count()).select_from(TopicProgress)).scalar_one()
+        after_attempts = session.execute(select(func.count()).select_from(CertificationAttempt)).scalar_one()
+        assert before_progress == after_progress
+        assert before_attempts == after_attempts
+
+        # 3. El LearningProfile del alumno tampoco cambió: needs_review
+        # sigue siendo needs_review, sin importar el veredicto "correct".
+        from app.services import tutor_learning_context_service
+
+        context_after = tutor_learning_context_service.build(
+            settings=settings, session=session, user_id=user_id,
+            course_id=COURSE, module_id=MODULE, topic_id=TOPIC,
+        )
+        assert context_after.current_topic.status == "needs_review"
+    finally:
+        session.close()
+
+
+def test_repeated_micro_checks_never_create_cumulative_evidence(tmp_path):
+    """PASO 68: múltiples micro-checks (y sus feedbacks) en la misma
+    sesión nunca acumulan evidencia -- el LearningProfile del alumno
+    sigue siendo exactamente el mismo después de varias rondas."""
+    from app.services import tutor_learning_context_service, tutor_microcheck_feedback_service
+    from tests.tutor_fixtures import valid_microcheck_feedback_dict
+
+    settings = _settings(tmp_path)
+    session = _session()
+    try:
+        user_id = _create_app_user()
+        context_before = tutor_learning_context_service.build(
+            settings=settings, session=session, user_id=user_id,
+            course_id=COURSE, module_id=MODULE, topic_id=TOPIC,
+        )
+
+        for verdict in ["correct", "partially_correct", "needs_revision", "correct"]:
+            provider = FakeLLMProvider(responses=[valid_microcheck_feedback_dict(verdict)])
+            tutor_microcheck_feedback_service.evaluate_microcheck_feedback(
+                settings=settings, course_id=COURSE, module_id=MODULE, topic_id=TOPIC,
+                micro_check_question="¿Qué es Kubernetes?", student_answer="una respuesta cualquiera",
+                session=session, user_id=user_id, provider=provider,
+            )
+        session.commit()
+
+        context_after = tutor_learning_context_service.build(
+            settings=settings, session=session, user_id=user_id,
+            course_id=COURSE, module_id=MODULE, topic_id=TOPIC,
+        )
+        assert context_after.model_dump() == context_before.model_dump()
+    finally:
+        session.close()

@@ -29,7 +29,7 @@ construcción, sin necesitar un chequeo de formato aparte."""
 from __future__ import annotations
 
 from app.models.schemas import CanonicalTopicContent
-from app.models.tutor import CourseGroundedText, GroundedText
+from app.models.tutor import CourseGroundedText, GroundedText, TutorMicroCheck
 from app.services.canonical import validate_source_refs
 from app.services.course_grounding import CourseSourceBinding, validate_course_source_refs
 from app.services.llm_retry import ValidationFailure
@@ -41,6 +41,7 @@ def validate_tutor_reply(
     course_answer_chunks: list[CourseGroundedText],
     canonical: CanonicalTopicContent,
     course_bindings: list[CourseSourceBinding],
+    micro_check: TutorMicroCheck | None = None,
 ) -> None:
     problems: list[str] = []
 
@@ -53,6 +54,16 @@ def validate_tutor_reply(
         invalid = validate_course_source_refs(chunk.source_refs, course_bindings)
         if invalid:
             problems.append(f"course_answer_chunks[{i}]: source_refs inexistentes {invalid}.")
+
+    # v1.8.0 (Bloque 4): mismo criterio que answer_chunks -- el namespace
+    # COURSE-SRC-XXX ya está estructuralmente prohibido acá a nivel
+    # Pydantic (`TutorMicroCheck._question_refs_current_topic_only`), así
+    # que esto solo verifica que los SRC-XXX citados existan realmente en
+    # el tópico actual.
+    if micro_check is not None:
+        result = validate_source_refs(micro_check.question.source_refs, canonical)
+        if result.invalid_refs:
+            problems.append(f"micro_check.question: source_refs inexistentes {result.invalid_refs}.")
 
     if problems:
         raise ValidationFailure(problems)
