@@ -7,17 +7,19 @@ puede inventar información que no esté en ese contenido. Ver
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) /
 [`docs/ROADMAP.md`](./docs/ROADMAP.md) para arquitectura y fases futuras.
 
-> **v1.7.0** publicado (`master`/`origin/master`, tag `v1.7.0`). **v1.8.0 —
-> Adaptive Tutor** está preparado como release candidate local
-> (`release/v1.8.0-rc`, sin push/tag/merge todavía — release gate
-> pendiente, decisión separada). v1.7.0 movió el perfil funcional del
-> alumno (progreso curricular, historial de certificación, estado de
-> aprendizaje derivado) de `localStorage` a PostgreSQL, detrás de una
-> identidad de aplicación (`app_user`, con una abstracción lista para una
-> futura integración con Microsoft Entra ID — sin login/password propios
-> en esta versión). v1.8.0 construye sobre ese mismo estado de
-> aprendizaje derivado (nunca decidido por un LLM) para que el Tutor
-> conversacional adapte CÓMO enseña -- `LearningProfile` (PostgreSQL) →
+> **Versión actual del código: v1.8.0 — Adaptive Tutor.** Para qué
+> versión está publicada en cada momento y el historial completo de
+> releases, ver [GitHub Releases](https://github.com/diegomosuz/my-tutor-agent/releases)
+> (fuente de verdad sobre qué está publicado; este README describe
+> siempre el estado del código en este commit, no el estado de
+> publicación). v1.7.0 movió el perfil funcional del alumno (progreso
+> curricular, historial de certificación, estado de aprendizaje
+> derivado) de `localStorage` a PostgreSQL, detrás de una identidad de
+> aplicación (`app_user`, con una abstracción lista para una futura
+> integración con Microsoft Entra ID — sin login/password propios en
+> esta versión). v1.8.0 construye sobre ese mismo estado de aprendizaje
+> derivado (nunca decidido por un LLM) para que el Tutor conversacional
+> adapte CÓMO enseña -- `LearningProfile` (PostgreSQL) →
 > `TutorLearningContext` → `TutorTeachingPolicy` (determinística) →
 > `TutorInteractionPolicy` (determinística) → prompt `tutor-v7`, con
 > comprobaciones formativas opcionales (micro-checks) 100% efímeras, sin
