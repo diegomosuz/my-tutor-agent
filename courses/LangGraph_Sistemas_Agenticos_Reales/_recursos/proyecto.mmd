@@ -1,0 +1,11 @@
+flowchart LR
+    n_a["generate · Modelo + herramienta"]
+    n_b["review · interrupt"]
+    n_c["finalize · SIMULADO / RECHAZADO"]
+    n_d["handoff · DERIVADO"]
+    n_e["END"]
+    n_a -->|"con evidencia"| n_b
+    n_a -->|"sin evidencia"| n_d
+    n_b -->|"decisión"| n_c
+    n_c --> n_e
+    n_d --> n_e

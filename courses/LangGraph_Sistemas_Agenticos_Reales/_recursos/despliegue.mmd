@@ -1,0 +1,10 @@
+flowchart LR
+    n_ui["Usuario / UI"]
+    n_api["API Python · Autorización + grafo"]
+    n_db["PostgreSQL · Checkpoints"]
+    n_llm["Proveedor LLM"]
+    n_tools["Herramientas · Sistemas de negocio"]
+    n_ui --> n_api
+    n_api --> n_db
+    n_api --> n_llm
+    n_api --> n_tools

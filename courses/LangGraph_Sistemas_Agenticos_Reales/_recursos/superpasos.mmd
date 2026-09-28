@@ -1,0 +1,9 @@
+flowchart LR
+    n_prepare["Preparar · consulta"]
+    n_kb["Consultar KB"]
+    n_status["Consultar estado"]
+    n_join["Sintetizar"]
+    n_prepare --> n_kb
+    n_prepare --> n_status
+    n_kb --> n_join
+    n_status --> n_join

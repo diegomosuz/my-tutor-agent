@@ -1,0 +1,12 @@
+flowchart LR
+    n_a["Preparar"]
+    n_b["Revisar"]
+    n_c["Resolver"]
+    n_p["Checkpoint · borrador"]
+    n_q["Checkpoint · pendiente"]
+    n_r["Checkpoint · resultado"]
+    n_a --> n_b
+    n_b --> n_c
+    n_a --> n_p
+    n_b --> n_q
+    n_c --> n_r

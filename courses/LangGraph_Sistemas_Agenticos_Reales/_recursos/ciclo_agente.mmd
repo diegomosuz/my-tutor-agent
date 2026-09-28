@@ -1,0 +1,9 @@
+flowchart LR
+    n_start["START"]
+    n_model["agent · Modelo + presupuesto"]
+    n_tools["tools · ToolNode"]
+    n_end["END"]
+    n_start --> n_model
+    n_model -->|"tool_calls"| n_tools
+    n_tools -->|"observación"| n_model
+    n_model -->|"sin tool_calls"| n_end

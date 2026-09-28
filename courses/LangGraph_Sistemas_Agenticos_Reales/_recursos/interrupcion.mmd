@@ -1,0 +1,12 @@
+flowchart LR
+    n_a["review comienza"]
+    n_b["interrupt(payload)"]
+    n_c["Pausa persistida"]
+    n_d["Decisión humana"]
+    n_e["review reinicia"]
+    n_f["finalize"]
+    n_a --> n_b
+    n_b --> n_c
+    n_c --> n_d
+    n_d -->|"resume"| n_e
+    n_e --> n_f

@@ -1,0 +1,11 @@
+flowchart LR
+    n_start["START"]
+    n_classify["classify"]
+    n_answer["answer"]
+    n_escalate["escalate"]
+    n_end["END"]
+    n_start --> n_classify
+    n_classify -->|"normal"| n_answer
+    n_classify -->|"high"| n_escalate
+    n_answer --> n_end
+    n_escalate --> n_end

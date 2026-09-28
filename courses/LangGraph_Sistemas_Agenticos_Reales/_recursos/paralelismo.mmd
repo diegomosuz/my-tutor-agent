@@ -1,0 +1,9 @@
+flowchart LR
+    n_in["Entrada"]
+    n_kb["kb · results: [KB-01]"]
+    n_st["status · results: [ST-01]"]
+    n_out["combine · Resultados combinados"]
+    n_in --> n_kb
+    n_in --> n_st
+    n_kb --> n_out
+    n_st --> n_out

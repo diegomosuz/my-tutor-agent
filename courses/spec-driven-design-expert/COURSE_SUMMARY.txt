@@ -1,0 +1,7 @@
+Spec-Driven Design Expert Course
+Prepared: 2026-09-19
+Modules: 10
+Topics: 53
+Raster diagrams: 10
+Encoding: UTF-8
+Format: PwC AI Tutor COURSE_FORMAT compatible

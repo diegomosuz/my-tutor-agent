@@ -1,0 +1,805 @@
+{
+  "course_id": "langgraph_sistemas_agenticos_reales",
+  "title": "LangGraph: desarrollo de sistemas agénticos reales",
+  "language": "es",
+  "version": "1.0",
+  "suggested_duration_minutes": 830,
+  "source_guided_class_minutes": 240,
+  "runtime": "Python 3.11 / 3.12",
+  "module_count": 6,
+  "topic_count": 36,
+  "modules": [
+    {
+      "id": "m01",
+      "order": 1,
+      "title": "Fundamentos",
+      "index": "01_Fundamentos/00_inicio_del_modulo.md",
+      "competencies": [
+        "Distinguir modelo, herramienta, workflow y agente.",
+        "Explicar estado, nodos, aristas y superpasos.",
+        "Elegir la arquitectura mínima para un requerimiento."
+      ],
+      "topics": [
+        {
+          "id": "m01_t01",
+          "title": "Componentes de un sistema agéntico",
+          "module": "Fundamentos",
+          "module_order": 1,
+          "topic_order": 1,
+          "duration_minutes": 10,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Python básico: funciones, diccionarios y manejo de errores.",
+          "objectives": [
+            "Separar las responsabilidades del modelo, las herramientas y el orquestador.",
+            "Explicar por qué una llamada propuesta todavía no es una acción ejecutada."
+          ],
+          "path": "01_Fundamentos/01_componentes_de_un_sistema_agentico.md",
+          "source_slides": [
+            4
+          ]
+        },
+        {
+          "id": "m01_t02",
+          "title": "Workflows, agentes y elección del framework",
+          "module": "Fundamentos",
+          "module_order": 1,
+          "topic_order": 2,
+          "duration_minutes": 15,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópico 1.1.",
+          "objectives": [
+            "Distinguir un workflow con LLM de un agente.",
+            "Elegir entre funciones, create_agent y Graph API según el control necesario."
+          ],
+          "path": "01_Fundamentos/02_workflows_agentes_y_eleccion_del_framework.md",
+          "source_slides": [
+            5,
+            6
+          ]
+        },
+        {
+          "id": "m01_t03",
+          "title": "Estado, nodos y aristas",
+          "module": "Fundamentos",
+          "module_order": 1,
+          "topic_order": 3,
+          "duration_minutes": 15,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópicos 1.1 y 1.2.",
+          "objectives": [
+            "Recorrer un grafo indicando lecturas, escrituras y transiciones.",
+            "Distinguir estado acumulado de actualización parcial."
+          ],
+          "path": "01_Fundamentos/03_estado_nodos_y_aristas.md",
+          "source_slides": [
+            7
+          ]
+        },
+        {
+          "id": "m01_t04",
+          "title": "Superpasos, concurrencia y finalización",
+          "module": "Fundamentos",
+          "module_order": 1,
+          "topic_order": 4,
+          "duration_minutes": 10,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópico 1.3.",
+          "objectives": [
+            "Predecir qué versión del estado lee cada rama.",
+            "Diferenciar límites de superpasos y de llamadas al modelo."
+          ],
+          "path": "01_Fundamentos/04_superpasos_concurrencia_y_finalizacion.md",
+          "source_slides": [
+            8
+          ]
+        },
+        {
+          "id": "m01_t05",
+          "title": "Caso conductor: asistente de soporte",
+          "module": "Fundamentos",
+          "module_order": 1,
+          "topic_order": 5,
+          "duration_minutes": 15,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópicos 1.1 a 1.4.",
+          "objectives": [
+            "Traducir un caso de uso en contratos y criterios observables.",
+            "Separar propuesta, aprobación y acción."
+          ],
+          "path": "01_Fundamentos/05_caso_conductor_asistente_de_soporte.md",
+          "source_slides": [
+            9
+          ]
+        },
+        {
+          "id": "m01_t06",
+          "title": "Práctica: justificar una arquitectura simple",
+          "module": "Fundamentos",
+          "module_order": 1,
+          "topic_order": 6,
+          "duration_minutes": 15,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Módulo 1 completo.",
+          "objectives": [
+            "Proponer una arquitectura mínima por caso.",
+            "Defender una ampliación con una necesidad funcional o una medición."
+          ],
+          "path": "01_Fundamentos/06_practica_justificar_una_arquitectura_simple.md",
+          "source_slides": [
+            10,
+            11
+          ]
+        }
+      ]
+    },
+    {
+      "id": "m02",
+      "order": 2,
+      "title": "Graph API",
+      "index": "02_Graph_API/00_inicio_del_modulo.md",
+      "competencies": [
+        "Construir, compilar e invocar un grafo.",
+        "Diseñar estado, reducers y contexto.",
+        "Verificar rutas normales, excepcionales y de validación."
+      ],
+      "topics": [
+        {
+          "id": "m02_t01",
+          "title": "Entorno reproducible y primer recorrido",
+          "module": "Graph API",
+          "module_order": 2,
+          "topic_order": 1,
+          "duration_minutes": 15,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Módulo 1; Python instalado.",
+          "objectives": [
+            "Preparar el entorno local y verificar versiones.",
+            "Ejecutar el primer grafo sin credenciales de un proveedor."
+          ],
+          "path": "02_Graph_API/01_entorno_reproducible_y_primer_recorrido.md",
+          "source_slides": [
+            13
+          ]
+        },
+        {
+          "id": "m02_t02",
+          "title": "Contrato del estado y diseño de nodos",
+          "module": "Graph API",
+          "module_order": 2,
+          "topic_order": 2,
+          "duration_minutes": 25,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópico 2.1 y fundamentos de tipos en Python.",
+          "objectives": [
+            "Definir un estado con campos explícitos.",
+            "Escribir nodos pequeños que devuelvan cambios parciales."
+          ],
+          "path": "02_Graph_API/02_contrato_del_estado_y_diseno_de_nodos.md",
+          "source_slides": [
+            14,
+            15
+          ]
+        },
+        {
+          "id": "m02_t03",
+          "title": "Construcción, rutas condicionales e invocación",
+          "module": "Graph API",
+          "module_order": 2,
+          "topic_order": 3,
+          "duration_minutes": 20,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópico 2.2.",
+          "objectives": [
+            "Registrar nodos y expresar destinos con contratos claros.",
+            "Compilar y comprobar un resultado de Graph API v2."
+          ],
+          "path": "02_Graph_API/03_construccion_rutas_condicionales_e_invocacion.md",
+          "source_slides": [
+            16,
+            17,
+            18
+          ]
+        },
+        {
+          "id": "m02_t04",
+          "title": "Reducers y mensajes con identidad",
+          "module": "Graph API",
+          "module_order": 2,
+          "topic_order": 4,
+          "duration_minutes": 20,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópicos 2.2 y 2.3.",
+          "objectives": [
+            "Elegir una regla de combinación por campo.",
+            "Actualizar mensajes sin perder las relaciones del protocolo."
+          ],
+          "path": "02_Graph_API/04_reducers_y_mensajes_con_identidad.md",
+          "source_slides": [
+            19,
+            20
+          ]
+        },
+        {
+          "id": "m02_t05",
+          "title": "Estado, configuración y contexto de ejecución",
+          "module": "Graph API",
+          "module_order": 2,
+          "topic_order": 5,
+          "duration_minutes": 20,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópicos 2.2 a 2.4.",
+          "objectives": [
+            "Ubicar cada dato en state, config o context.",
+            "Inyectar un alcance autenticado sin convertirlo en argumento elegido por el modelo."
+          ],
+          "path": "02_Graph_API/05_estado_configuracion_y_contexto_de_ejecucion.md",
+          "source_slides": [
+            21
+          ]
+        },
+        {
+          "id": "m02_t06",
+          "title": "Práctica: agregar validación sin romper el grafo",
+          "module": "Graph API",
+          "module_order": 2,
+          "topic_order": 6,
+          "duration_minutes": 25,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Módulo 2 completo.",
+          "objectives": [
+            "Introducir una tercera ruta y actualizar su contrato completo.",
+            "Demostrar que las rutas anteriores siguen funcionando."
+          ],
+          "path": "02_Graph_API/06_practica_agregar_validacion_sin_romper_el_grafo.md",
+          "source_slides": [
+            22,
+            23
+          ]
+        }
+      ]
+    },
+    {
+      "id": "m03",
+      "order": 3,
+      "title": "Agente con herramientas",
+      "index": "03_Agente_con_herramientas/00_inicio_del_modulo.md",
+      "competencies": [
+        "Implementar el protocolo de tool calling.",
+        "Acotar autonomía, presupuesto y evidencia.",
+        "Evaluar cuándo usar un ciclo propio o create_agent."
+      ],
+      "topics": [
+        {
+          "id": "m03_t01",
+          "title": "Ciclo del agente y protocolo de herramientas",
+          "module": "Agente con herramientas",
+          "module_order": 3,
+          "topic_order": 1,
+          "duration_minutes": 20,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Módulo 2; especialmente MessagesState y reducers.",
+          "objectives": [
+            "Reconstruir un ciclo completo a partir de los mensajes.",
+            "Relacionar cada llamada con su resultado mediante tool_call_id."
+          ],
+          "path": "03_Agente_con_herramientas/01_ciclo_del_agente_y_protocolo_de_herramientas.md",
+          "source_slides": [
+            25,
+            26
+          ]
+        },
+        {
+          "id": "m03_t02",
+          "title": "Diseño de herramientas y conexión del modelo",
+          "module": "Agente con herramientas",
+          "module_order": 3,
+          "topic_order": 2,
+          "duration_minutes": 25,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópico 3.1; entorno instalado.",
+          "objectives": [
+            "Exponer una herramienta con nombre, descripción y esquema.",
+            "Configurar un modelo sin confundir bind_tools con ejecución."
+          ],
+          "path": "03_Agente_con_herramientas/02_diseno_de_herramientas_y_conexion_del_modelo.md",
+          "source_slides": [
+            27,
+            28
+          ]
+        },
+        {
+          "id": "m03_t03",
+          "title": "Implementación de un agente con presupuesto",
+          "module": "Agente con herramientas",
+          "module_order": 3,
+          "topic_order": 3,
+          "duration_minutes": 35,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópicos 3.1 y 3.2.",
+          "objectives": [
+            "Construir el ciclo agent-tools-agent.",
+            "Detener el recorrido antes de superar el presupuesto.",
+            "Ejecutar la misma topología con un simulador o un proveedor."
+          ],
+          "path": "03_Agente_con_herramientas/03_implementacion_de_un_agente_con_presupuesto.md",
+          "source_slides": [
+            29,
+            30,
+            31,
+            35
+          ]
+        },
+        {
+          "id": "m03_t04",
+          "title": "Límites de autonomía y salidas estructuradas",
+          "module": "Agente con herramientas",
+          "module_order": 3,
+          "topic_order": 4,
+          "duration_minutes": 25,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópico 3.3 y nociones de modelos Pydantic.",
+          "objectives": [
+            "Diferenciar controles operativos, validación de formato y fidelidad.",
+            "Definir un contrato de salida sin confundirlo con evidencia verdadera."
+          ],
+          "path": "03_Agente_con_herramientas/04_limites_de_autonomia_y_salidas_estructuradas.md",
+          "source_slides": [
+            32,
+            33
+          ]
+        },
+        {
+          "id": "m03_t05",
+          "title": "Práctica: evidencia, trazas y condiciones de salida",
+          "module": "Agente con herramientas",
+          "module_order": 3,
+          "topic_order": 5,
+          "duration_minutes": 30,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópicos 3.1 a 3.4.",
+          "objectives": [
+            "Evaluar el protocolo en casos normales y adversos.",
+            "Separar pruebas de orquestación de evaluación del modelo real."
+          ],
+          "path": "03_Agente_con_herramientas/05_practica_evidencia_trazas_y_condiciones_de_salida.md",
+          "source_slides": [
+            34,
+            35
+          ]
+        },
+        {
+          "id": "m03_t06",
+          "title": "Cuándo usar create_agent",
+          "module": "Agente con herramientas",
+          "module_order": 3,
+          "topic_order": 6,
+          "duration_minutes": 15,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Módulo 3; proveedor opcional para ejecutar esta variante.",
+          "objectives": [
+            "Comparar una fábrica de agentes con un grafo explícito.",
+            "Identificar qué políticas deben reconstruirse al cambiar de abstracción."
+          ],
+          "path": "03_Agente_con_herramientas/06_cuando_usar_create_agent.md",
+          "source_slides": [
+            36
+          ]
+        }
+      ]
+    },
+    {
+      "id": "m04",
+      "order": 4,
+      "title": "Persistencia y aprobación",
+      "index": "04_Persistencia_y_aprobacion/00_inicio_del_modulo.md",
+      "competencies": [
+        "Separar checkpoint, memoria y datos de negocio.",
+        "Pausar y reanudar una revisión humana.",
+        "Recuperar una ejecución y controlar efectos repetidos."
+      ],
+      "topics": [
+        {
+          "id": "m04_t01",
+          "title": "Checkpoint, thread y memoria compartida",
+          "module": "Persistencia y aprobación",
+          "module_order": 4,
+          "topic_order": 1,
+          "duration_minutes": 20,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Módulos 1 a 3.",
+          "objectives": [
+            "Elegir dónde debe vivir un dato según su duración y alcance.",
+            "Interpretar la identidad de una ejecución persistente."
+          ],
+          "path": "04_Persistencia_y_aprobacion/01_checkpoint_thread_y_memoria_compartida.md",
+          "source_slides": [
+            39,
+            40
+          ]
+        },
+        {
+          "id": "m04_t02",
+          "title": "Interrupciones y aprobación humana",
+          "module": "Persistencia y aprobación",
+          "module_order": 4,
+          "topic_order": 2,
+          "duration_minutes": 25,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópico 4.1 y lectura de GraphOutput v2.",
+          "objectives": [
+            "Pausar un flujo y reanudarlo con una decisión tipada.",
+            "Identificar el código que puede repetirse al reanudar."
+          ],
+          "path": "04_Persistencia_y_aprobacion/02_interrupciones_y_aprobacion_humana.md",
+          "source_slides": [
+            41,
+            42,
+            43,
+            44
+          ]
+        },
+        {
+          "id": "m04_t03",
+          "title": "Persistencia con SQLite entre procesos",
+          "module": "Persistencia y aprobación",
+          "module_order": 4,
+          "topic_order": 3,
+          "duration_minutes": 30,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópico 4.2.",
+          "objectives": [
+            "Reanudar un caso desde un proceso nuevo usando el mismo backend.",
+            "Mantener el ciclo de vida de la conexión durante la ejecución."
+          ],
+          "path": "04_Persistencia_y_aprobacion/03_persistencia_con_sqlite_entre_procesos.md",
+          "source_slides": [
+            46
+          ]
+        },
+        {
+          "id": "m04_t04",
+          "title": "Durabilidad, idempotencia y recuperación",
+          "module": "Persistencia y aprobación",
+          "module_order": 4,
+          "topic_order": 4,
+          "duration_minutes": 25,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópicos 4.1 a 4.3.",
+          "objectives": [
+            "Explicar la ventana de duplicación de un efecto externo.",
+            "Elegir una clave estable de idempotencia y un modo de durabilidad."
+          ],
+          "path": "04_Persistencia_y_aprobacion/04_durabilidad_idempotencia_y_recuperacion.md",
+          "source_slides": [
+            45
+          ]
+        },
+        {
+          "id": "m04_t05",
+          "title": "Stores, inspección e historial de ejecución",
+          "module": "Persistencia y aprobación",
+          "module_order": 4,
+          "topic_order": 5,
+          "duration_minutes": 25,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópicos 4.1 y 4.2.",
+          "objectives": [
+            "Guardar información compartida con namespaces explícitos.",
+            "Inspeccionar snapshots sin confundirlos con el estado activo de una función."
+          ],
+          "path": "04_Persistencia_y_aprobacion/05_stores_inspeccion_e_historial_de_ejecucion.md",
+          "source_slides": [
+            39,
+            40,
+            45
+          ]
+        },
+        {
+          "id": "m04_t06",
+          "title": "Práctica: reinicio, rechazo y aislamiento",
+          "module": "Persistencia y aprobación",
+          "module_order": 4,
+          "topic_order": 6,
+          "duration_minutes": 30,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Módulo 4 completo.",
+          "objectives": [
+            "Demostrar recuperación entre procesos y separación de threads.",
+            "Especificar pruebas de efectos que todavía no existen en el simulador."
+          ],
+          "path": "04_Persistencia_y_aprobacion/06_practica_reinicio_rechazo_y_aislamiento.md",
+          "source_slides": [
+            47,
+            48
+          ]
+        }
+      ]
+    },
+    {
+      "id": "m05",
+      "order": 5,
+      "title": "Orquestación avanzada",
+      "index": "05_Orquestacion_avanzada/00_inicio_del_modulo.md",
+      "competencies": [
+        "Combinar ramas con reducers y barreras.",
+        "Distribuir trabajo con Send y navegar con Command.",
+        "Encapsular subgrafos y elegir patrones con criterio."
+      ],
+      "topics": [
+        {
+          "id": "m05_t01",
+          "title": "Paralelismo estático y barreras de reunión",
+          "module": "Orquestación avanzada",
+          "module_order": 5,
+          "topic_order": 1,
+          "duration_minutes": 20,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Reducers, superpasos y Graph API.",
+          "objectives": [
+            "Expresar ramas independientes y una reunión explícita.",
+            "Combinar contribuciones sin depender del orden de finalización."
+          ],
+          "path": "05_Orquestacion_avanzada/01_paralelismo_estatico_y_barreras_de_reunion.md",
+          "source_slides": [
+            50
+          ]
+        },
+        {
+          "id": "m05_t02",
+          "title": "Distribución dinámica con Send",
+          "module": "Orquestación avanzada",
+          "module_order": 5,
+          "topic_order": 2,
+          "duration_minutes": 25,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Tópico 5.1 y reducers.",
+          "objectives": [
+            "Crear tareas cuyo número se conoce durante la ejecución.",
+            "Diseñar entradas de trabajador y resultados acumulados."
+          ],
+          "path": "05_Orquestacion_avanzada/02_distribucion_dinamica_con_send.md",
+          "source_slides": [
+            51,
+            52,
+            53
+          ]
+        },
+        {
+          "id": "m05_t03",
+          "title": "Command: actualización y navegación",
+          "module": "Orquestación avanzada",
+          "module_order": 5,
+          "topic_order": 3,
+          "duration_minutes": 20,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Rutas condicionales e interrupt del módulo 4.",
+          "objectives": [
+            "Usar Command cuando estado y destino forman una misma transición.",
+            "Distinguir navegación interna de reanudación externa."
+          ],
+          "path": "05_Orquestacion_avanzada/03_command_actualizacion_y_navegacion.md",
+          "source_slides": [
+            54
+          ]
+        },
+        {
+          "id": "m05_t04",
+          "title": "Subgrafos y fronteras de estado",
+          "module": "Orquestación avanzada",
+          "module_order": 5,
+          "topic_order": 4,
+          "duration_minutes": 25,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Módulos 2 y 4; tópico 5.3.",
+          "objectives": [
+            "Encapsular una responsabilidad reutilizable.",
+            "Traducir contratos entre padre e hijo y elegir el alcance de su memoria."
+          ],
+          "path": "05_Orquestacion_avanzada/04_subgrafos_y_fronteras_de_estado.md",
+          "source_slides": [
+            55
+          ]
+        },
+        {
+          "id": "m05_t05",
+          "title": "Functional API y recuperación de tareas",
+          "module": "Orquestación avanzada",
+          "module_order": 5,
+          "topic_order": 5,
+          "duration_minutes": 20,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Graph API y persistencia del módulo 4.",
+          "objectives": [
+            "Expresar un flujo con entrypoint y task.",
+            "Diferenciar reejecución de código y reutilización de resultados persistidos."
+          ],
+          "path": "05_Orquestacion_avanzada/05_functional_api_y_recuperacion_de_tareas.md",
+          "source_slides": [
+            56
+          ]
+        },
+        {
+          "id": "m05_t06",
+          "title": "Patrones de orquestación y práctica integradora",
+          "module": "Orquestación avanzada",
+          "module_order": 5,
+          "topic_order": 6,
+          "duration_minutes": 30,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Módulo 5 completo.",
+          "objectives": [
+            "Elegir un patrón por el comportamiento requerido.",
+            "Verificar distribución vacía, repetida y variable sin sobreingeniería."
+          ],
+          "path": "05_Orquestacion_avanzada/06_patrones_de_orquestacion_y_practica_integradora.md",
+          "source_slides": [
+            57,
+            58,
+            59
+          ]
+        }
+      ]
+    },
+    {
+      "id": "m06",
+      "order": 6,
+      "title": "Operación y proyecto final",
+      "index": "06_Operacion_y_proyecto_final/00_inicio_del_modulo.md",
+      "competencies": [
+        "Observar, probar y evaluar comportamiento.",
+        "Preparar controles de autorización y una arquitectura operable.",
+        "Entregar un proyecto integrado con criterios de aceptación."
+      ],
+      "topics": [
+        {
+          "id": "m06_t01",
+          "title": "Streaming y ejecución asíncrona",
+          "module": "Operación y proyecto final",
+          "module_order": 6,
+          "topic_order": 1,
+          "duration_minutes": 20,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Módulos 3 y 4; async básico para la variante opcional.",
+          "objectives": [
+            "Consumir eventos de progreso con el contrato v2.",
+            "Separar eventos técnicos de mensajes públicos de la interfaz."
+          ],
+          "path": "06_Operacion_y_proyecto_final/01_streaming_y_ejecucion_asincrona.md",
+          "source_slides": [
+            61
+          ]
+        },
+        {
+          "id": "m06_t02",
+          "title": "Reintentos, caché y presupuesto operativo",
+          "module": "Operación y proyecto final",
+          "module_order": 6,
+          "topic_order": 2,
+          "duration_minutes": 25,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Persistencia, nodos y contratos de error.",
+          "objectives": [
+            "Aplicar reintentos solo a errores recuperables.",
+            "Configurar caché diferenciándola de la persistencia de ejecución."
+          ],
+          "path": "06_Operacion_y_proyecto_final/02_reintentos_cache_y_presupuesto_operativo.md",
+          "source_slides": [
+            62
+          ]
+        },
+        {
+          "id": "m06_t03",
+          "title": "Pruebas, observabilidad y evaluación",
+          "module": "Operación y proyecto final",
+          "module_order": 6,
+          "topic_order": 3,
+          "duration_minutes": 30,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Módulos 2 a 5.",
+          "objectives": [
+            "Probar propiedades del flujo con dobles determinísticos.",
+            "Diseñar trazas y evaluaciones que expliquen calidad y fallos."
+          ],
+          "path": "06_Operacion_y_proyecto_final/03_pruebas_observabilidad_y_evaluacion.md",
+          "source_slides": [
+            63,
+            64
+          ]
+        },
+        {
+          "id": "m06_t04",
+          "title": "Seguridad y arquitectura de despliegue",
+          "module": "Operación y proyecto final",
+          "module_order": 6,
+          "topic_order": 4,
+          "duration_minutes": 25,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Módulos 3 y 4; nociones de una API de servicio.",
+          "objectives": [
+            "Ubicar controles de confianza en el servicio y los adaptadores.",
+            "Diseñar una base operable con un grafo y persistencia externa."
+          ],
+          "path": "06_Operacion_y_proyecto_final/04_seguridad_y_arquitectura_de_despliegue.md",
+          "source_slides": [
+            65,
+            66
+          ]
+        },
+        {
+          "id": "m06_t05",
+          "title": "Proyecto final: soporte con evidencia y aprobación",
+          "module": "Operación y proyecto final",
+          "module_order": 6,
+          "topic_order": 5,
+          "duration_minutes": 60,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Los seis módulos hasta el tópico 6.4.",
+          "objectives": [
+            "Integrar generación, evaluación de evidencia y revisión humana.",
+            "Demostrar recuperación y salidas alternativas con un proyecto ejecutable."
+          ],
+          "path": "06_Operacion_y_proyecto_final/05_proyecto_final_soporte_con_evidencia_y_aprobacion.md",
+          "source_slides": [
+            67
+          ]
+        },
+        {
+          "id": "m06_t06",
+          "title": "Evaluación final y guía de decisiones",
+          "module": "Operación y proyecto final",
+          "module_order": 6,
+          "topic_order": 6,
+          "duration_minutes": 20,
+          "level": "intermedio-avanzado",
+          "language": "es",
+          "prerequisites": "Proyecto final implementado y resultados registrados.",
+          "objectives": [
+            "Evaluar un sistema por evidencias verificables.",
+            "Elegir la capacidad más simple que cubra un comportamiento."
+          ],
+          "path": "06_Operacion_y_proyecto_final/06_evaluacion_final_y_guia_de_decisiones.md",
+          "source_slides": [
+            68,
+            69,
+            70
+          ]
+        }
+      ]
+    }
+  ]
+}

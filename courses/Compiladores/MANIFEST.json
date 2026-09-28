@@ -1,0 +1,426 @@
+[
+  {
+    "path": "01_introduccion_y_fundamentos_de_compiladores/00_competencias.md",
+    "bytes": 897
+  },
+  {
+    "path": "01_introduccion_y_fundamentos_de_compiladores/01_procesadores_de_lenguajes.md",
+    "bytes": 4004
+  },
+  {
+    "path": "01_introduccion_y_fundamentos_de_compiladores/02_estructura_de_un_compilador.md",
+    "bytes": 3679
+  },
+  {
+    "path": "01_introduccion_y_fundamentos_de_compiladores/03_fundamentos_de_lenguajes.md",
+    "bytes": 3329
+  },
+  {
+    "path": "01_introduccion_y_fundamentos_de_compiladores/04_algoritmos_y_derivaciones.md",
+    "bytes": 1838
+  },
+  {
+    "path": "01_introduccion_y_fundamentos_de_compiladores/99_laboratorio.md",
+    "bytes": 987
+  },
+  {
+    "path": "01_introduccion_y_fundamentos_de_compiladores/images/pipeline_compilador.png",
+    "bytes": 1289714
+  },
+  {
+    "path": "02_traductor_simple_dirigido_por_la_sintaxis/00_competencias.md",
+    "bytes": 939
+  },
+  {
+    "path": "02_traductor_simple_dirigido_por_la_sintaxis/01_sintaxis_y_traduccion_dirigida.md",
+    "bytes": 2782
+  },
+  {
+    "path": "02_traductor_simple_dirigido_por_la_sintaxis/02_parser_de_expresiones.md",
+    "bytes": 2318
+  },
+  {
+    "path": "02_traductor_simple_dirigido_por_la_sintaxis/03_lexer_symbols_ir_minimo.md",
+    "bytes": 2410
+  },
+  {
+    "path": "02_traductor_simple_dirigido_por_la_sintaxis/04_algoritmos_y_derivaciones.md",
+    "bytes": 1413
+  },
+  {
+    "path": "02_traductor_simple_dirigido_por_la_sintaxis/99_laboratorio.md",
+    "bytes": 434
+  },
+  {
+    "path": "02_traductor_simple_dirigido_por_la_sintaxis/images/pipeline_compilador.png",
+    "bytes": 1289714
+  },
+  {
+    "path": "03_analisis_lexico/00_competencias.md",
+    "bytes": 919
+  },
+  {
+    "path": "03_analisis_lexico/01_tokens_patrones_buffering.md",
+    "bytes": 3231
+  },
+  {
+    "path": "03_analisis_lexico/02_regex_automatas.md",
+    "bytes": 3489
+  },
+  {
+    "path": "03_analisis_lexico/03_generadores_y_optimizacion_lexer.md",
+    "bytes": 2819
+  },
+  {
+    "path": "03_analisis_lexico/04_algoritmos_y_derivaciones.md",
+    "bytes": 1740
+  },
+  {
+    "path": "03_analisis_lexico/05_ejercicios_resueltos.md",
+    "bytes": 669
+  },
+  {
+    "path": "03_analisis_lexico/99_laboratorio.md",
+    "bytes": 615
+  },
+  {
+    "path": "03_analisis_lexico/images/dfa_identificador.png",
+    "bytes": 21086
+  },
+  {
+    "path": "03_analisis_lexico/images/lexico_sintactico.png",
+    "bytes": 1349610
+  },
+  {
+    "path": "04_analisis_sintactico/00_competencias.md",
+    "bytes": 913
+  },
+  {
+    "path": "04_analisis_sintactico/01_cfg_y_diseno_gramaticas.md",
+    "bytes": 2762
+  },
+  {
+    "path": "04_analisis_sintactico/02_parsing_top_down.md",
+    "bytes": 3070
+  },
+  {
+    "path": "04_analisis_sintactico/03_parsing_bottom_up_lr.md",
+    "bytes": 2838
+  },
+  {
+    "path": "04_analisis_sintactico/04_algoritmos_y_derivaciones.md",
+    "bytes": 1387
+  },
+  {
+    "path": "04_analisis_sintactico/05_ejercicios_resueltos.md",
+    "bytes": 486
+  },
+  {
+    "path": "04_analisis_sintactico/99_laboratorio.md",
+    "bytes": 419
+  },
+  {
+    "path": "04_analisis_sintactico/images/ast_expresion.png",
+    "bytes": 8570
+  },
+  {
+    "path": "04_analisis_sintactico/images/lexico_sintactico.png",
+    "bytes": 1349610
+  },
+  {
+    "path": "05_traduccion_dirigida_por_la_sintaxis/00_competencias.md",
+    "bytes": 771
+  },
+  {
+    "path": "05_traduccion_dirigida_por_la_sintaxis/01_sdd_y_atributos.md",
+    "bytes": 2874
+  },
+  {
+    "path": "05_traduccion_dirigida_por_la_sintaxis/02_ordenes_de_evaluacion.md",
+    "bytes": 2392
+  },
+  {
+    "path": "05_traduccion_dirigida_por_la_sintaxis/03_esquemas_traduccion_L_attributed.md",
+    "bytes": 2076
+  },
+  {
+    "path": "05_traduccion_dirigida_por_la_sintaxis/04_algoritmos_y_derivaciones.md",
+    "bytes": 1185
+  },
+  {
+    "path": "05_traduccion_dirigida_por_la_sintaxis/99_laboratorio.md",
+    "bytes": 455
+  },
+  {
+    "path": "05_traduccion_dirigida_por_la_sintaxis/images/dependencias_atributos.png",
+    "bytes": 9622
+  },
+  {
+    "path": "06_generacion_de_codigo_intermedio_y_analisis_semantico/00_competencias.md",
+    "bytes": 854
+  },
+  {
+    "path": "06_generacion_de_codigo_intermedio_y_analisis_semantico/01_ast_dag_tac.md",
+    "bytes": 2366
+  },
+  {
+    "path": "06_generacion_de_codigo_intermedio_y_analisis_semantico/02_tipos_declaraciones_y_scope.md",
+    "bytes": 3076
+  },
+  {
+    "path": "06_generacion_de_codigo_intermedio_y_analisis_semantico/03_control_backpatching_procedures.md",
+    "bytes": 2693
+  },
+  {
+    "path": "06_generacion_de_codigo_intermedio_y_analisis_semantico/04_algoritmos_y_derivaciones.md",
+    "bytes": 1405
+  },
+  {
+    "path": "06_generacion_de_codigo_intermedio_y_analisis_semantico/05_ejercicios_resueltos.md",
+    "bytes": 482
+  },
+  {
+    "path": "06_generacion_de_codigo_intermedio_y_analisis_semantico/99_laboratorio.md",
+    "bytes": 652
+  },
+  {
+    "path": "06_generacion_de_codigo_intermedio_y_analisis_semantico/images/cfg_while.png",
+    "bytes": 13300
+  },
+  {
+    "path": "07_entornos_en_tiempo_de_ejecucion/00_competencias.md",
+    "bytes": 881
+  },
+  {
+    "path": "07_entornos_en_tiempo_de_ejecucion/01_storage_y_activation_records.md",
+    "bytes": 5057
+  },
+  {
+    "path": "07_entornos_en_tiempo_de_ejecucion/02_nonlocal_data_y_calling_conventions.md",
+    "bytes": 2463
+  },
+  {
+    "path": "07_entornos_en_tiempo_de_ejecucion/03_heap_y_garbage_collection.md",
+    "bytes": 2707
+  },
+  {
+    "path": "07_entornos_en_tiempo_de_ejecucion/04_algoritmos_y_derivaciones.md",
+    "bytes": 1497
+  },
+  {
+    "path": "07_entornos_en_tiempo_de_ejecucion/99_laboratorio.md",
+    "bytes": 473
+  },
+  {
+    "path": "07_entornos_en_tiempo_de_ejecucion/images/call_stack.png",
+    "bytes": 19824
+  },
+  {
+    "path": "07_entornos_en_tiempo_de_ejecucion/images/runtime_memoria.png",
+    "bytes": 1649653
+  },
+  {
+    "path": "08_generacion_de_codigo_objetivo/00_competencias.md",
+    "bytes": 1026
+  },
+  {
+    "path": "08_generacion_de_codigo_objetivo/01_target_blocks_flowgraphs.md",
+    "bytes": 2396
+  },
+  {
+    "path": "08_generacion_de_codigo_objetivo/02_instruction_selection.md",
+    "bytes": 2542
+  },
+  {
+    "path": "08_generacion_de_codigo_objetivo/03_liveness_register_allocation_machine_code.md",
+    "bytes": 3150
+  },
+  {
+    "path": "08_generacion_de_codigo_objetivo/04_algoritmos_y_derivaciones.md",
+    "bytes": 1240
+  },
+  {
+    "path": "08_generacion_de_codigo_objetivo/05_ejercicios_resueltos.md",
+    "bytes": 528
+  },
+  {
+    "path": "08_generacion_de_codigo_objetivo/99_laboratorio.md",
+    "bytes": 503
+  },
+  {
+    "path": "08_generacion_de_codigo_objetivo/images/codegen_registros_riscv.png",
+    "bytes": 1622931
+  },
+  {
+    "path": "08_generacion_de_codigo_objetivo/images/interference_graph.png",
+    "bytes": 14583
+  },
+  {
+    "path": "09_optimizacion_independiente_de_la_maquina/00_competencias.md",
+    "bytes": 830
+  },
+  {
+    "path": "09_optimizacion_independiente_de_la_maquina/01_dataflow_foundations.md",
+    "bytes": 2554
+  },
+  {
+    "path": "09_optimizacion_independiente_de_la_maquina/02_constant_cse_dce_pre.md",
+    "bytes": 2757
+  },
+  {
+    "path": "09_optimizacion_independiente_de_la_maquina/03_loops_regions_symbolic.md",
+    "bytes": 2483
+  },
+  {
+    "path": "09_optimizacion_independiente_de_la_maquina/04_algoritmos_y_derivaciones.md",
+    "bytes": 1317
+  },
+  {
+    "path": "09_optimizacion_independiente_de_la_maquina/05_ejercicios_resueltos.md",
+    "bytes": 526
+  },
+  {
+    "path": "09_optimizacion_independiente_de_la_maquina/99_laboratorio.md",
+    "bytes": 513
+  },
+  {
+    "path": "09_optimizacion_independiente_de_la_maquina/images/cfg_dataflow.png",
+    "bytes": 9655
+  },
+  {
+    "path": "10_paralelismo_a_nivel_de_instruccion/00_competencias.md",
+    "bytes": 847
+  },
+  {
+    "path": "10_paralelismo_a_nivel_de_instruccion/01_architecture_and_constraints.md",
+    "bytes": 4994
+  },
+  {
+    "path": "10_paralelismo_a_nivel_de_instruccion/02_basic_and_global_scheduling.md",
+    "bytes": 2277
+  },
+  {
+    "path": "10_paralelismo_a_nivel_de_instruccion/03_software_pipelining.md",
+    "bytes": 2202
+  },
+  {
+    "path": "10_paralelismo_a_nivel_de_instruccion/04_algoritmos_y_derivaciones.md",
+    "bytes": 1207
+  },
+  {
+    "path": "10_paralelismo_a_nivel_de_instruccion/99_laboratorio.md",
+    "bytes": 404
+  },
+  {
+    "path": "10_paralelismo_a_nivel_de_instruccion/images/dependency_dag.png",
+    "bytes": 11122
+  },
+  {
+    "path": "10_paralelismo_a_nivel_de_instruccion/images/tecnicas_avanzadas.png",
+    "bytes": 1775252
+  },
+  {
+    "path": "11_optimizacion_para_paralelismo_y_localidad/00_competencias.md",
+    "bytes": 1009
+  },
+  {
+    "path": "11_optimizacion_para_paralelismo_y_localidad/01_iteration_affine_dependence.md",
+    "bytes": 2488
+  },
+  {
+    "path": "11_optimizacion_para_paralelismo_y_localidad/02_parallelism_sync_pipeline.md",
+    "bytes": 2275
+  },
+  {
+    "path": "11_optimizacion_para_paralelismo_y_localidad/03_locality_and_affine_transforms.md",
+    "bytes": 2744
+  },
+  {
+    "path": "11_optimizacion_para_paralelismo_y_localidad/04_algoritmos_y_derivaciones.md",
+    "bytes": 1382
+  },
+  {
+    "path": "11_optimizacion_para_paralelismo_y_localidad/05_ejercicios_resueltos.md",
+    "bytes": 422
+  },
+  {
+    "path": "11_optimizacion_para_paralelismo_y_localidad/99_laboratorio.md",
+    "bytes": 486
+  },
+  {
+    "path": "11_optimizacion_para_paralelismo_y_localidad/images/loop_dependence.png",
+    "bytes": 13318
+  },
+  {
+    "path": "11_optimizacion_para_paralelismo_y_localidad/images/tecnicas_avanzadas.png",
+    "bytes": 1775252
+  },
+  {
+    "path": "12_analisis_interprocedural/00_competencias.md",
+    "bytes": 930
+  },
+  {
+    "path": "12_analisis_interprocedural/01_motivacion_callgraph_logic.md",
+    "bytes": 2330
+  },
+  {
+    "path": "12_analisis_interprocedural/02_pointer_analysis_context.md",
+    "bytes": 2524
+  },
+  {
+    "path": "12_analisis_interprocedural/03_datalog_bdd_whole_program.md",
+    "bytes": 2790
+  },
+  {
+    "path": "12_analisis_interprocedural/04_algoritmos_y_derivaciones.md",
+    "bytes": 1479
+  },
+  {
+    "path": "12_analisis_interprocedural/05_ejercicios_resueltos.md",
+    "bytes": 477
+  },
+  {
+    "path": "12_analisis_interprocedural/99_laboratorio.md",
+    "bytes": 687
+  },
+  {
+    "path": "12_analisis_interprocedural/images/call_graph.png",
+    "bytes": 8051
+  },
+  {
+    "path": "12_analisis_interprocedural/images/tecnicas_avanzadas.png",
+    "bytes": 1775252
+  },
+  {
+    "path": "BIBLIOGRAFIA_Y_RECURSOS.md",
+    "bytes": 822
+  },
+  {
+    "path": "ESPECIFICACION_MINIC_RV.md",
+    "bytes": 5637
+  },
+  {
+    "path": "GUIA_DOCENTE.md",
+    "bytes": 1219
+  },
+  {
+    "path": "MAPA_DEL_CURSO.md",
+    "bytes": 1587
+  },
+  {
+    "path": "PLAN_SEMESTRAL.md",
+    "bytes": 1413
+  },
+  {
+    "path": "PROYECTO_INTEGRADOR.md",
+    "bytes": 2802
+  },
+  {
+    "path": "README.md",
+    "bytes": 3547
+  },
+  {
+    "path": "RUBRICA.md",
+    "bytes": 819
+  }
+]
