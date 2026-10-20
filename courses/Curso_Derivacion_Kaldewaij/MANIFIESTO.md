@@ -1,0 +1,51 @@
+# Manifiesto del paquete
+
+- **Capítulos:** 19 (`00` introductorio + `01–12` libro + `13–18` complementarios).
+- **Documentos Markdown adicionales:** 21 (recursos, actividades, plantillas y skills).
+- **Extensión aproximada:** 25,954 palabras antes de contar este manifiesto.
+- **Formato:** 100 % `.md` (UTF-8). LaTeX para fórmulas y Mermaid para diagramas.
+- **Laboratorio Python:** código íntegro en bloques Markdown del capítulo 18; 7 pruebas automatizadas ejecutadas exitosamente en el entorno de creación del paquete.
+- **Obra fuente:** libro de Anne Kaldewaij suministrado por el usuario; no se redistribuye el PDF original.
+
+## Índice de archivos
+
+- `README.md`
+- `actividades/AUTOEVALUACION.md`
+- `actividades/EXTRAER_CODIGO_LAB.md`
+- `actividades/PROYECTO_FINAL.md`
+- `capitulos/00-introduccion.md`
+- `capitulos/01-calculo-predicados.md`
+- `capitulos/02-comandos-guardados.md`
+- `capitulos/03-cuantificaciones.md`
+- `capitulos/04-tecnicas-generales.md`
+- `capitulos/05-programas-eficientes.md`
+- `capitulos/06-busqueda.md`
+- `capitulos/07-problemas-segmentos.md`
+- `capitulos/08-slope-search.md`
+- `capitulos/09-problemas-mixtos.md`
+- `capitulos/10-manipulacion-arreglos.md`
+- `capitulos/11-ordenamiento.md`
+- `capitulos/12-arreglos-auxiliares.md`
+- `complementarios/13-contratos-software-moderno.md`
+- `complementarios/14-sdd-por-feature.md`
+- `complementarios/15-agentes-codigo.md`
+- `complementarios/16-skills-reutilizables.md`
+- `complementarios/17-verificacion-evidencia.md`
+- `complementarios/18-laboratorio-integrador-api-ml.md`
+- `plantillas/DERIVACION.md`
+- `plantillas/EVIDENCIAS.md`
+- `plantillas/REVISION_INDEPENDIENTE.md`
+- `plantillas/SPEC_CONTRATO.md`
+- `recursos/ERRORES_FORMALES.md`
+- `recursos/GLOSARIO.md`
+- `recursos/GUIA_DOCENTE.md`
+- `recursos/MAPA_COMPETENCIAS.md`
+- `recursos/NOTACION_Y_CONVENCIONES.md`
+- `recursos/REFERENCIAS_Y_ALCANCE.md`
+- `recursos/RUBRICA_COMPETENCIAS.md`
+- `recursos/SOLUCIONES_SELECCIONADAS.md`
+- `skills/README.md`
+- `skills/formal-contract/SKILL.md`
+- `skills/formal-derive/SKILL.md`
+- `skills/formal-evidence/SKILL.md`
+- `skills/formal-review/SKILL.md`
